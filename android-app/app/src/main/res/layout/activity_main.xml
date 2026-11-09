@@ -119,6 +119,20 @@
 
         </LinearLayout>
 
+        <TextView
+            android:id="@+id/txtWater"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginEnd="16dp"
+            android:background="@drawable/bg_card"
+            android:padding="16dp"
+            android:text="Mực nước: Chưa có dữ liệu"
+            android:textColor="@color/text_primary"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
         <!-- CẢNH BÁO -->
         <TextView
             android:id="@+id/txtAlert"

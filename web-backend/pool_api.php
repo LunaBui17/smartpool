@@ -102,8 +102,59 @@ if ($method === 'POST') {
         exit;
     }
 
+    // Samples sent again after an outage keep the same ID, so retries are idempotent.
+    $hasSample = array_key_exists('sample_id', $data);
+    if ($hasSample) {
+        $sampleId = (string)$data['sample_id'];
+        if (!preg_match('/^[0-9A-Fa-f]{16}$/', $sampleId)) {
+            http_response_code(400);
+            echo json_encode(array('status' => 'error', 'message' => 'Invalid sample_id'));
+            $conn->close();
+            exit;
+        }
+        $rawSql = 'NULL';
+        if (array_key_exists('muc_nuoc_raw', $data)) {
+            if (!is_numeric($data['muc_nuoc_raw']) ||
+                (int)$data['muc_nuoc_raw'] < 0 || (int)$data['muc_nuoc_raw'] > 4095) {
+                http_response_code(400);
+                echo json_encode(array('status' => 'error', 'message' => 'Invalid muc_nuoc_raw'));
+                $conn->close();
+                exit;
+            }
+            $rawSql = (string)(int)$data['muc_nuoc_raw'];
+        }
+        $temperatureSql = array_key_exists('nhiet_do', $data)
+            ? sprintf('%.3F', (float)$data['nhiet_do']) : 'NULL';
+        $waterSql = array_key_exists('muc_nuoc', $data)
+            ? (((int)$data['muc_nuoc'] === 1) ? '1' : '0') : 'NULL';
+        if (!$conn->begin_transaction()) {
+            http_response_code(500);
+            echo json_encode(array('status' => 'error', 'message' => 'Cannot start transaction'));
+            $conn->close();
+            exit;
+        }
+        $historySql = "INSERT IGNORE INTO pool_history " .
+            "(sample_id, nhiet_do, muc_nuoc, muc_nuoc_raw) VALUES ('" .
+            strtoupper($sampleId) . "', " . $temperatureSql . ", " . $waterSql .
+            ", " . $rawSql . ")";
+        if (!$conn->query($historySql)) {
+            $conn->rollback();
+            http_response_code(500);
+            echo json_encode(array('status' => 'error', 'message' => 'Cannot save history'));
+            $conn->close();
+            exit;
+        }
+        if ($conn->affected_rows === 0) {
+            $conn->rollback();
+            echo json_encode(array('status' => 'success', 'message' => 'Sample already saved'));
+            $conn->close();
+            exit;
+        }
+    }
+
     $sql = 'UPDATE pool_status SET ' . implode(', ', $updates) . ' WHERE id = 1';
     if (!$conn->query($sql)) {
+        if ($hasSample) $conn->rollback();
         http_response_code(500);
         echo json_encode(array('status' => 'error', 'message' => 'Không cập nhật được database'));
         $conn->close();
@@ -113,6 +164,7 @@ if ($method === 'POST') {
     if ($conn->affected_rows === 0) {
         $check = $conn->query('SELECT id FROM pool_status WHERE id = 1 LIMIT 1');
         if (!$check || $check->num_rows === 0) {
+            if ($hasSample) $conn->rollback();
             http_response_code(404);
             echo json_encode(array('status' => 'error', 'message' => 'Không tồn tại bản ghi pool_status id=1; hãy chạy file pool_db.sql'));
             if ($check) $check->free();
@@ -120,6 +172,13 @@ if ($method === 'POST') {
             exit;
         }
         if ($check) $check->free();
+    }
+
+    if ($hasSample && !$conn->commit()) {
+        http_response_code(500);
+        echo json_encode(array('status' => 'error', 'message' => 'Cannot commit history'));
+        $conn->close();
+        exit;
     }
 
     echo json_encode(array('status' => 'success', 'message' => 'Cập nhật thành công'), JSON_UNESCAPED_UNICODE);

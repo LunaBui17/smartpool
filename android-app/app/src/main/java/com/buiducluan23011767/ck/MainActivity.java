@@ -77,6 +77,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView txtMqttStatus;
     private TextView txtAlert;
     private TextView txtTemp;
+    private TextView txtWater;
     private TextView txtPumpInStatus;
     private TextView txtPumpOutStatus;
     private TextView txtUpdated;
@@ -141,6 +142,7 @@ public class MainActivity extends AppCompatActivity {
         txtMqttStatus = findViewById(R.id.txtMqttStatus);
         txtAlert = findViewById(R.id.txtAlert);
         txtTemp = findViewById(R.id.txtTemp);
+        txtWater = findViewById(R.id.txtWater);
 
         txtPumpInStatus = findViewById(R.id.txtPumpInStatus);
         txtPumpOutStatus = findViewById(R.id.txtPumpOutStatus);
@@ -483,6 +485,7 @@ public class MainActivity extends AppCompatActivity {
             } else if (TOPIC_TELEMETRY.equals(topic)) {
 
                 double temp = json.optDouble("nhiet_do", Double.NaN);
+                int water = json.optInt("muc_nuoc", -1);
 
                 handler.post(() -> {
 
@@ -491,6 +494,7 @@ public class MainActivity extends AppCompatActivity {
                     }
 
                     updateTemperature(temp);
+                    updateWaterLevel(water);
                     updateTimestamp();
                 });
             }
@@ -672,8 +676,10 @@ public class MainActivity extends AppCompatActivity {
                             "nhiet_do",
                             Double.NaN
                     );
+                    int water = response.optInt("muc_nuoc", -1);
 
                     updateTemperature(temp);
+                    updateWaterLevel(water);
                     updateTimestamp();
 
                     txtConnection.setText(
@@ -717,6 +723,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==================== HIỂN THỊ NHIỆT ĐỘ ====================
+
+    private void updateWaterLevel(int water) {
+        if (water == 1) {
+            txtWater.setText("Mực nước: Bình thường");
+            txtWater.setTextColor(Color.rgb(21, 128, 61));
+        } else if (water == 0) {
+            txtWater.setText("Mực nước: Thấp - kiểm tra bể");
+            txtWater.setTextColor(Color.rgb(185, 28, 28));
+        }
+    }
 
     private void updateTemperature(double temp) {
 

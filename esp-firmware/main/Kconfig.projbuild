@@ -26,6 +26,49 @@ menu "DS18B20 Configuration"
 
 endmenu
 
+menu "Water Level Configuration"
+
+    config WATER_LEVEL_GPIO
+        int "Analog water level GPIO"
+        range 1 20
+        default 18
+        help
+            Analog output of the water level sensor. GPIO18 is ADC2 channel 7
+            on ESP32-S3. Keep the sensor output at or below 3.3 V.
+
+    config WATER_LOW_THRESHOLD
+        int "Low water ADC threshold"
+        range 0 4095
+        default 2000
+        help
+            ADC readings below this value mean low water. Calibrate using the
+            raw ADC value printed in the serial log.
+
+endmenu
+
+menu "Smart Pool Network"
+
+    config POOL_SETUP_AP_SSID
+        string "Setup access point SSID"
+        default "SmartPool-Setup"
+
+    config POOL_SETUP_AP_PASSWORD
+        string "Setup access point password"
+        default "12345678"
+        help
+            Use 8 to 63 characters. Users connect to this access point and
+            open http://192.168.4.1 to enter their home Wi-Fi credentials.
+
+    config POOL_API_URL
+        string "XAMPP API URL"
+        default "http://192.168.10.214/pool_api/pool_api.php"
+
+    config POOL_MQTT_URI
+        string "MQTT broker URI"
+        default "mqtt://192.168.10.214:1767"
+
+endmenu
+
 menu "Relay Configuration"
 
     config RELAY_1_GPIO

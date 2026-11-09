@@ -1,0 +1,24 @@
+CREATE DATABASE IF NOT EXISTS pool_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE pool_db;
+
+CREATE TABLE IF NOT EXISTS pool_status (
+    id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+    is_app_active TINYINT(1) NOT NULL DEFAULT 0,
+    nhiet_do DECIMAL(6,2) NOT NULL DEFAULT 0,
+    ph DECIMAL(4,2) NOT NULL DEFAULT 0,
+    muc_nuoc TINYINT(1) NOT NULL DEFAULT 0,
+    bom_control TINYINT(1) NOT NULL DEFAULT 0,
+    van_control TINYINT(1) NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS pool_history (
+    sample_id CHAR(16) NOT NULL PRIMARY KEY,
+    nhiet_do DECIMAL(6,2) NULL,
+    muc_nuoc TINYINT(1) NULL,
+    muc_nuoc_raw SMALLINT UNSIGNED NULL,
+    received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_received_at (received_at)
+);
+
+INSERT INTO pool_status (id) VALUES (1)
+ON DUPLICATE KEY UPDATE id = VALUES(id);
