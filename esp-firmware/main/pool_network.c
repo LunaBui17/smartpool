@@ -4,17 +4,21 @@
 #include <string.h>
 #include <stdatomic.h>
 #include <inttypes.h>
+#include <time.h>
 
+#include "esp_crt_bundle.h"
 #include "esp_event.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_netif_sntp.h"
 #include "esp_random.h"
 #include "esp_wifi.h"
 #include "esp_wifi_default.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "mqtt_client.h"
+#include "mqtt_credentials.h"
 #include "nvs_flash.h"
 #include "relay.h"
 #include "sdkconfig.h"
@@ -28,7 +32,7 @@
 
 static const char *TAG = "pool_network";
 static esp_mqtt_client_handle_t s_mqtt;
-static bool s_mqtt_started;
+static _Atomic bool s_mqtt_started;
 static _Atomic bool s_has_wifi_credentials;
 static _Atomic unsigned int s_wifi_failures;
 static _Atomic bool s_wifi_connected;
@@ -74,6 +78,14 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
         s_pump_in = false;
         s_pump_out = false;
         ESP_LOGW(TAG, "MQTT disconnected; pumps OFF");
+        break;
+    case MQTT_EVENT_ERROR:
+        if (event->error_handle) {
+            ESP_LOGE(TAG, "MQTT error: type=%d, TLS=%s, broker_code=%d",
+                     event->error_handle->error_type,
+                     esp_err_to_name(event->error_handle->esp_tls_last_esp_err),
+                     event->error_handle->connect_return_code);
+        }
         break;
     case MQTT_EVENT_DATA: {
         if (event->total_data_len != event->data_len || event->data_len != 1 ||
@@ -125,11 +137,28 @@ static void credentials_saved(void)
 
 static void wifi_retry_task(void *arg)
 {
+    unsigned int seconds = 0;
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(30000));
-        if (s_has_wifi_credentials && !s_wifi_connected && s_wifi_failures >= 3) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        seconds = (seconds + 1) % 30;
+        if (seconds % 5 == 0 && s_wifi_connected && s_mqtt && !s_mqtt_started &&
+            time(NULL) >= 1704067200) {
+            esp_err_t err = esp_mqtt_client_start(s_mqtt);
+            if (err == ESP_OK) {
+                s_mqtt_started = true;
+                ESP_LOGI(TAG, "MQTT TLS started after time synchronization");
+            } else {
+                ESP_LOGE(TAG, "Cannot start MQTT: %s", esp_err_to_name(err));
+            }
+        }
+        if (seconds == 0 && s_has_wifi_credentials && !s_wifi_connected &&
+            s_wifi_failures >= 3) {
             ESP_LOGI(TAG, "Retrying saved Wi-Fi while setup AP stays available");
             esp_wifi_connect();
+        }
+        if (seconds == 0 && s_wifi_connected && s_mqtt && !s_mqtt_started &&
+            time(NULL) < 1704067200) {
+            ESP_LOGW(TAG, "Waiting for SNTP time; MQTT TLS not started yet");
         }
     }
 }
@@ -161,14 +190,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t event_i
         ESP_LOGI(TAG, "Wi-Fi got IP: " IPSTR, IP2STR(&ip_event->ip_info.ip));
         esp_err_t ap_err = wifi_setup_disable_ap();
         if (ap_err != ESP_OK) ESP_LOGW(TAG, "Cannot disable setup AP: %s", esp_err_to_name(ap_err));
-        if (!s_mqtt_started) {
-            esp_err_t err = esp_mqtt_client_start(s_mqtt);
-            if (err == ESP_OK) {
-                s_mqtt_started = true;
-            } else {
-                ESP_LOGE(TAG, "Cannot start MQTT: %s", esp_err_to_name(err));
-            }
-        }
+        if (s_mqtt && !s_mqtt_started) ESP_LOGI(TAG, "Waiting for clock sync before MQTT TLS");
     }
 }
 
@@ -184,6 +206,9 @@ esp_err_t pool_network_init(void)
     if (err != ESP_OK) return err;
     if (!esp_netif_create_default_wifi_sta()) return ESP_FAIL;
     if (!esp_netif_create_default_wifi_ap()) return ESP_FAIL;
+    esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    err = esp_netif_sntp_init(&sntp_config);
+    if (err != ESP_OK) ESP_LOGW(TAG, "Cannot start SNTP: %s", esp_err_to_name(err));
 
     wifi_init_config_t wifi_init = WIFI_INIT_CONFIG_DEFAULT();
     err = esp_wifi_init(&wifi_init);
@@ -210,19 +235,27 @@ esp_err_t pool_network_init(void)
 
     const esp_mqtt_client_config_t mqtt_config = {
         .broker.address.uri = CONFIG_POOL_MQTT_URI,
+        .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
+        .credentials.username = SMARTPOOL_MQTT_USERNAME,
+        .credentials.authentication.password = SMARTPOOL_MQTT_PASSWORD,
         .session.last_will.topic = TOPIC_STATUS,
         .session.last_will.msg = "{\"online\":0,\"bom_vao_control\":0,\"bom_ra_control\":0}",
         .session.last_will.qos = 1,
         .session.last_will.retain = 1,
     };
-    s_mqtt = esp_mqtt_client_init(&mqtt_config);
-    if (!s_mqtt) return ESP_FAIL;
-    err = esp_mqtt_client_register_event(s_mqtt, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
-    if (err != ESP_OK) return err;
+    if (SMARTPOOL_MQTT_USERNAME[0] == '\0' || SMARTPOOL_MQTT_PASSWORD[0] == '\0') {
+        ESP_LOGW(TAG, "HiveMQ credentials missing in mqtt_credentials.h; MQTT disabled");
+    } else {
+        s_mqtt = esp_mqtt_client_init(&mqtt_config);
+        if (!s_mqtt) return ESP_FAIL;
+        err = esp_mqtt_client_register_event(s_mqtt, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+        if (err != ESP_OK) return err;
+    }
     err = esp_wifi_start();
     if (err != ESP_OK) return err;
     err = wifi_setup_init(credentials_saved);
     if (err != ESP_OK) return err;
+    ESP_LOGI(TAG, "HTTP API target: %s", CONFIG_POOL_API_URL);
     if (xTaskCreate(wifi_retry_task, "wifi_retry", 3072, NULL, 4, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
@@ -267,7 +300,10 @@ static bool post_sample(const telemetry_sample_t *sample)
     esp_err_t err = esp_http_client_perform(http);
     int status = esp_http_client_get_status_code(http);
     bool success = err == ESP_OK && status == 200;
-    if (!success) {
+    if (success) {
+        ESP_LOGI(TAG, "HTTP POST OK: sample=%016" PRIX64 ", status=%d",
+                 sample->id, status);
+    } else {
         ESP_LOGW(TAG, "HTTP update failed: %s, status=%d", esp_err_to_name(err),
                  status);
     }

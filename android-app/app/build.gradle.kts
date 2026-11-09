@@ -1,12 +1,30 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
 }
+
+val mqttProperties = Properties()
+val mqttPropertiesFile = rootProject.file("mqtt.properties")
+if (mqttPropertiesFile.isFile) {
+    mqttPropertiesFile.inputStream().use { mqttProperties.load(it) }
+}
+
+fun javaString(value: String): String = "\"" + value
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+    .replace("\n", "\\n")
+    .replace("\r", "\\r") + "\""
 
 android {
     namespace = "com.buiducluan23011767.ck"
 
     compileSdk {
         version = release(37)
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     defaultConfig {
@@ -17,6 +35,11 @@ android {
 
         versionCode = 1
         versionName = "1.0"
+
+        buildConfigField("String", "HIVEMQ_USERNAME",
+            javaString(mqttProperties.getProperty("hivemq.username", "")))
+        buildConfigField("String", "HIVEMQ_PASSWORD",
+            javaString(mqttProperties.getProperty("hivemq.password", "")))
 
         testInstrumentationRunner =
             "androidx.test.runner.AndroidJUnitRunner"

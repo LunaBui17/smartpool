@@ -47,12 +47,11 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "SmartPool";
 
-    // Địa chỉ máy tính chạy XAMPP và MQTT Broker.
-    // Sửa IP này nếu máy tính của bạn đã đổi địa chỉ.
+    // XAMPP vẫn chạy trên mạng nội bộ; MQTT dùng HiveMQ Cloud qua TLS.
     private static final String API_URL =
             "http://192.168.10.214/pool_api/pool_api.php";
     private static final String MQTT_BROKER =
-            "tcp://192.168.10.214:1767";
+            "ssl://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883";
 
     // Topic điều khiển hai máy bơm.
     private static final String TOPIC_CMD_PUMP_IN =
@@ -312,6 +311,12 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
+        if (BuildConfig.HIVEMQ_USERNAME.isEmpty() || BuildConfig.HIVEMQ_PASSWORD.isEmpty()) {
+            txtMqttStatus.setText("MQTT: Chưa cấu hình tài khoản HiveMQ");
+            txtMqttStatus.setTextColor(Color.YELLOW);
+            return;
+        }
+
         if (mqttClient != null && mqttClient.isConnected()) {
             mqttConnected = true;
             updateMqttStatus();
@@ -391,8 +396,10 @@ public class MainActivity extends AppCompatActivity {
 
             options.setAutomaticReconnect(true);
             options.setCleanSession(true);
-            options.setConnectionTimeout(5);
+            options.setConnectionTimeout(10);
             options.setKeepAliveInterval(30);
+            options.setUserName(BuildConfig.HIVEMQ_USERNAME);
+            options.setPassword(BuildConfig.HIVEMQ_PASSWORD.toCharArray());
 
             mqttClient.connect(options, null, new IMqttActionListener() {
 

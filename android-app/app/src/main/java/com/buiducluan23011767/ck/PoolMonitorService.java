@@ -35,10 +35,9 @@ public class PoolMonitorService extends Service {
 
     private static final String TAG = "PoolMonitorService";
 
-    // Địa chỉ MQTT Broker.
-    // Phải giống địa chỉ trong MainActivity.
+    // HiveMQ Cloud qua TLS, cùng broker với MainActivity.
     private static final String MQTT_BROKER =
-            "tcp://192.168.10.214:1767";
+            "ssl://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883";
 
     private static final String TOPIC_TELEMETRY =
             "smartpool/telemetry";
@@ -244,6 +243,11 @@ public class PoolMonitorService extends Service {
             return;
         }
 
+        if (BuildConfig.HIVEMQ_USERNAME.isEmpty() || BuildConfig.HIVEMQ_PASSWORD.isEmpty()) {
+            updateServiceNotification("Chưa cấu hình tài khoản HiveMQ");
+            return;
+        }
+
         mqttConnecting = true;
 
         try {
@@ -314,8 +318,10 @@ public class PoolMonitorService extends Service {
 
             options.setAutomaticReconnect(true);
             options.setCleanSession(true);
-            options.setConnectionTimeout(5);
+            options.setConnectionTimeout(10);
             options.setKeepAliveInterval(30);
+            options.setUserName(BuildConfig.HIVEMQ_USERNAME);
+            options.setPassword(BuildConfig.HIVEMQ_PASSWORD.toCharArray());
 
             mqttClient.connect(
                     options,

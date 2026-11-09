@@ -65,7 +65,7 @@ menu "Smart Pool Network"
 
     config POOL_MQTT_URI
         string "MQTT broker URI"
-        default "mqtt://192.168.10.214:1767"
+        default "mqtts://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883"
 
 endmenu
 

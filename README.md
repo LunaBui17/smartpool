@@ -1,36 +1,108 @@
 # Smart Pool
 
-## Data flow
+Hệ thống dùng ESP32-S3 để đo nhiệt độ nước bằng DS18B20, đọc cảm biến mực nước dạng analog và điều khiển hai bơm qua relay. Ứng dụng Android và ESP trao đổi lệnh/trạng thái qua HiveMQ Cloud bằng MQTT/TLS; dữ liệu mới nhất và lịch sử vẫn được gửi đến API PHP trên XAMPP trong mạng nội bộ.
 
-- ESP32-S3 reads DS18B20 on GPIO15 and the analog water sensor on GPIO18.
-- ESP32-S3 sends `nhiet_do` and `muc_nuoc` to `pool_api.php` by HTTP POST. The Android app reads those fields from the API by HTTP GET every 3 seconds.
-- ESP32-S3 also publishes the same telemetry to `smartpool/telemetry` on MQTT. The Android app receives temperature and water status immediately when connected.
-- The app publishes `0` or `1` to `smartpool/cmd/bom_vao` and `smartpool/cmd/bom_ra`. ESP32-S3 switches active-LOW relays on GPIO16 and GPIO17 and publishes actual state to `smartpool/status`.
+## Sơ đồ đấu nối
 
-`muc_nuoc` is `1` when the ADC reading is at or above the configured threshold and `0` when it is below. The raw reading is printed on the ESP serial monitor and included in MQTT telemetry as `muc_nuoc_raw` for calibration. If an ADC read fails, ESP does not send a new water value.
+Sơ đồ dưới đây dùng **một nguồn 12 V** và hai nhánh hạ áp riêng. Cả hai bơm trong sơ đồ là loại **5 V DC**. Chọn bộ hạ áp và nguồn 12 V theo dòng khởi động thực tế của bơm; nhãn 12 V–2 A của nguồn không cho biết bộ hạ áp 5 V có đủ dòng cho bơm hay không.
 
-## Setup
+```text
+                         NGUỒN 12 V
+                      +12 V       GND
+                        │          │
+            ┌───────────┴──────────┴───────────┐
+            │                                   │
+     Bộ hạ áp A: 12 → 5 V                Bộ hạ áp B: 12 → 5 V
+       nhánh cấp bơm                      nhánh điều khiển
+            │                                   ├── bo ESP32-S3: chân 5V/VIN (*)
+            ├── +5 V → COM1 relay               └── module relay: VCC 5 V (**)
+            │             NO1 → (+) bơm 1
+            ├── +5 V → COM2 relay
+            │             NO2 → (+) bơm 2
+            └── GND → (-) của hai bơm
 
-1. Import the updated `web-backend/pool_db.sql` into MySQL using phpMyAdmin. It creates the `pool_status` row and the `pool_history` table. Importing it again preserves existing rows.
-2. Replace `xampp/htdocs/pool_api/pool_api.php` with the updated `web-backend/pool_api.php`. Verify `http://192.168.10.214/pool_api/pool_api.php` returns JSON from the Android phone.
-3. Start Mosquitto with `mqtt-broker/mosquitto.conf`, listening on port `1767` of `192.168.10.214`.
-4. In `esp-firmware`, use `idf.py menuconfig` to adjust the API URL or MQTT URI if the server IP changes. Under **Water Level Configuration**, calibrate the threshold from serial ADC readings. Build and flash the ESP32-S3.
-5. Put the ESP32-S3, Android phone, and server on the same LAN. Allow inbound TCP ports 80 and 1767 on the server firewall.
+     ESP GPIO16 ───────────────────────────────→ IN1 relay
+     ESP GPIO17 ───────────────────────────────→ IN2 relay
+     ESP GND    ───────────────────────────────→ GND relay và GND cảm biến
 
-## Wi-Fi setup
+     ESP 3V3 ──┬───────────────────────────────→ VDD DS18B20
+               └── điện trở 4,7 kΩ ──┐
+     ESP GPIO15 ──────────────────────┴────────→ DQ DS18B20
+     ESP GND ──────────────────────────────────→ GND DS18B20
 
-On first setup, connect a phone or laptop to **SmartPool-Setup** with the default password **12345678**, then open **http://192.168.4.1**. Choose a Wi-Fi network from the scanned list (or enter a hidden SSID), enter its password, and submit. The ESP32-S3 stores the credentials in flash. After it joins the LAN, the setup access point turns off; the same configuration page remains available at the ESP's LAN IP shown in the serial log (for example, `http://192.168.10.x/`). Reserve that IP in your router if you want a stable address.
+     ESP GPIO18 ←──────────────────────────────── AO cảm biến mực nước
+     ESP GND ──────────────────────────────────→ GND cảm biến mực nước
+```
 
-After three failed Wi-Fi connection attempts, the setup access point turns on again. The ESP keeps retrying the saved network every 30 seconds, so it reconnects automatically when the network returns. The access point turns off again once the ESP gets a LAN IP. The setup SSID and password can be changed under **Smart Pool Network** in `menuconfig`.
+(*) Chỉ cấp 5 V vào chân **5V/VIN nếu bo ESP32-S3 của bạn hỗ trợ**. Nếu dùng module ESP32-S3 trần, phải dùng bộ ổn áp 3,3 V phù hợp; không đưa 5 V vào chân 3V3. Không nối 12 V trực tiếp vào ESP, cảm biến hoặc bơm 5 V.
 
-## Offline telemetry and history
+(**) Cấp nguồn cho module relay đúng điện áp ghi trên module. GPIO16 và GPIO17 chỉ điều khiển chân IN; không cấp dòng cho bơm. Firmware dùng relay **kích mức LOW**: mức LOW bật relay, mức HIGH tắt relay. Dùng tiếp điểm **COM–NO** để bơm mặc định tắt khi relay chưa hút.
 
-When Wi-Fi or the API is unavailable, ESP32-S3 saves unsent samples in NVS flash and retries them in order after connectivity returns. The queue survives a restart. The API uses each sample's ID to avoid duplicate history rows if a request succeeded but its response was lost. `pool_history` stores temperature, water status, raw ADC value, and server receipt time; inspect it in phpMyAdmin. The Android app continues to read the latest status from `pool_status`.
+Đường GND của ESP, relay và cảm biến cần chung mốc điện áp. Cho dòng bơm đi trên dây nguồn và dây GND riêng về nhánh cấp bơm, tránh đi qua dây GND của ESP. Nếu cảm biến mực nước được cấp 5 V, phải bảo đảm điện áp tại AO **không vượt 3,3 V** trước khi nối vào GPIO18; dùng mạch chia áp nếu cần. Nếu bo cảm biến hỗ trợ cấp 3,3 V, có thể cấp từ 3V3 của ESP.
 
-The queue holds **128 samples**. At a 1-second sampling interval, this covers about 2 minutes of continuous outage; at 10 seconds, about 21 minutes. Once full, the oldest sample is removed and a warning is logged. For longer outages, increase the queue capacity with flash/storage planning or reduce the sampling frequency. `received_at` is the time the server received a sample, so delayed samples do not have their original measurement time.
+| Thiết bị | Chân ESP32-S3 | Ghi chú |
+| --- | --- | --- |
+| DS18B20 DQ | GPIO15 | Điện trở kéo lên 4,7 kΩ từ DQ đến 3V3 |
+| Relay 1 / bơm vào | GPIO16 | IN1, kích LOW |
+| Relay 2 / bơm ra | GPIO17 | IN2, kích LOW |
+| Cảm biến mực nước AO | GPIO18 | ADC2, tín hiệu tối đa 3,3 V |
 
-GPIO18 is ADC2 channel 7 on ESP32-S3. If ADC reads repeatedly fail while Wi-Fi is active, use an ADC1 pin (GPIO1–10) and change the water GPIO in `menuconfig`.
+## Cấu hình của project
 
-If the log reports a `1-Wire reset pulse receive timeout` on GPIO15, the firmware continues reporting water level and searches every 5 seconds while no sensor is active. Check DS18B20 VDD/GND/DQ, the 4.7 kΩ pull-up from DQ to 3.3 V, and the configured GPIO. A sensor connected later is discovered without restarting; successful readings appear as `DS18B20[0]: xx.xx C` in the serial log. A reading of exactly 85 °C is ignored because it is the sensor's power-on register value. MQTT starts only after Wi-Fi receives an IP address; if broker connection errors continue after the IP log, check that `192.168.10.214:1767` is reachable from the ESP network.
+Các mục firmware nằm trong `esp-firmware/main/Kconfig.projbuild` và chỉnh bằng `idf.py menuconfig`. `esp-firmware/sdkconfig.defaults` là giá trị mặc định cho cấu hình mới; `esp-firmware/sdkconfig` là cấu hình hiện có trên máy.
 
-If a DS18B20 scratchpad read has a CRC error, the firmware waits 20 ms and reads it once more. A recovered read appears in the log. After three consecutive failed readings, that sensor is disabled; other sensors, water level, relays, and networking continue to run. The periodic search reactivates a repaired sensor without restarting the board. Repeated CRC errors still require checking the 1-Wire wiring, pull-up, and sensor power.
+| Mục cấu hình | Mặc định | Cấu hình hiện có | Ý nghĩa |
+| --- | --- | --- | --- |
+| `DS18B20_GPIO` | 15 | 15 | Chân DQ của DS18B20 |
+| `DS18B20_MAX_DEVICES` | 2 | 2 | Số cảm biến nhiệt tối đa trên bus |
+| `DS18B20_READ_INTERVAL_MS` | 1000 ms | 10000 ms | Chu kỳ đọc và gửi mẫu |
+| `WATER_LEVEL_GPIO` | 18 | 18 | Chân ADC đọc mực nước |
+| `WATER_LOW_THRESHOLD` | 2000 | 2000 | ADC dưới ngưỡng nghĩa là thiếu nước |
+| `RELAY_1_GPIO` / `RELAY_2_GPIO` | 16 / 17 | 16 / 17 | Hai chân điều khiển relay |
+| `POOL_SETUP_AP_SSID` | `SmartPool-Setup` | `SmartPool-Setup` | Tên Wi-Fi cấu hình của ESP |
+| `POOL_SETUP_AP_PASSWORD` | `12345678` | `12345678` | Mật khẩu Wi-Fi cấu hình |
+| `POOL_API_URL` | `http://192.168.10.214/pool_api/pool_api.php` | Giống mặc định | Địa chỉ API XAMPP |
+| `POOL_MQTT_URI` | `mqtts://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883` | Giống mặc định | Địa chỉ HiveMQ Cloud của ESP |
+
+Ứng dụng Android dùng HiveMQ Cloud qua `ssl://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883` trong `MainActivity.java` và `PoolMonitorService.java`. API XAMPP vẫn ở `192.168.10.214`; nếu IP máy XAMPP thay đổi, sửa URL API trong firmware và `MainActivity.java` rồi triển khai lại. Có thể giữ địa chỉ bằng DHCP reservation trên router.
+
+Mosquitto cục bộ không còn được firmware và ứng dụng sử dụng; `mqtt-broker/mosquitto.conf` chỉ là cấu hình cũ để tham khảo. API PHP dùng MySQL tại `localhost`, cơ sở dữ liệu `pool_db`, tài khoản `root` và mật khẩu rỗng; sửa `web-backend/pool_api.php` nếu cấu hình MySQL của bạn khác. API HTTP hiện dành cho mạng nội bộ.
+
+## Cài đặt máy chủ và ứng dụng
+
+1. Khởi động Apache và MySQL trong XAMPP. Nhập `web-backend/pool_db.sql` bằng phpMyAdmin. Tệp SQL tạo bảng `pool_status`, bảng `pool_history` và bản ghi trạng thái `id = 1`; nhập lại không xóa dữ liệu cũ.
+2. Chép `web-backend/pool_api.php` vào `xampp/htdocs/pool_api/pool_api.php`. Trên điện thoại cùng mạng, mở `http://192.168.10.214/pool_api/pool_api.php` và kiểm tra API trả về JSON.
+3. Tạo tài khoản MQTT trên HiveMQ Cloud với quyền đọc và ghi các topic của project. Sao chép `esp-firmware/main/mqtt_credentials.h.example` thành `esp-firmware/main/mqtt_credentials.h`, rồi điền `SMARTPOOL_MQTT_USERNAME` và `SMARTPOOL_MQTT_PASSWORD`. Tệp này được Git bỏ qua. Nếu hai giá trị còn rỗng, ESP vẫn gửi HTTP nhưng không khởi động MQTT.
+4. Sao chép `android-app/mqtt.properties.example` thành `android-app/mqtt.properties`, rồi điền `hivemq.username` và `hivemq.password`. Tệp này cũng được Git bỏ qua. Hai thông tin này sẽ được nhúng vào APK để ứng dụng kết nối trực tiếp với broker; nên dùng tài khoản riêng có quyền phù hợp và không phát hành APK chứa tài khoản dùng chung rộng rãi.
+5. Trong thư mục `esp-firmware`, chạy `idf.py menuconfig` để kiểm tra chân, ngưỡng ADC, URL API và URI MQTT; sau đó build/flash ESP32-S3. Mở `android-app` bằng Android Studio, build và cài lại ứng dụng.
+6. ESP và điện thoại cần truy cập Internet tới HiveMQ Cloud cổng **8883**; cả hai cần truy cập XAMPP trong LAN qua cổng **80**. ESP cần đồng bộ giờ qua NTP (`pool.ntp.org`, UDP **123**) trước khi kiểm tra chứng chỉ TLS và kết nối MQTT.
+
+## Cấu hình Wi-Fi cho ESP
+
+Khi chưa có thông tin Wi-Fi, ESP phát mạng **SmartPool-Setup**, mật khẩu mặc định **12345678**. Kết nối điện thoại vào mạng đó, mở `http://192.168.4.1`, chọn Wi-Fi từ danh sách quét được hoặc nhập SSID ẩn, rồi điền mật khẩu. ESP lưu thông tin Wi-Fi vào flash và tự kết nối sau những lần khởi động tiếp theo.
+
+Khi kết nối thành công, ESP tắt mạng cấu hình. Trang cấu hình vẫn truy cập được bằng IP nội bộ của ESP, được in trong log dưới dạng `Wi-Fi got IP: ...`. Nếu mất Wi-Fi sau ba lần thử, ESP bật lại mạng cấu hình và tiếp tục thử kết nối mạng đã lưu mỗi **30 giây**; mạng cấu hình tắt khi ESP nhận lại IP nội bộ.
+
+## Dữ liệu, điều khiển và lịch sử
+
+ESP gửi `nhiet_do`, `muc_nuoc` và `muc_nuoc_raw` đến API bằng HTTP POST, đồng thời phát mẫu đo trực tiếp qua MQTT. Ứng dụng Android nhận MQTT khi kết nối và đọc API mỗi **3 giây**. `muc_nuoc = 1` khi ADC lớn hơn hoặc bằng `WATER_LOW_THRESHOLD`; `muc_nuoc = 0` khi thấp hơn ngưỡng. Nếu một cảm biến đọc lỗi, ESP không gửi giá trị mới của cảm biến đó trong mẫu hiện tại.
+
+| MQTT topic | Dữ liệu |
+| --- | --- |
+| `smartpool/telemetry` | Nhiệt độ và mực nước từ ESP |
+| `smartpool/status` | Trạng thái trực tuyến và trạng thái thực tế của hai bơm |
+| `smartpool/cmd/bom_vao` | Lệnh `0`/`1` tắt/bật bơm 1 |
+| `smartpool/cmd/bom_ra` | Lệnh `0`/`1` tắt/bật bơm 2 |
+
+Firmware không cho hai bơm bật đồng thời. Khi mất Wi-Fi hoặc MQTT, hai relay được tắt. `pool_status` giữ trạng thái mới nhất cho ứng dụng; `pool_history` lưu lịch sử mẫu đo để xem trong phpMyAdmin. HTTP tới XAMPP vẫn hoạt động độc lập với kết nối MQTT Cloud.
+
+Khi mất Wi-Fi hoặc API không phản hồi, ESP lưu mẫu chưa gửi vào hàng đợi NVS trong flash và gửi bù theo thứ tự khi có mạng. Hàng đợi vẫn còn sau khi khởi động lại; `sample_id` giúp API tránh ghi trùng. Hàng đợi chứa tối đa **128 mẫu**: khoảng **2 phút** nếu lấy mẫu mỗi 1 giây, hoặc khoảng **21 phút** với cấu hình hiện tại là 10 giây. Khi đầy, mẫu cũ nhất bị thay thế và ESP ghi cảnh báo. Cột `received_at` là thời điểm máy chủ **nhận** mẫu, không phải thời điểm ESP đo lúc đang mất mạng.
+
+## Kiểm tra khi có lỗi
+
+- **Không thấy DS18B20:** kiểm tra VDD 3,3 V, GND, DQ GPIO15 và điện trở kéo lên 4,7 kΩ. Khi chưa có cảm biến hoạt động, ESP tìm lại mỗi **5 giây** mà vẫn tiếp tục đọc mực nước. Sau khi tìm thấy, log có dạng `DS18B20[0]: 27.50 C`.
+- **DS18B20 báo CRC hoặc 85 °C:** firmware đọc lại một lần sau **20 ms** nếu sai CRC và bỏ qua giá trị 85 °C. Nếu lỗi lặp lại, kiểm tra dây, nguồn cảm biến và nhiễu khi bơm chạy. Sau ba lần đọc lỗi liên tiếp, cảm biến tạm ngừng đọc; ESP sẽ tìm lại khi không còn cảm biến nào hoạt động.
+- **Mực nước thay đổi bất thường:** xem giá trị `Water ADC` trong log, kiểm tra dây AO/GND và đo điện áp AO. GPIO18 thuộc ADC2; nếu tín hiệu vẫn không ổn định khi Wi-Fi hoạt động, chuyển dây AO sang chân ADC1 còn trống (GPIO1–10) và đổi `WATER_LEVEL_GPIO` trong `menuconfig`, rồi hiệu chỉnh lại ngưỡng.
+- **Lỗi xuất hiện khi bật bơm 5 V:** kiểm tra điện áp 5 V tại bơm và điện áp cấp cho ESP đúng lúc khởi động bơm. Để dây cấp bơm tách khỏi dây cấp ESP; nếu dùng chung một bộ hạ áp, kiểm tra dòng đầu ra của bộ hạ áp hoặc dùng hai nhánh hạ áp như sơ đồ trên.
+- **Không kết nối API:** kiểm tra IP máy XAMPP, Apache, đường dẫn PHP và tường lửa cổng 80. ESP in `HTTP API target` khi khởi động và `HTTP POST OK` khi gửi mẫu thành công.
+- **Không kết nối HiveMQ Cloud:** kiểm tra tên đăng nhập/mật khẩu trong hai tệp cục bộ, quyền đọc/ghi topic, Internet, cổng 8883 và đồng bộ giờ NTP của ESP. ESP in lỗi MQTT/TLS khi không kết nối được.

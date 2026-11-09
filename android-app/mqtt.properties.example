@@ -1,0 +1,4 @@
+# Sao chép thành mqtt.properties rồi điền tài khoản HiveMQ Cloud.
+# Tệp mqtt.properties không được đưa lên Git.
+hivemq.username=
+hivemq.password=
