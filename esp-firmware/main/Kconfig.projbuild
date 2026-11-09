@@ -67,6 +67,20 @@ menu "Smart Pool Network"
         string "MQTT broker URI"
         default "mqtts://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883"
 
+    choice POOL_CONTROL_TRANSPORT
+        prompt "Pump control transport"
+        default POOL_CONTROL_MQTT
+        help
+            Select whether pump commands come from HiveMQ Cloud or the
+            XAMPP API. Telemetry continues to use HTTP in either mode.
+
+        config POOL_CONTROL_MQTT
+            bool "MQTT (HiveMQ Cloud)"
+
+        config POOL_CONTROL_HTTP
+            bool "HTTP polling (XAMPP)"
+    endchoice
+
 endmenu
 
 menu "Relay Configuration"

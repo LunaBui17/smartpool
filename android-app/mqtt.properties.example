@@ -2,3 +2,4 @@
 # Tệp mqtt.properties không được đưa lên Git.
 hivemq.username=
 hivemq.password=
+control.mode=mqtt

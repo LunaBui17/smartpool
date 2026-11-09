@@ -1,6 +1,6 @@
 # Smart Pool
 
-Hệ thống dùng ESP32-S3 để đo nhiệt độ nước bằng DS18B20, đọc cảm biến mực nước dạng analog và điều khiển hai bơm qua relay. Ứng dụng Android và ESP trao đổi lệnh/trạng thái qua HiveMQ Cloud bằng MQTT/TLS; dữ liệu mới nhất và lịch sử vẫn được gửi đến API PHP trên XAMPP trong mạng nội bộ.
+Hệ thống dùng ESP32-S3 để đo nhiệt độ nước bằng DS18B20, đọc cảm biến mực nước dạng analog và điều khiển hai bơm qua relay. Ứng dụng Android và ESP trao đổi lệnh bơm qua HiveMQ Cloud (MQTT/TLS) hoặc XAMPP (HTTP), tùy cấu hình. Dữ liệu mới nhất và lịch sử luôn được gửi đến API PHP trên XAMPP trong mạng nội bộ.
 
 ## Sơ đồ đấu nối
 
@@ -63,6 +63,7 @@ Các mục firmware nằm trong `esp-firmware/main/Kconfig.projbuild` và chỉn
 | `POOL_SETUP_AP_PASSWORD` | `12345678` | `12345678` | Mật khẩu Wi-Fi cấu hình |
 | `POOL_API_URL` | `http://192.168.10.214/pool_api/pool_api.php` | Giống mặc định | Địa chỉ API XAMPP |
 | `POOL_MQTT_URI` | `mqtts://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883` | Giống mặc định | Địa chỉ HiveMQ Cloud của ESP |
+| `POOL_CONTROL_TRANSPORT` | MQTT | MQTT | Chọn MQTT hoặc HTTP trong **Smart Pool Network → Pump control transport** |
 
 Ứng dụng Android dùng HiveMQ Cloud qua `ssl://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883` trong `MainActivity.java` và `PoolMonitorService.java`. API XAMPP vẫn ở `192.168.10.214`; nếu IP máy XAMPP thay đổi, sửa URL API trong firmware và `MainActivity.java` rồi triển khai lại. Có thể giữ địa chỉ bằng DHCP reservation trên router.
 
@@ -70,12 +71,12 @@ Mosquitto cục bộ không còn được firmware và ứng dụng sử dụng;
 
 ## Cài đặt máy chủ và ứng dụng
 
-1. Khởi động Apache và MySQL trong XAMPP. Nhập `web-backend/pool_db.sql` bằng phpMyAdmin. Tệp SQL tạo bảng `pool_status`, bảng `pool_history` và bản ghi trạng thái `id = 1`; nhập lại không xóa dữ liệu cũ.
+1. Khởi động Apache và MySQL trong XAMPP. Nhập lại `web-backend/pool_db.sql` bằng phpMyAdmin. Tệp SQL tạo các bảng `pool_status`, `pool_history`, `pool_commands` và bản ghi `id = 1`; nhập lại không xóa dữ liệu cũ. Bảng `pool_commands` cần thiết cho chế độ HTTP.
 2. Chép `web-backend/pool_api.php` vào `xampp/htdocs/pool_api/pool_api.php`. Trên điện thoại cùng mạng, mở `http://192.168.10.214/pool_api/pool_api.php` và kiểm tra API trả về JSON.
 3. Tạo tài khoản MQTT trên HiveMQ Cloud với quyền đọc và ghi các topic của project. Sao chép `esp-firmware/main/mqtt_credentials.h.example` thành `esp-firmware/main/mqtt_credentials.h`, rồi điền `SMARTPOOL_MQTT_USERNAME` và `SMARTPOOL_MQTT_PASSWORD`. Tệp này được Git bỏ qua. Nếu hai giá trị còn rỗng, ESP vẫn gửi HTTP nhưng không khởi động MQTT.
-4. Sao chép `android-app/mqtt.properties.example` thành `android-app/mqtt.properties`, rồi điền `hivemq.username` và `hivemq.password`. Tệp này cũng được Git bỏ qua. Hai thông tin này sẽ được nhúng vào APK để ứng dụng kết nối trực tiếp với broker; nên dùng tài khoản riêng có quyền phù hợp và không phát hành APK chứa tài khoản dùng chung rộng rãi.
-5. Trong thư mục `esp-firmware`, chạy `idf.py menuconfig` để kiểm tra chân, ngưỡng ADC, URL API và URI MQTT; sau đó build/flash ESP32-S3. Mở `android-app` bằng Android Studio, build và cài lại ứng dụng.
-6. ESP và điện thoại cần truy cập Internet tới HiveMQ Cloud cổng **8883**; cả hai cần truy cập XAMPP trong LAN qua cổng **80**. ESP cần đồng bộ giờ qua NTP (`pool.ntp.org`, UDP **123**) trước khi kiểm tra chứng chỉ TLS và kết nối MQTT.
+4. Sao chép `android-app/mqtt.properties.example` thành `android-app/mqtt.properties`, rồi điền `hivemq.username` và `hivemq.password`. Nếu tệp đã có, giữ nguyên tài khoản và thêm `control.mode=mqtt` hoặc `control.mode=http`. Tệp này được Git bỏ qua. Tài khoản được nhúng vào APK; nên dùng tài khoản riêng có quyền phù hợp.
+5. Trong thư mục `esp-firmware`, chạy `idf.py menuconfig` và chọn **Pump control transport** khớp với `control.mode` của Android; kiểm tra chân, ngưỡng ADC, URL API và URI MQTT. Sau đó build/flash ESP32-S3, build và cài lại ứng dụng Android. Mặc định cả hai phía dùng MQTT.
+6. ESP và điện thoại cần truy cập XAMPP trong LAN qua cổng **80**. Khi dùng MQTT để điều khiển hoặc nhận telemetry trực tiếp, cả hai cần truy cập HiveMQ Cloud cổng **8883**; ESP cần đồng bộ giờ qua NTP (`pool.ntp.org`, UDP **123**) trước khi kiểm tra chứng chỉ TLS.
 
 ## Cấu hình Wi-Fi cho ESP
 
@@ -94,7 +95,9 @@ ESP gửi `nhiet_do`, `muc_nuoc` và `muc_nuoc_raw` đến API bằng HTTP POST,
 | `smartpool/cmd/bom_vao` | Lệnh `0`/`1` tắt/bật bơm 1 |
 | `smartpool/cmd/bom_ra` | Lệnh `0`/`1` tắt/bật bơm 2 |
 
-Firmware không cho hai bơm bật đồng thời. Khi mất Wi-Fi hoặc MQTT, hai relay được tắt. `pool_status` giữ trạng thái mới nhất cho ứng dụng; `pool_history` lưu lịch sử mẫu đo để xem trong phpMyAdmin. HTTP tới XAMPP vẫn hoạt động độc lập với kết nối MQTT Cloud.
+Firmware không cho hai bơm bật đồng thời. Khi mất Wi-Fi, hai relay được tắt. Ở chế độ MQTT, mất broker cũng tắt bơm. Ở chế độ HTTP, ESP hỏi `GET /pool_api/pool_api.php?commands=1` mỗi **3 giây** và tắt bơm nếu hai lần hỏi liên tiếp thất bại. `pool_status` giữ trạng thái mới nhất do ESP báo về; `pool_history` lưu lịch sử mẫu đo. HTTP telemetry tới XAMPP vẫn hoạt động ở cả hai chế độ; MQTT telemetry/status vẫn hoạt động nếu đã cấu hình tài khoản HiveMQ.
+
+Ở chế độ HTTP, ứng dụng gửi `POST /pool_api/pool_api.php` với JSON `{"command":{"bom_vao":1,"bom_ra":0}}` để bật bơm vào; gửi cả hai giá trị bằng `0` để tắt. API lưu lệnh vào `pool_commands` và tăng `revision`; ESP chỉ áp dụng revision mới. Lần đọc đầu sau khi ESP khởi động, kết nối lại Wi-Fi hoặc khôi phục API chỉ lấy mốc revision để tránh bật bơm từ lệnh cũ. Hãy chờ log `HTTP command baseline` trước khi bấm lệnh mới. API HTTP hiện dành cho LAN và chưa có xác thực riêng.
 
 Khi mất Wi-Fi hoặc API không phản hồi, ESP lưu mẫu chưa gửi vào hàng đợi NVS trong flash và gửi bù theo thứ tự khi có mạng. Hàng đợi vẫn còn sau khi khởi động lại; `sample_id` giúp API tránh ghi trùng. Hàng đợi chứa tối đa **128 mẫu**: khoảng **2 phút** nếu lấy mẫu mỗi 1 giây, hoặc khoảng **21 phút** với cấu hình hiện tại là 10 giây. Khi đầy, mẫu cũ nhất bị thay thế và ESP ghi cảnh báo. Cột `received_at` là thời điểm máy chủ **nhận** mẫu, không phải thời điểm ESP đo lúc đang mất mạng.
 

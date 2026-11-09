@@ -4,8 +4,10 @@
 #include <string.h>
 #include <stdatomic.h>
 #include <inttypes.h>
+#include <stdint.h>
 #include <time.h>
 
+#include "cJSON.h"
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
 #include "esp_http_client.h"
@@ -17,6 +19,7 @@
 #include "esp_wifi_default.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "mqtt_client.h"
 #include "mqtt_credentials.h"
 #include "nvs_flash.h"
@@ -41,6 +44,12 @@ static _Atomic bool s_pump_in;
 static _Atomic bool s_pump_out;
 static uint32_t s_boot_nonce;
 static uint32_t s_sample_counter;
+static SemaphoreHandle_t s_relay_lock;
+#if CONFIG_POOL_CONTROL_HTTP
+static uint32_t s_http_last_revision;
+static _Atomic bool s_http_baselined;
+static void http_command_task(void *arg);
+#endif
 
 static void publish_status(void)
 {
@@ -54,10 +63,35 @@ static void publish_status(void)
     esp_mqtt_client_enqueue(s_mqtt, TOPIC_STATUS, json, 0, 1, 1, true);
 }
 
+#if CONFIG_POOL_CONTROL_MQTT
 static bool is_topic(const esp_mqtt_event_handle_t event, const char *topic)
 {
     size_t length = strlen(topic);
     return event->topic_len == length && memcmp(event->topic, topic, length) == 0;
+}
+#endif
+
+static esp_err_t set_pumps(bool pump_in, bool pump_out)
+{
+    if (pump_in && pump_out) return ESP_ERR_INVALID_ARG;
+    if (xSemaphoreTake(s_relay_lock, portMAX_DELAY) != pdTRUE) return ESP_FAIL;
+    esp_err_t err = ESP_OK;
+    if (!pump_in) err = relay_set(RELAY_1, false);
+    if (err == ESP_OK && !pump_out) err = relay_set(RELAY_2, false);
+    if (err == ESP_OK && pump_in) err = relay_set(RELAY_1, true);
+    if (err == ESP_OK && pump_out) err = relay_set(RELAY_2, true);
+    if (err == ESP_OK) {
+        s_pump_in = pump_in;
+        s_pump_out = pump_out;
+    } else {
+        relay_set(RELAY_1, false);
+        relay_set(RELAY_2, false);
+        s_pump_in = false;
+        s_pump_out = false;
+    }
+    xSemaphoreGive(s_relay_lock);
+    publish_status();
+    return err;
 }
 
 static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_id, void *data)
@@ -66,18 +100,19 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
         s_mqtt_connected = true;
+#if CONFIG_POOL_CONTROL_MQTT
         esp_mqtt_client_subscribe(s_mqtt, TOPIC_CMD_IN, 1);
         esp_mqtt_client_subscribe(s_mqtt, TOPIC_CMD_OUT, 1);
+#endif
         publish_status();
         ESP_LOGI(TAG, "MQTT connected");
         break;
     case MQTT_EVENT_DISCONNECTED:
         s_mqtt_connected = false;
-        relay_set(RELAY_1, false);
-        relay_set(RELAY_2, false);
-        s_pump_in = false;
-        s_pump_out = false;
+#if CONFIG_POOL_CONTROL_MQTT
+        set_pumps(false, false);
         ESP_LOGW(TAG, "MQTT disconnected; pumps OFF");
+#endif
         break;
     case MQTT_EVENT_ERROR:
         if (event->error_handle) {
@@ -88,6 +123,7 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
         }
         break;
     case MQTT_EVENT_DATA: {
+#if CONFIG_POOL_CONTROL_MQTT
         if (event->total_data_len != event->data_len || event->data_len != 1 ||
             (event->data[0] != '0' && event->data[0] != '1')) {
             ESP_LOGW(TAG, "Ignored invalid pump command");
@@ -99,24 +135,21 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
             break;
         }
         bool on = event->data[0] == '1';
-        if (on && ((pump_in && s_pump_out) || (pump_out && s_pump_in))) {
+        if (on && !s_wifi_connected) break;
+        bool desired_in = pump_in ? on : s_pump_in;
+        bool desired_out = pump_out ? on : s_pump_out;
+        if (desired_in && desired_out) {
             ESP_LOGW(TAG, "Cannot run both pumps together");
             publish_status();
             break;
         }
-        relay_channel_t channel = pump_in ? RELAY_1 : RELAY_2;
-        esp_err_t err = relay_set(channel, on);
+        esp_err_t err = set_pumps(desired_in, desired_out);
         if (err == ESP_OK) {
-            if (pump_in) {
-                s_pump_in = on;
-            } else {
-                s_pump_out = on;
-            }
-            publish_status();
             ESP_LOGI(TAG, "%s %s", pump_in ? "Pump in" : "Pump out", on ? "ON" : "OFF");
         } else {
             ESP_LOGE(TAG, "Relay control failed: %s", esp_err_to_name(err));
         }
+#endif
         break;
     }
     default:
@@ -169,12 +202,12 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t event_i
         if (s_has_wifi_credentials) esp_wifi_connect();
     } else if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         s_wifi_connected = false;
+#if CONFIG_POOL_CONTROL_HTTP
+        s_http_baselined = false;
+#endif
         s_mqtt_connected = false;
         // Stop both pumps when network control is unavailable.
-        relay_set(RELAY_1, false);
-        relay_set(RELAY_2, false);
-        s_pump_in = false;
-        s_pump_out = false;
+        set_pumps(false, false);
         if (s_has_wifi_credentials && s_wifi_failures < 3) s_wifi_failures++;
         if (s_has_wifi_credentials && s_wifi_failures < 3) {
             esp_wifi_connect();
@@ -196,6 +229,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t event_i
 
 esp_err_t pool_network_init(void)
 {
+    s_relay_lock = xSemaphoreCreateMutex();
+    if (!s_relay_lock) return ESP_ERR_NO_MEM;
     esp_err_t err = nvs_flash_init();
     if (err != ESP_OK) return err;
     err = telemetry_queue_init();
@@ -259,25 +294,158 @@ esp_err_t pool_network_init(void)
     if (xTaskCreate(wifi_retry_task, "wifi_retry", 3072, NULL, 4, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
+#if CONFIG_POOL_CONTROL_HTTP
+    if (xTaskCreate(http_command_task, "http_commands", 4096, NULL, 4, NULL) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+#endif
+#if CONFIG_POOL_CONTROL_HTTP
+    ESP_LOGI(TAG, "Pump control mode: HTTP");
+#else
+    ESP_LOGI(TAG, "Pump control mode: MQTT");
+#endif
     return ESP_OK;
 }
+
+#if CONFIG_POOL_CONTROL_HTTP
+typedef struct {
+    char text[128];
+    size_t length;
+} http_command_response_t;
+
+static esp_err_t http_command_event(esp_http_client_event_t *event)
+{
+    if (event->event_id != HTTP_EVENT_ON_DATA) return ESP_OK;
+    http_command_response_t *response = event->user_data;
+    if (event->data_len < 0 ||
+        (size_t)event->data_len >= sizeof(response->text) - response->length) {
+        return ESP_FAIL;
+    }
+    memcpy(response->text + response->length, event->data, event->data_len);
+    response->length += event->data_len;
+    response->text[response->length] = '\0';
+    return ESP_OK;
+}
+
+static void post_http_pump_status(void)
+{
+    char json[64];
+    snprintf(json, sizeof(json), "{\"bom_control\":%d,\"van_control\":%d}",
+             s_pump_in ? 1 : 0, s_pump_out ? 1 : 0);
+    esp_http_client_config_t config = {
+        .url = CONFIG_POOL_API_URL,
+        .timeout_ms = 2000,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) return;
+    esp_http_client_set_method(client, HTTP_METHOD_POST);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_post_field(client, json, strlen(json));
+    esp_err_t err = esp_http_client_perform(client);
+    if (err != ESP_OK || esp_http_client_get_status_code(client) != 200) {
+        ESP_LOGW(TAG, "Could not report pump status to XAMPP: %s", esp_err_to_name(err));
+    }
+    esp_http_client_cleanup(client);
+}
+
+static void process_http_command(const char *json)
+{
+    cJSON *root = cJSON_Parse(json);
+    if (!root) return;
+    const cJSON *revision_value = cJSON_GetObjectItemCaseSensitive(root, "revision");
+    const cJSON *pump_in_value = cJSON_GetObjectItemCaseSensitive(root, "bom_vao");
+    const cJSON *pump_out_value = cJSON_GetObjectItemCaseSensitive(root, "bom_ra");
+    if (!cJSON_IsNumber(revision_value) || !cJSON_IsNumber(pump_in_value) ||
+        !cJSON_IsNumber(pump_out_value) || revision_value->valuedouble < 0 ||
+        revision_value->valuedouble > UINT32_MAX ||
+        (double)(uint32_t)revision_value->valuedouble != revision_value->valuedouble ||
+        (pump_in_value->valueint != 0 && pump_in_value->valueint != 1) ||
+        (pump_out_value->valueint != 0 && pump_out_value->valueint != 1)) {
+        ESP_LOGW(TAG, "Invalid HTTP pump command response");
+        cJSON_Delete(root);
+        return;
+    }
+    uint32_t revision = (uint32_t)revision_value->valuedouble;
+    if (!s_http_baselined || revision < s_http_last_revision) {
+        s_http_last_revision = revision;
+        s_http_baselined = true;
+        ESP_LOGI(TAG, "HTTP command baseline: %" PRIu32, revision);
+    } else if (revision > s_http_last_revision && s_wifi_connected) {
+        bool pump_in = pump_in_value->valueint == 1;
+        bool pump_out = pump_out_value->valueint == 1;
+        esp_err_t err = set_pumps(pump_in, pump_out);
+        if (err == ESP_OK) {
+            s_http_last_revision = revision;
+            ESP_LOGI(TAG, "HTTP command %" PRIu32 ": pump in=%d, pump out=%d",
+                     revision, pump_in, pump_out);
+            post_http_pump_status();
+        } else {
+            ESP_LOGE(TAG, "Cannot apply HTTP command: %s", esp_err_to_name(err));
+        }
+    }
+    cJSON_Delete(root);
+}
+
+static void http_command_task(void *arg)
+{
+    char url[256];
+    unsigned int failed_polls = 0;
+    int written = snprintf(url, sizeof(url), "%s?commands=1", CONFIG_POOL_API_URL);
+    if (written < 0 || (size_t)written >= sizeof(url)) {
+        ESP_LOGE(TAG, "HTTP command URL is too long");
+        vTaskDelete(NULL);
+        return;
+    }
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(3000));
+        if (!s_wifi_connected) continue;
+        http_command_response_t response = {0};
+        esp_http_client_config_t config = {
+            .url = url,
+            .timeout_ms = 2000,
+            .event_handler = http_command_event,
+            .user_data = &response,
+        };
+        esp_http_client_handle_t client = esp_http_client_init(&config);
+        if (!client) continue;
+        esp_err_t err = esp_http_client_perform(client);
+        int status = esp_http_client_get_status_code(client);
+        esp_http_client_cleanup(client);
+        if (err == ESP_OK && status == 200 && response.length > 0) {
+            failed_polls = 0;
+            process_http_command(response.text);
+        } else {
+            if (++failed_polls >= 2) {
+                if (s_pump_in || s_pump_out) {
+                    set_pumps(false, false);
+                    ESP_LOGW(TAG, "XAMPP command channel unavailable; pumps OFF");
+                }
+                s_http_baselined = false;
+            }
+            ESP_LOGW(TAG, "HTTP command poll failed: %s, status=%d",
+                     esp_err_to_name(err), status);
+        }
+    }
+}
+#endif
 
 static void sample_to_json(const telemetry_sample_t *sample, char *json, size_t capacity)
 {
     if ((sample->flags & (TELEMETRY_HAS_TEMPERATURE | TELEMETRY_HAS_WATER)) ==
         (TELEMETRY_HAS_TEMPERATURE | TELEMETRY_HAS_WATER)) {
         snprintf(json, capacity,
-                 "{\"sample_id\":\"%016" PRIX64 "\",\"nhiet_do\":%.2f,\"muc_nuoc\":%d,\"muc_nuoc_raw\":%d}",
+                 "{\"sample_id\":\"%016" PRIX64 "\",\"nhiet_do\":%.2f,\"muc_nuoc\":%d,\"muc_nuoc_raw\":%d,\"bom_control\":%d,\"van_control\":%d}",
                  sample->id, sample->temperature,
-                 (sample->flags & TELEMETRY_WATER_NORMAL) ? 1 : 0, sample->water_raw);
+                 (sample->flags & TELEMETRY_WATER_NORMAL) ? 1 : 0, sample->water_raw,
+                 s_pump_in ? 1 : 0, s_pump_out ? 1 : 0);
     } else if (sample->flags & TELEMETRY_HAS_TEMPERATURE) {
-        snprintf(json, capacity, "{\"sample_id\":\"%016" PRIX64 "\",\"nhiet_do\":%.2f}",
-                 sample->id, sample->temperature);
+        snprintf(json, capacity, "{\"sample_id\":\"%016" PRIX64 "\",\"nhiet_do\":%.2f,\"bom_control\":%d,\"van_control\":%d}",
+                 sample->id, sample->temperature, s_pump_in ? 1 : 0, s_pump_out ? 1 : 0);
     } else {
         snprintf(json, capacity,
-                 "{\"sample_id\":\"%016" PRIX64 "\",\"muc_nuoc\":%d,\"muc_nuoc_raw\":%d}",
+                 "{\"sample_id\":\"%016" PRIX64 "\",\"muc_nuoc\":%d,\"muc_nuoc_raw\":%d,\"bom_control\":%d,\"van_control\":%d}",
                  sample->id, (sample->flags & TELEMETRY_WATER_NORMAL) ? 1 : 0,
-                 sample->water_raw);
+                 sample->water_raw, s_pump_in ? 1 : 0, s_pump_out ? 1 : 0);
     }
 }
 

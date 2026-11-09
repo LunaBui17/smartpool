@@ -515,6 +515,11 @@ public class MainActivity extends AppCompatActivity {
 
     private void sendPumpCommand(boolean pumpIn, boolean turnOn) {
 
+        if ("http".equalsIgnoreCase(BuildConfig.CONTROL_MODE)) {
+            sendHttpPumpCommand(pumpIn, turnOn);
+            return;
+        }
+
         if (mqttClient == null || !mqttClient.isConnected()) {
 
             Toast.makeText(
@@ -591,6 +596,58 @@ public class MainActivity extends AppCompatActivity {
             finishPumpRequest(pumpIn);
 
             Log.e(TAG, "Không gửi được lệnh MQTT", e);
+        }
+    }
+
+    private void sendHttpPumpCommand(boolean pumpIn, boolean turnOn) {
+
+        if (requestQueue == null) {
+            return;
+        }
+        boolean desiredIn = pumpIn ? turnOn : pumpInOn;
+        boolean desiredOut = pumpIn ? pumpOutOn : turnOn;
+        if (desiredIn && desiredOut) {
+            Toast.makeText(this, "Không thể bật hai bơm cùng lúc.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (pumpIn) {
+            pumpInPending = true;
+            btnPumpIn.setEnabled(false);
+        } else {
+            pumpOutPending = true;
+            btnPumpOut.setEnabled(false);
+        }
+
+        try {
+            JSONObject command = new JSONObject();
+            command.put("bom_vao", desiredIn ? 1 : 0);
+            command.put("bom_ra", desiredOut ? 1 : 0);
+            JSONObject body = new JSONObject();
+            body.put("command", command);
+
+            JsonObjectRequest request = new JsonObjectRequest(
+                    Request.Method.POST,
+                    API_URL,
+                    body,
+                    response -> {
+                        finishPumpRequest(pumpIn);
+                        Toast.makeText(this, "Đã gửi lệnh qua XAMPP, chờ ESP xác nhận.",
+                                Toast.LENGTH_SHORT).show();
+                    },
+                    error -> {
+                        finishPumpRequest(pumpIn);
+                        Log.e(TAG, "Lệnh bơm qua HTTP thất bại", error);
+                        Toast.makeText(this, "Không gửi được lệnh qua XAMPP.",
+                                Toast.LENGTH_LONG).show();
+                    }
+            );
+            request.setShouldCache(false);
+            request.setRetryPolicy(new DefaultRetryPolicy(4000, 0, 1.0f));
+            request.setTag(TAG);
+            requestQueue.add(request);
+        } catch (Exception error) {
+            finishPumpRequest(pumpIn);
+            Log.e(TAG, "Không tạo được lệnh HTTP", error);
         }
     }
 
@@ -684,6 +741,12 @@ public class MainActivity extends AppCompatActivity {
                             Double.NaN
                     );
                     int water = response.optInt("muc_nuoc", -1);
+
+                    if ("http".equalsIgnoreCase(BuildConfig.CONTROL_MODE) || !mqttConnected) {
+                        pumpInOn = response.optInt("bom_control", 0) == 1;
+                        pumpOutOn = response.optInt("van_control", 0) == 1;
+                        renderPumpStates();
+                    }
 
                     updateTemperature(temp);
                     updateWaterLevel(water);

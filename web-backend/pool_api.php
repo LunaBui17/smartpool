@@ -14,6 +14,25 @@ $conn->set_charset('utf8mb4');
 $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
 
 if ($method === 'GET') {
+    if (isset($_GET['commands']) && $_GET['commands'] === '1') {
+        $result = $conn->query('SELECT revision, bom_vao, bom_ra FROM pool_commands WHERE id = 1 LIMIT 1');
+        if (!$result) {
+            http_response_code(500);
+            echo json_encode(array('status' => 'error', 'message' => 'Không đọc được lệnh bơm; hãy nhập pool_db.sql'));
+        } elseif ($row = $result->fetch_assoc()) {
+            echo json_encode(array(
+                'revision' => (int)$row['revision'],
+                'bom_vao' => (int)$row['bom_vao'],
+                'bom_ra' => (int)$row['bom_ra']
+            ));
+        } else {
+            http_response_code(404);
+            echo json_encode(array('status' => 'error', 'message' => 'Chưa có pool_commands id=1'));
+        }
+        if ($result) $result->free();
+        $conn->close();
+        exit;
+    }
     $result = $conn->query('SELECT id, is_app_active, nhiet_do, ph, muc_nuoc, bom_control, van_control FROM pool_status WHERE id = 1 LIMIT 1');
     if (!$result) {
         http_response_code(500);
@@ -48,6 +67,41 @@ if ($method === 'POST') {
     if (!is_array($data) || count($data) === 0) {
         http_response_code(400);
         echo json_encode(array('status' => 'error', 'message' => 'JSON rỗng hoặc không hợp lệ'));
+        $conn->close();
+        exit;
+    }
+
+    if (array_key_exists('command', $data)) {
+        $command = $data['command'];
+        if (!is_array($command) || !isset($command['bom_vao'], $command['bom_ra']) ||
+            !is_int($command['bom_vao']) || !is_int($command['bom_ra']) ||
+            ($command['bom_vao'] !== 0 && $command['bom_vao'] !== 1) ||
+            ($command['bom_ra'] !== 0 && $command['bom_ra'] !== 1) ||
+            ($command['bom_vao'] === 1 && $command['bom_ra'] === 1)) {
+            http_response_code(400);
+            echo json_encode(array('status' => 'error', 'message' => 'Lệnh bơm phải có bom_vao/bom_ra bằng 0 hoặc 1; không bật cả hai'));
+            $conn->close();
+            exit;
+        }
+        $stmt = $conn->prepare('UPDATE pool_commands SET revision = revision + 1, bom_vao = ?, bom_ra = ? WHERE id = 1');
+        if (!$stmt) {
+            http_response_code(500);
+            echo json_encode(array('status' => 'error', 'message' => 'Chưa có bảng pool_commands; hãy nhập pool_db.sql'));
+            $conn->close();
+            exit;
+        }
+        $pumpIn = $command['bom_vao'];
+        $pumpOut = $command['bom_ra'];
+        $stmt->bind_param('ii', $pumpIn, $pumpOut);
+        $ok = $stmt->execute() && $stmt->affected_rows === 1;
+        $stmt->close();
+        if (!$ok) {
+            http_response_code(500);
+            echo json_encode(array('status' => 'error', 'message' => 'Không lưu được lệnh bơm'));
+            $conn->close();
+            exit;
+        }
+        echo json_encode(array('status' => 'accepted', 'message' => 'Đã lưu lệnh, chờ ESP nhận'));
         $conn->close();
         exit;
     }

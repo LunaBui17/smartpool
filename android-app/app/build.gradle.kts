@@ -40,6 +40,8 @@ android {
             javaString(mqttProperties.getProperty("hivemq.username", "")))
         buildConfigField("String", "HIVEMQ_PASSWORD",
             javaString(mqttProperties.getProperty("hivemq.password", "")))
+        buildConfigField("String", "CONTROL_MODE",
+            javaString(mqttProperties.getProperty("control.mode", "mqtt")))
 
         testInstrumentationRunner =
             "androidx.test.runner.AndroidJUnitRunner"
