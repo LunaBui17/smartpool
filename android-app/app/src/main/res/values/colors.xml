@@ -1,18 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <color name="navy">#0F2747</color>
+    <!-- Brand Colors -->
+    <color name="navy">#0A192F</color>
+    <color name="navy_light">#1E293B</color>
+    <color name="navy_surface">#172554</color>
     <color name="blue">#0284C7</color>
-    <color name="background">#F1F5F9</color>
+    <color name="blue_dark">#0369A1</color>
+    <color name="cyan">#06B6D4</color>
+    <color name="cyan_soft">#E0F2FE</color>
+
+    <!-- Surfaces & Neutrals -->
+    <color name="background">#F8FAFC</color>
+    <color name="surface_card">#FFFFFF</color>
+    <color name="surface_elevated">#F1F5F9</color>
     <color name="white">#FFFFFF</color>
     <color name="card_stroke">#E2E8F0</color>
+    <color name="line">#E2E8F0</color>
+    <color name="input_background">#F8FAFC</color>
+    <color name="input_stroke">#CBD5E1</color>
+
+    <!-- Sensor & Metric Accents -->
     <color name="temp_background">#FFF7ED</color>
+    <color name="temp_accent">#EA580C</color>
     <color name="ph_background">#F5F3FF</color>
     <color name="water_background">#EFF6FF</color>
+    <color name="water_accent">#0284C7</color>
+
+    <!-- Status Colors -->
     <color name="success">#16A34A</color>
+    <color name="success_soft">#DCFCE7</color>
+    <color name="warning">#D97706</color>
+    <color name="warning_soft">#FEF3C7</color>
     <color name="danger">#DC2626</color>
+    <color name="danger_soft">#FEE2E2</color>
+
+    <!-- Text Colors -->
     <color name="text_primary">#0F172A</color>
     <color name="text_secondary">#64748B</color>
-    <color name="line">#E2E8F0</color>
+    <color name="text_muted">#94A3B8</color>
+    <color name="text_on_dark">#F8FAFC</color>
+    <color name="text_on_dark_muted">#94A3B8</color>
 
 </resources>

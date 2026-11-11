@@ -41,6 +41,13 @@
             android:exported="false"
             android:screenOrientation="portrait" />
 
+        <!-- Màn hình Cài đặt & Cấu hình MQTT -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- Dịch vụ giám sát MQTT -->
         <service
             android:name=".PoolMonitorService"

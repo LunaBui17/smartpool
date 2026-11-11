@@ -36,15 +36,15 @@ Sơ đồ dưới đây dùng **một nguồn 12 V** và hai nhánh hạ áp ri�
 
 (*) Chỉ cấp 5 V vào chân **5V/VIN nếu bo ESP32-S3 của bạn hỗ trợ**. Nếu dùng module ESP32-S3 trần, phải dùng bộ ổn áp 3,3 V phù hợp; không đưa 5 V vào chân 3V3. Không nối 12 V trực tiếp vào ESP, cảm biến hoặc bơm 5 V.
 
-(**) Cấp nguồn cho module relay đúng điện áp ghi trên module. GPIO16 và GPIO17 chỉ điều khiển chân IN; không cấp dòng cho bơm. Firmware dùng relay **kích mức LOW**: mức LOW bật relay, mức HIGH tắt relay. Dùng tiếp điểm **COM–NO** để bơm mặc định tắt khi relay chưa hút.
+(**) Cấp nguồn cho module relay đúng điện áp ghi trên module. GPIO16 và GPIO17 chỉ điều khiển chân IN; không cấp dòng cho bơm. Firmware hiện chọn **kích mức HIGH**: GPIO HIGH bật relay, GPIO LOW tắt relay. Có thể đổi mức kích trong `menuconfig → Relay Configuration → Relay input active level`. Dùng tiếp điểm **COM–NO** để bơm mặc định tắt khi relay chưa hút. Sau khi nạp firmware, thử đèn relay khi chưa nối bơm: lệnh `0` phải làm đèn tắt, lệnh `1` làm đèn sáng. Nếu không đúng, dừng thử với tải và kiểm tra chốt chọn mức kích cùng điện áp chân IN.
 
 Đường GND của ESP, relay và cảm biến cần chung mốc điện áp. Cho dòng bơm đi trên dây nguồn và dây GND riêng về nhánh cấp bơm, tránh đi qua dây GND của ESP. Nếu cảm biến mực nước được cấp 5 V, phải bảo đảm điện áp tại AO **không vượt 3,3 V** trước khi nối vào GPIO18; dùng mạch chia áp nếu cần. Nếu bo cảm biến hỗ trợ cấp 3,3 V, có thể cấp từ 3V3 của ESP.
 
 | Thiết bị | Chân ESP32-S3 | Ghi chú |
 | --- | --- | --- |
 | DS18B20 DQ | GPIO15 | Điện trở kéo lên 4,7 kΩ từ DQ đến 3V3 |
-| Relay 1 / bơm vào | GPIO16 | IN1, kích LOW |
-| Relay 2 / bơm ra | GPIO17 | IN2, kích LOW |
+| Relay 1 / bơm vào | GPIO16 | IN1, mức kích chọn trong Kconfig |
+| Relay 2 / bơm ra | GPIO17 | IN2, mức kích chọn trong Kconfig |
 | Cảm biến mực nước AO | GPIO18 | ADC2, tín hiệu tối đa 3,3 V |
 
 ## Cấu hình của project
@@ -59,6 +59,7 @@ Các mục firmware nằm trong `esp-firmware/main/Kconfig.projbuild` và chỉn
 | `WATER_LEVEL_GPIO` | 18 | 18 | Chân ADC đọc mực nước |
 | `WATER_LOW_THRESHOLD` | 2000 | 2000 | ADC dưới ngưỡng nghĩa là thiếu nước |
 | `RELAY_1_GPIO` / `RELAY_2_GPIO` | 16 / 17 | 16 / 17 | Hai chân điều khiển relay |
+| `RELAY_ACTIVE_LEVEL` | HIGH | HIGH | Mức GPIO làm relay hút; có thể đổi sang LOW nếu module cần |
 | `POOL_SETUP_AP_SSID` | `SmartPool-Setup` | `SmartPool-Setup` | Tên Wi-Fi cấu hình của ESP |
 | `POOL_SETUP_AP_PASSWORD` | `12345678` | `12345678` | Mật khẩu Wi-Fi cấu hình |
 | `POOL_API_URL` | `http://192.168.10.214/pool_api/pool_api.php` | Giống mặc định | Địa chỉ API XAMPP |

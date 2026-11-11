@@ -11,5 +11,5 @@ typedef enum {
 // Call once at startup. Both relays are initialized in the OFF state.
 esp_err_t relay_init(void);
 
-// Set one relay ON or OFF. The module inputs are active LOW.
+// Set one relay ON or OFF using the active level selected in Kconfig.
 esp_err_t relay_set(relay_channel_t channel, bool on);
