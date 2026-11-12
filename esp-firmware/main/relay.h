@@ -12,5 +12,5 @@ typedef enum {
 // after loading automation settings, before Wi-Fi starts.
 esp_err_t relay_init(void);
 
-// Set one relay ON or OFF. Input polarity is selected per channel in menuconfig. Disabled channels reject ON.
+// Set one relay ON or OFF using the active level selected in Kconfig.
 esp_err_t relay_set(relay_channel_t channel, bool on);

@@ -35,42 +35,26 @@ public class PoolMonitorService extends Service {
 
     private static final String TAG = "PoolMonitorService";
 
-    // HiveMQ Cloud qua TLS, cùng broker với MainActivity.
-    private static final String MQTT_BROKER =
-            "ssl://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883";
-
-    private static final String TOPIC_TELEMETRY =
-            "smartpool/telemetry";
-
-    private static final String SERVICE_CHANNEL_ID =
-            "smartpool_monitor_service";
-
-    private static final String ALERT_CHANNEL_ID =
-            "smartpool_safety_alerts";
-
-    // Ngưỡng cảnh báo nhiệt độ.
-    private static final double TEMP_MIN = 20.0;
-    private static final double TEMP_MAX = 35.0;
+    private static final String SERVICE_CHANNEL_ID = "smartpool_monitor_service";
+    private static final String ALERT_CHANNEL_ID = "smartpool_safety_alerts";
 
     private static final int SERVICE_NOTIFICATION_ID = 1001;
     private static final int ALERT_NOTIFICATION_ID = 1002;
     private static final int RECOVERY_NOTIFICATION_ID = 1003;
 
-    private final Handler handler =
-            new Handler(Looper.getMainLooper());
+    private final Handler handler = new Handler(Looper.getMainLooper());
 
     private NotificationManager notificationManager;
-
     private MqttAsyncClient mqttClient;
-
     private boolean mqttConnecting;
-
     private String lastAlertKey = "";
+
+    private AppConfig config;
+    private String currentConnectedBroker = "";
 
     private final Runnable reconnectRunnable = new Runnable() {
         @Override
         public void run() {
-
             if (mqttClient == null || !mqttClient.isConnected()) {
                 connectMqtt();
             }
@@ -81,37 +65,27 @@ public class PoolMonitorService extends Service {
     public void onCreate() {
         super.onCreate();
 
-        notificationManager = (NotificationManager)
-                getSystemService(NOTIFICATION_SERVICE);
+        config = AppConfig.getInstance(this);
+        notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
 
         createNotificationChannels();
 
-        Notification notification = buildServiceNotification(
-                "Đang khởi tạo giám sát nhiệt độ"
-        );
+        Notification notification = buildServiceNotification("Đang khởi tạo giám sát bể bơi thông minh");
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-
             startForeground(
                     SERVICE_NOTIFICATION_ID,
                     notification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
             );
-
         } else {
-
-            startForeground(
-                    SERVICE_NOTIFICATION_ID,
-                    notification
-            );
+            startForeground(SERVICE_NOTIFICATION_ID, notification);
         }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-
         connectMqtt();
-
         return START_STICKY;
     }
 
@@ -123,53 +97,32 @@ public class PoolMonitorService extends Service {
     // ==================== TẠO KÊNH THÔNG BÁO ====================
 
     private void createNotificationChannels() {
-
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return;
         }
 
-        NotificationChannel serviceChannel =
-                new NotificationChannel(
-                        SERVICE_CHANNEL_ID,
-                        "Smart Pool - Giám sát nền",
-                        NotificationManager.IMPORTANCE_LOW
-                );
-
-        serviceChannel.setDescription(
-                "Thông báo dịch vụ giám sát MQTT đang chạy"
+        NotificationChannel serviceChannel = new NotificationChannel(
+                SERVICE_CHANNEL_ID,
+                "Smart Pool - Giám sát nền",
+                NotificationManager.IMPORTANCE_LOW
         );
-
+        serviceChannel.setDescription("Thông báo dịch vụ giám sát MQTT đang chạy");
         serviceChannel.setShowBadge(false);
 
-        NotificationChannel alertChannel =
-                new NotificationChannel(
-                        ALERT_CHANNEL_ID,
-                        "Cảnh báo nhiệt độ Smart Pool",
-                        NotificationManager.IMPORTANCE_HIGH
-                );
-
-        alertChannel.setDescription(
-                "Cảnh báo khi nhiệt độ bể chính vượt ngưỡng"
+        NotificationChannel alertChannel = new NotificationChannel(
+                ALERT_CHANNEL_ID,
+                "Cảnh báo nhiệt độ Smart Pool",
+                NotificationManager.IMPORTANCE_HIGH
         );
-
+        alertChannel.setDescription("Cảnh báo khi nhiệt độ bể chính vượt ngưỡng");
         alertChannel.enableVibration(true);
+        alertChannel.setVibrationPattern(new long[]{0, 500, 250, 500, 250, 700});
 
-        alertChannel.setVibrationPattern(
-                new long[]{0, 500, 250, 500, 250, 700}
-        );
-
-        Uri sound = RingtoneManager.getDefaultUri(
-                RingtoneManager.TYPE_NOTIFICATION
-        );
-
-        AudioAttributes attrs =
-                new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-                        .setContentType(
-                                AudioAttributes.CONTENT_TYPE_SONIFICATION
-                        )
-                        .build();
-
+        Uri sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+        AudioAttributes attrs = new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build();
         alertChannel.setSound(sound, attrs);
 
         notificationManager.createNotificationChannel(serviceChannel);
@@ -179,9 +132,7 @@ public class PoolMonitorService extends Service {
     // ==================== THÔNG BÁO DỊCH VỤ NỀN ====================
 
     private Notification buildServiceNotification(String status) {
-
         Intent openIntent = new Intent(this, MainActivity.class);
-
         openIntent.setFlags(
                 Intent.FLAG_ACTIVITY_CLEAR_TOP
                         | Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -192,21 +143,13 @@ public class PoolMonitorService extends Service {
                 this,
                 1001,
                 openIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT
-                        | PendingIntent.FLAG_IMMUTABLE
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
         Notification.Builder builder;
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-
-            builder = new Notification.Builder(
-                    this,
-                    SERVICE_CHANNEL_ID
-            );
-
+            builder = new Notification.Builder(this, SERVICE_CHANNEL_ID);
         } else {
-
             builder = new Notification.Builder(this);
         }
 
@@ -214,9 +157,7 @@ public class PoolMonitorService extends Service {
                 .setSmallIcon(android.R.drawable.ic_menu_info_details)
                 .setContentTitle("SMART POOL")
                 .setContentText(status)
-                .setStyle(
-                        new Notification.BigTextStyle().bigText(status)
-                )
+                .setStyle(new Notification.BigTextStyle().bigText(status))
                 .setContentIntent(pending)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
@@ -224,9 +165,7 @@ public class PoolMonitorService extends Service {
     }
 
     private void updateServiceNotification(String message) {
-
         if (notificationManager != null) {
-
             notificationManager.notify(
                     SERVICE_NOTIFICATION_ID,
                     buildServiceNotification(message)
@@ -237,192 +176,134 @@ public class PoolMonitorService extends Service {
     // ==================== KẾT NỐI MQTT ====================
 
     private synchronized void connectMqtt() {
-
-        if (mqttConnecting
-                || (mqttClient != null && mqttClient.isConnected())) {
+        if (mqttConnecting) {
             return;
         }
 
-        if (BuildConfig.HIVEMQ_USERNAME.isEmpty() || BuildConfig.HIVEMQ_PASSWORD.isEmpty()) {
-            updateServiceNotification("Chưa cấu hình tài khoản HiveMQ");
+        final String broker = config.getMqttBroker();
+        final String username = config.getMqttUsername();
+        final String password = config.getMqttPassword();
+
+        if (broker == null || broker.trim().isEmpty()) {
+            updateServiceNotification("Chưa cấu hình Broker");
+            return;
+        }
+
+        // Nếu broker đã thay đổi thì đóng client cũ
+        if (mqttClient != null && !broker.equals(currentConnectedBroker)) {
+            try {
+                if (mqttClient.isConnected()) mqttClient.disconnect();
+                mqttClient.close();
+            } catch (Exception ignored) {
+            }
+            mqttClient = null;
+        }
+
+        if (mqttClient != null && mqttClient.isConnected()) {
             return;
         }
 
         mqttConnecting = true;
 
         try {
-
             if (mqttClient == null) {
-
-                String clientId = "SmartPoolMonitor-"
-                        + UUID.randomUUID().toString().substring(0, 8);
-
-                mqttClient = new MqttAsyncClient(
-                        MQTT_BROKER,
-                        clientId,
-                        new MemoryPersistence()
-                );
+                String clientId = "SmartPoolMonitor-" + UUID.randomUUID().toString().substring(0, 8);
+                mqttClient = new MqttAsyncClient(broker, clientId, new MemoryPersistence());
 
                 mqttClient.setCallback(new MqttCallbackExtended() {
-
                     @Override
-                    public void connectComplete(
-                            boolean reconnect,
-                            String uri
-                    ) {
-
+                    public void connectComplete(boolean reconnect, String uri) {
                         mqttConnecting = false;
-
+                        currentConnectedBroker = broker;
                         subscribeTopics();
-
-                        updateServiceNotification(
-                                "Đang theo dõi nhiệt độ bể chính qua MQTT"
-                        );
+                        updateServiceNotification("Đang theo dõi nhiệt độ bể bơi qua MQTT");
                     }
 
                     @Override
                     public void connectionLost(Throwable cause) {
-
                         mqttConnecting = false;
-
-                        updateServiceNotification(
-                                "Mất MQTT - đang thử kết nối lại"
-                        );
-
+                        updateServiceNotification("Mất MQTT - đang thử kết nối lại");
                         scheduleReconnect();
                     }
 
                     @Override
-                    public void messageArrived(
-                            String topic,
-                            org.eclipse.paho.client.mqttv3.MqttMessage message
-                    ) {
-
-                        String payload = new String(
-                                message.getPayload(),
-                                StandardCharsets.UTF_8
-                        );
-
+                    public void messageArrived(String topic, org.eclipse.paho.client.mqttv3.MqttMessage message) {
+                        String payload = new String(message.getPayload(), StandardCharsets.UTF_8);
                         handleMqttMessage(topic, payload);
                     }
 
                     @Override
-                    public void deliveryComplete(
-                            IMqttDeliveryToken token
-                    ) {
+                    public void deliveryComplete(IMqttDeliveryToken token) {
                     }
                 });
             }
 
             MqttConnectOptions options = new MqttConnectOptions();
-
             options.setAutomaticReconnect(true);
             options.setCleanSession(true);
-            options.setConnectionTimeout(10);
+            options.setConnectionTimeout(12);
             options.setKeepAliveInterval(30);
-            options.setUserName(BuildConfig.HIVEMQ_USERNAME);
-            options.setPassword(BuildConfig.HIVEMQ_PASSWORD.toCharArray());
 
-            mqttClient.connect(
-                    options,
-                    null,
-                    new IMqttActionListener() {
+            if (username != null && !username.trim().isEmpty()) {
+                options.setUserName(username.trim());
+            }
+            if (password != null && !password.isEmpty()) {
+                options.setPassword(password.toCharArray());
+            }
 
-                        @Override
-                        public void onSuccess(IMqttToken token) {
+            mqttClient.connect(options, null, new IMqttActionListener() {
+                @Override
+                public void onSuccess(IMqttToken token) {
+                    mqttConnecting = false;
+                    currentConnectedBroker = broker;
+                    subscribeTopics();
+                }
 
-                            mqttConnecting = false;
-
-                            subscribeTopics();
-                        }
-
-                        @Override
-                        public void onFailure(
-                                IMqttToken token,
-                                Throwable error
-                        ) {
-
-                            mqttConnecting = false;
-
-                            Log.e(
-                                    TAG,
-                                    "Kết nối MQTT thất bại",
-                                    error
-                            );
-
-                            updateServiceNotification(
-                                    "Chưa kết nối Broker - đang thử lại"
-                            );
-
-                            scheduleReconnect();
-                        }
-                    }
-            );
+                @Override
+                public void onFailure(IMqttToken token, Throwable error) {
+                    mqttConnecting = false;
+                    Log.e(TAG, "Kết nối MQTT thất bại: " + error);
+                    updateServiceNotification("Chưa kết nối Broker - đang thử lại");
+                    scheduleReconnect();
+                }
+            });
 
         } catch (MqttException e) {
-
             mqttConnecting = false;
-
             Log.e(TAG, "Lỗi khởi tạo MQTT", e);
-
             scheduleReconnect();
         }
     }
 
     private void subscribeTopics() {
-
         if (mqttClient == null || !mqttClient.isConnected()) {
             return;
         }
 
         try {
-
-            mqttClient.subscribe(
-                    TOPIC_TELEMETRY,
-                    1
-            );
-
+            String topicTelemetry = config.getTopicTelemetry();
+            mqttClient.subscribe(topicTelemetry, 1);
         } catch (MqttException e) {
-
-            Log.e(
-                    TAG,
-                    "Không subscribe được telemetry",
-                    e
-            );
-
+            Log.e(TAG, "Không subscribe được telemetry", e);
             scheduleReconnect();
         }
     }
 
     private void scheduleReconnect() {
-
         handler.removeCallbacks(reconnectRunnable);
-
-        handler.postDelayed(
-                reconnectRunnable,
-                5000L
-        );
+        handler.postDelayed(reconnectRunnable, 5000L);
     }
 
     // ==================== ĐỌC DỮ LIỆU CẢM BIẾN ====================
 
-    private void handleMqttMessage(
-            String topic,
-            String payload
-    ) {
-
-        if (!TOPIC_TELEMETRY.equals(topic)) {
+    private void handleMqttMessage(String topic, String payload) {
+        if (!topic.equals(config.getTopicTelemetry())) {
             return;
         }
 
         try {
-
             JSONObject json = new JSONObject(payload);
-
-            double temp = json.optDouble(
-                    "nhiet_do",
-                    Double.NaN
-            );
+            double temp = json.optDouble("nhiet_do", Double.NaN);
 
             if (Double.isNaN(temp) || Double.isInfinite(temp)) {
                 return;
@@ -431,7 +312,6 @@ public class PoolMonitorService extends Service {
             checkTemperature(temp);
 
         } catch (Exception e) {
-
             Log.e(TAG, "Không đọc được telemetry", e);
         }
     }
@@ -439,90 +319,66 @@ public class PoolMonitorService extends Service {
     // ==================== KIỂM TRA NHIỆT ĐỘ ====================
 
     private void checkTemperature(double temp) {
+        float tempMin = config.getTempMin();
+        float tempMax = config.getTempMax();
 
         String key = "";
         String message = "";
 
-        if (temp > TEMP_MAX) {
-
+        if (temp > tempMax) {
             key = "TEMP_HIGH";
-
             message = String.format(
                     Locale.getDefault(),
                     "Nhiệt độ bể chính cao: %.1f °C (ngưỡng tối đa %.1f °C)",
                     temp,
-                    TEMP_MAX
+                    tempMax
             );
-
-        } else if (temp < TEMP_MIN) {
-
+        } else if (temp < tempMin) {
             key = "TEMP_LOW";
-
             message = String.format(
                     Locale.getDefault(),
                     "Nhiệt độ bể chính thấp: %.1f °C (ngưỡng tối thiểu %.1f °C)",
                     temp,
-                    TEMP_MIN
+                    tempMin
             );
         }
 
-        // Nếu nhiệt độ trở về mức bình thường.
+        // Nếu nhiệt độ trở về mức bình thường
         if (key.isEmpty()) {
-
             if (!lastAlertKey.isEmpty()) {
-
                 lastAlertKey = "";
-
-                notificationManager.cancel(
-                        ALERT_NOTIFICATION_ID
-                );
-
+                notificationManager.cancel(ALERT_NOTIFICATION_ID);
                 showRecoveryNotification();
             }
-
             return;
         }
 
-        // Tránh gửi thông báo lặp liên tục cùng một cảnh báo.
+        // Tránh gửi thông báo lặp liên tục cùng một cảnh báo
         if (key.equals(lastAlertKey)) {
             return;
         }
 
         lastAlertKey = key;
-
         showSafetyNotification(message);
     }
 
     // ==================== GỬI THÔNG BÁO CẢNH BÁO ====================
 
     private void showSafetyNotification(String message) {
-
         Intent intent = new Intent(this, MainActivity.class);
-
-        intent.setFlags(
-                Intent.FLAG_ACTIVITY_CLEAR_TOP
-                        | Intent.FLAG_ACTIVITY_NEW_TASK
-        );
+        intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
 
         PendingIntent pending = PendingIntent.getActivity(
                 this,
                 2002,
                 intent,
-                PendingIntent.FLAG_UPDATE_CURRENT
-                        | PendingIntent.FLAG_IMMUTABLE
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
         Notification.Builder builder;
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-
-            builder = new Notification.Builder(
-                    this,
-                    ALERT_CHANNEL_ID
-            );
-
+            builder = new Notification.Builder(this, ALERT_CHANNEL_ID);
         } else {
-
             builder = new Notification.Builder(this)
                     .setPriority(Notification.PRIORITY_HIGH)
                     .setDefaults(Notification.DEFAULT_ALL);
@@ -531,12 +387,8 @@ public class PoolMonitorService extends Service {
         Notification notification = builder
                 .setSmallIcon(android.R.drawable.ic_dialog_alert)
                 .setContentTitle("CẢNH BÁO SMART POOL")
-                .setContentText(
-                        "Nhiệt độ bể chính vượt ngưỡng"
-                )
-                .setStyle(
-                        new Notification.BigTextStyle().bigText(message)
-                )
+                .setContentText("Nhiệt độ bể bơi vượt ngưỡng an toàn")
+                .setStyle(new Notification.BigTextStyle().bigText(message))
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setColor(Color.rgb(198, 40, 40))
                 .setContentIntent(pending)
@@ -544,37 +396,24 @@ public class PoolMonitorService extends Service {
                 .setOnlyAlertOnce(true)
                 .build();
 
-        notificationManager.notify(
-                ALERT_NOTIFICATION_ID,
-                notification
-        );
+        notificationManager.notify(ALERT_NOTIFICATION_ID, notification);
     }
 
     // ==================== THÔNG BÁO KHI NHIỆT ĐỘ ỔN ĐỊNH ====================
 
     private void showRecoveryNotification() {
-
         Intent intent = new Intent(this, MainActivity.class);
-
         PendingIntent pending = PendingIntent.getActivity(
                 this,
                 2003,
                 intent,
-                PendingIntent.FLAG_UPDATE_CURRENT
-                        | PendingIntent.FLAG_IMMUTABLE
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
         Notification.Builder builder;
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-
-            builder = new Notification.Builder(
-                    this,
-                    ALERT_CHANNEL_ID
-            );
-
+            builder = new Notification.Builder(this, ALERT_CHANNEL_ID);
         } else {
-
             builder = new Notification.Builder(this)
                     .setPriority(Notification.PRIORITY_DEFAULT);
         }
@@ -582,44 +421,29 @@ public class PoolMonitorService extends Service {
         Notification notification = builder
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle("SMART POOL")
-                .setContentText(
-                        "Nhiệt độ bể chính đã trở về ngưỡng cài đặt"
-                )
+                .setContentText("Nhiệt độ bể bơi đã trở về khoảng an toàn")
                 .setContentIntent(pending)
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(true)
                 .build();
 
-        notificationManager.notify(
-                RECOVERY_NOTIFICATION_ID,
-                notification
-        );
+        notificationManager.notify(RECOVERY_NOTIFICATION_ID, notification);
     }
 
     // ==================== ĐÓNG DỊCH VỤ ====================
 
     @Override
     public void onDestroy() {
-
         handler.removeCallbacksAndMessages(null);
 
         if (mqttClient != null) {
-
             try {
-
                 if (mqttClient.isConnected()) {
                     mqttClient.disconnect();
                 }
-
                 mqttClient.close();
-
             } catch (Exception e) {
-
-                Log.e(
-                        TAG,
-                        "Lỗi đóng MQTT Service",
-                        e
-                );
+                Log.e(TAG, "Lỗi đóng MQTT Service", e);
             }
         }
 

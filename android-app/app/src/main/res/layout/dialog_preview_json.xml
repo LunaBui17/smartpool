@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_card_modern"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <TextView
+        android:id="@+id/txtDialogTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="JSON CẤU HÌNH GỬI LÊN MQTT"
+        android:textColor="@color/text_primary"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/txtDialogTopic"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="Topic: smartpool/config"
+        android:textColor="@color/blue"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="280dp"
+        android:layout_marginTop="12dp"
+        android:background="#0A192F"
+        android:padding="12dp">
+
+        <TextView
+            android:id="@+id/txtJsonContent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:text="{}"
+            android:textColor="#38BDF8"
+            android:textIsSelectable="true"
+            android:textSize="12sp" />
+    </ScrollView>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:gravity="end"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnDialogCopy"
+            android:layout_width="wrap_content"
+            android:layout_height="42dp"
+            android:background="@drawable/bg_button_secondary"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:text="Sao chép"
+            android:textAllCaps="false"
+            android:textColor="@color/text_primary"
+            android:textSize="13sp" />
+
+        <Space
+            android:layout_width="10dp"
+            android:layout_height="wrap_content" />
+
+        <Button
+            android:id="@+id/btnDialogClose"
+            android:layout_width="wrap_content"
+            android:layout_height="42dp"
+            android:background="@drawable/bg_button_gradient"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:text="Đóng"
+            android:textAllCaps="false"
+            android:textColor="@color/white"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+</LinearLayout>
