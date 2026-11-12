@@ -127,6 +127,7 @@ public class SettingsActivity extends AppCompatActivity {
         loadValuesToViews();
         setupListeners();
 
+        refreshMqttActions();
         connectHiveMq();
     }
 
@@ -325,6 +326,14 @@ public class SettingsActivity extends AppCompatActivity {
 
     // ==================== KẾT NỐI HIVEMQ CLOUD ====================
 
+    private void refreshMqttActions() {
+        boolean ready = mqttClient != null && mqttClient.isConnected();
+        for (android.view.View action : new android.view.View[]{btnSaveThresholds, btnScanWifi,
+                btnSaveWifi, btnSaveDevice, btnSaveHttpConfig, btnSaveAndPublishMqtt}) {
+            if (action != null) action.setEnabled(ready);
+        }
+    }
+
     private void connectHiveMq() {
         final String broker = config.getMqttBroker();
         final String username = config.getMqttUsername();
@@ -342,6 +351,7 @@ public class SettingsActivity extends AppCompatActivity {
                         Log.i(TAG, "HiveMQ connected");
                         subscribeScanResultTopic();
                         handler.post(() -> {
+                            refreshMqttActions();
                             if (txtSettingsMqttStatus != null) {
                                 txtSettingsMqttStatus.setText("✓ Trạng thái: Đã kết nối HiveMQ Cloud • Sẵn sàng");
                                 txtSettingsMqttStatus.setTextColor(android.graphics.Color.rgb(22, 163, 74));
@@ -354,6 +364,7 @@ public class SettingsActivity extends AppCompatActivity {
                         isMqttConnected = false;
                         Log.w(TAG, "HiveMQ connection lost", cause);
                         handler.post(() -> {
+                            refreshMqttActions();
                             if (txtSettingsMqttStatus != null) {
                                 txtSettingsMqttStatus.setText("⚠ Trạng thái: Mất kết nối HiveMQ • Đang thử lại...");
                                 txtSettingsMqttStatus.setTextColor(android.graphics.Color.rgb(220, 38, 38));
@@ -378,6 +389,7 @@ public class SettingsActivity extends AppCompatActivity {
             }
 
             MqttConnectOptions options = new MqttConnectOptions();
+            options.setAutomaticReconnect(true);
             options.setCleanSession(true);
             options.setConnectionTimeout(12);
             options.setKeepAliveInterval(30);
@@ -395,6 +407,7 @@ public class SettingsActivity extends AppCompatActivity {
                     isMqttConnected = true;
                     subscribeScanResultTopic();
                     handler.post(() -> {
+                        refreshMqttActions();
                         if (txtSettingsMqttStatus != null) {
                             txtSettingsMqttStatus.setText("✓ Trạng thái: Đã kết nối HiveMQ Cloud • Sẵn sàng");
                             txtSettingsMqttStatus.setTextColor(android.graphics.Color.rgb(22, 163, 74));
@@ -407,6 +420,7 @@ public class SettingsActivity extends AppCompatActivity {
                     isMqttConnected = false;
                     Log.e(TAG, "Lỗi kết nối HiveMQ", exception);
                     handler.post(() -> {
+                        refreshMqttActions();
                         if (txtSettingsMqttStatus != null) {
                             txtSettingsMqttStatus.setText("⚠ Trạng thái: Chưa kết nối được Broker (" + (exception != null ? exception.getMessage() : "") + ")");
                             txtSettingsMqttStatus.setTextColor(android.graphics.Color.rgb(220, 38, 38));
@@ -675,6 +689,7 @@ public class SettingsActivity extends AppCompatActivity {
         txtSettingsMqttStatus.setText("Trạng thái: Đang kết nối lại Broker...");
         txtSettingsMqttStatus.setTextColor(android.graphics.Color.rgb(217, 119, 6));
 
+        refreshMqttActions();
         connectHiveMq();
     }
 
@@ -829,6 +844,10 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     private void publishWithAckProgress(String title, String topic, String payload, String reqId, String successTitle) {
+        if (mqttClient == null || !mqttClient.isConnected()) {
+            Toast.makeText(this, "Chưa kết nối MQTT. Hãy kết nối rồi gửi lại.", Toast.LENGTH_LONG).show();
+            return;
+        }
         pendingAckReqId = reqId;
 
         ackProgressDialog = new ProgressDialog(this);
@@ -865,36 +884,19 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     private void publishToMqtt(String topic, String payload, boolean retained, Runnable onSuccess, java.util.function.Consumer<String> onFailure) {
-        final String broker = config.getMqttBroker();
-        final String username = config.getMqttUsername();
-        final String password = config.getMqttPassword();
-
         new Thread(() -> {
             try {
-                if (mqttClient == null || !mqttClient.isConnected()) {
-                    String clientId = "CfgSender-" + UUID.randomUUID().toString().substring(0, 8);
-                    mqttClient = new MqttAsyncClient(broker, clientId, new MemoryPersistence());
-
-                    MqttConnectOptions options = new MqttConnectOptions();
-                    options.setCleanSession(true);
-                    options.setConnectionTimeout(12);
-                    options.setKeepAliveInterval(30);
-
-                    if (username != null && !username.trim().isEmpty()) {
-                        options.setUserName(username.trim());
-                    }
-                    if (password != null && !password.isEmpty()) {
-                        options.setPassword(password.toCharArray());
-                    }
-
-                    mqttClient.connect(options).waitForCompletion(10000L);
+                MqttAsyncClient connectedClient = mqttClient;
+                if (connectedClient == null || !connectedClient.isConnected()) {
+                    handler.post(() -> onFailure.accept("MQTT chưa kết nối. Hãy kết nối rồi gửi lại."));
+                    return;
                 }
 
                 MqttMessage msg = new MqttMessage(payload.getBytes(StandardCharsets.UTF_8));
                 msg.setQos(1);
                 msg.setRetained(retained);
 
-                mqttClient.publish(topic, msg).waitForCompletion(5000L);
+                connectedClient.publish(topic, msg).waitForCompletion(5000L);
 
                 handler.post(onSuccess);
 

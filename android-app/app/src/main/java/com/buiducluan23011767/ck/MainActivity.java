@@ -88,7 +88,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView txtUpdated;
 
     private RequestQueue requestQueue;
-    private MqttAsyncClient mqttClient;
+    private volatile MqttAsyncClient mqttClient;
 
     private ActivityResultLauncher<String> notificationPermissionLauncher;
 
@@ -96,10 +96,12 @@ public class MainActivity extends AppCompatActivity {
 
     private AppConfig config;
 
+    private boolean updatingInterlockUi;
+    private final java.util.concurrent.atomic.AtomicLong mqttSession = new java.util.concurrent.atomic.AtomicLong();
     private boolean activityVisible;
     private boolean mqttConnecting;
-    private boolean mqttConnected;
-    private boolean espOnline;
+    private volatile boolean mqttConnected;
+    private volatile boolean espOnline;
     private boolean polling;
 
     private boolean pumpInOn;
@@ -110,6 +112,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean desiredPumpInOn;
     private boolean desiredPumpOutOn;
 
+    private static final String CONTROL_REQUEST_TAG = "mqtt-required-control";
     private static final long PUMP_ACK_TIMEOUT_MS = 7000L;
     private final Runnable pumpInTimeoutRunnable = () -> handlePumpTimeout(true);
     private final Runnable pumpOutTimeoutRunnable = () -> handlePumpTimeout(false);
@@ -215,7 +218,7 @@ public class MainActivity extends AppCompatActivity {
         btnGoToSettings.setOnClickListener(openSettingsAction);
 
         btnPumpIn.setOnClickListener(v -> {
-            if (pumpInPending) return;
+            if (pumpInPending || !requireMqttControl()) return;
             if (config.isInterlockEnabled() && !pumpInOn && pumpOutOn) {
                 Toast.makeText(this, "Khóa liên động đang BẬT: Hãy tắt bơm thoát trước khi bật bơm cấp.", Toast.LENGTH_LONG).show();
                 return;
@@ -232,7 +235,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         btnPumpOut.setOnClickListener(v -> {
-            if (pumpOutPending) return;
+            if (pumpOutPending || !requireMqttControl()) return;
             if (config.isInterlockEnabled() && !pumpOutOn && pumpInOn) {
                 Toast.makeText(this, "Khóa liên động đang BẬT: Hãy tắt bơm cấp trước khi bật bơm thoát.", Toast.LENGTH_LONG).show();
                 return;
@@ -249,6 +252,11 @@ public class MainActivity extends AppCompatActivity {
         });
 
         switchInterlock.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (updatingInterlockUi) return;
+            if (!requireMqttControl()) {
+                updateInterlockUI(config.isInterlockEnabled());
+                return;
+            }
             config.setInterlockEnabled(isChecked);
             updateInterlockUI(isChecked);
             Toast.makeText(
@@ -310,7 +318,9 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateInterlockUI(boolean isChecked) {
         if (switchInterlock != null && switchInterlock.isChecked() != isChecked) {
-            switchInterlock.setChecked(isChecked);
+            updatingInterlockUi = true;
+            try { switchInterlock.setChecked(isChecked); }
+            finally { updatingInterlockUi = false; }
         }
         if (txtInterlockStatus != null) {
             if (isChecked) {
@@ -423,6 +433,8 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         activityVisible = true;
+        espOnline = false;
+        renderPumpStates();
 
         refreshConfigUI();
 
@@ -441,6 +453,8 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         activityVisible = false;
+        clearPendingPumpCommands();
+        renderPumpStates();
         handler.removeCallbacks(pollRunnable);
         super.onPause();
     }
@@ -479,9 +493,12 @@ public class MainActivity extends AppCompatActivity {
         if (mqttClient != null && mqttClient.isConnected()) {
             mqttConnected = true;
             updateMqttStatus();
+            subscribeTopics();
             return;
         }
 
+        espOnline = false;
+        renderPumpStates();
         mqttConnecting = true;
         lastMqttAttemptMs = System.currentTimeMillis();
 
@@ -493,9 +510,13 @@ public class MainActivity extends AppCompatActivity {
                 String clientId = "SmartPoolUI-" + UUID.randomUUID().toString().substring(0, 8);
                 mqttClient = new MqttAsyncClient(broker, clientId, new MemoryPersistence());
 
+                final MqttAsyncClient callbackClient = mqttClient;
                 mqttClient.setCallback(new MqttCallbackExtended() {
                     @Override
                     public void connectComplete(boolean reconnect, String uri) {
+                        if (mqttClient != callbackClient) return;
+                        mqttSession.incrementAndGet();
+                        espOnline = false;
                         mqttConnected = true;
                         mqttConnecting = false;
                         connectedBrokerUri = broker;
@@ -510,7 +531,10 @@ public class MainActivity extends AppCompatActivity {
 
                     @Override
                     public void connectionLost(Throwable cause) {
+                        if (mqttClient != callbackClient) return;
+                        mqttSession.incrementAndGet();
                         mqttConnected = false;
+                        espOnline = false;
                         handler.post(() -> {
                             if (activityVisible) {
                                 updateMqttStatus();
@@ -521,6 +545,7 @@ public class MainActivity extends AppCompatActivity {
 
                     @Override
                     public void messageArrived(String topic, org.eclipse.paho.client.mqttv3.MqttMessage message) {
+                        if (mqttClient != callbackClient) return;
                         String payload = new String(message.getPayload(), StandardCharsets.UTF_8);
                         handleMqttMessage(topic, payload);
                     }
@@ -544,9 +569,11 @@ public class MainActivity extends AppCompatActivity {
                 options.setPassword(password.toCharArray());
             }
 
-            mqttClient.connect(options, null, new IMqttActionListener() {
+            final MqttAsyncClient connectingClient = mqttClient;
+            connectingClient.connect(options, null, new IMqttActionListener() {
                 @Override
                 public void onSuccess(IMqttToken token) {
+                    if (mqttClient != connectingClient) return;
                     mqttConnecting = false;
                     mqttConnected = true;
                     connectedBrokerUri = broker;
@@ -561,6 +588,7 @@ public class MainActivity extends AppCompatActivity {
 
                 @Override
                 public void onFailure(IMqttToken token, Throwable error) {
+                    if (mqttClient != connectingClient) return;
                     mqttConnecting = false;
                     mqttConnected = false;
                     Log.e(TAG, "Kết nối MQTT thất bại: " + error);
@@ -601,13 +629,15 @@ public class MainActivity extends AppCompatActivity {
             JSONObject json = new JSONObject(payload);
 
             if (topic.equals(config.getTopicStatus())) {
+                final long statusSession = mqttSession.get();
                 boolean online = json.optInt("online", 0) == 1;
                 boolean in = json.optInt("bom_vao_control", 0) == 1;
                 boolean out = json.optInt("bom_ra_control", 0) == 1;
 
                 handler.post(() -> {
-                    if (!activityVisible) return;
+                    if (statusSession != mqttSession.get() || !mqttConnected) return;
                     espOnline = online;
+                    if (!online) clearPendingPumpCommands();
 
                     // DOUBLE CHECK BƠM CẤP
                     if (pumpInPending) {
@@ -668,6 +698,7 @@ public class MainActivity extends AppCompatActivity {
     // ==================== ĐIỀU KHIỂN MÁY BƠM ====================
 
     private void sendPumpCommand(boolean pumpIn, boolean turnOn) {
+        if (!requireMqttControl()) { clearPendingPumpCommands(); renderPumpStates(); return; }
         if ("http".equalsIgnoreCase(config.getControlMode())) {
             sendHttpPumpCommand(pumpIn, turnOn);
             return;
@@ -736,6 +767,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void sendHttpPumpCommand(boolean pumpIn, boolean turnOn) {
+        if (!requireMqttControl()) { clearPendingPumpCommands(); renderPumpStates(); return; }
         if (requestQueue == null) {
             return;
         }
@@ -776,7 +808,7 @@ public class MainActivity extends AppCompatActivity {
             );
             request.setShouldCache(false);
             request.setRetryPolicy(new DefaultRetryPolicy(4000, 0, 1.0f));
-            request.setTag(TAG);
+            request.setTag(CONTROL_REQUEST_TAG);
             requestQueue.add(request);
         } catch (Exception error) {
             finishPumpRequest(pumpIn);
@@ -787,14 +819,20 @@ public class MainActivity extends AppCompatActivity {
     private void finishPumpRequest(boolean pumpIn) {
         if (pumpIn) {
             pumpInPending = false;
-            btnPumpIn.setEnabled(true);
+            btnPumpIn.setEnabled(canControlDevice());
         } else {
             pumpOutPending = false;
-            btnPumpOut.setEnabled(true);
+            btnPumpOut.setEnabled(canControlDevice());
         }
+        renderPumpStates();
     }
 
     private void closeMqtt() {
+        mqttSession.incrementAndGet();
+        mqttConnected = false;
+        espOnline = false;
+        clearPendingPumpCommands();
+        renderPumpStates();
         if (mqttClient == null) {
             return;
         }
@@ -814,6 +852,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateMqttStatus() {
+        if (!mqttConnected || !espOnline) clearPendingPumpCommands();
+        renderPumpStates();
         if (!mqttConnected) {
             txtMqttBadge.setText("MQTT: Mất kết nối HiveMQ Broker");
             txtMqttBadge.setTextColor(Color.rgb(220, 38, 38));
@@ -993,11 +1033,32 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private boolean canControlDevice() {
+        MqttAsyncClient client = mqttClient;
+        return MqttControlGate.canControl(activityVisible,
+                mqttConnected && client != null && client.isConnected(), espOnline);
+    }
+
+    private boolean requireMqttControl() {
+        if (canControlDevice()) return true;
+        Toast.makeText(this, "Cần kết nối MQTT và ESP32 online để điều khiển.", Toast.LENGTH_LONG).show();
+        return false;
+    }
+
+    private void clearPendingPumpCommands() {
+        if (requestQueue != null) requestQueue.cancelAll(CONTROL_REQUEST_TAG);
+        handler.removeCallbacks(pumpInTimeoutRunnable);
+        handler.removeCallbacks(pumpOutTimeoutRunnable);
+        pumpInPending = false;
+        pumpOutPending = false;
+    }
+
     private void renderPumpStates() {
         if (btnPumpIn == null || btnPumpOut == null) {
             return;
         }
 
+        if (switchInterlock != null) switchInterlock.setEnabled(canControlDevice());
         // 1. Bơm cấp nước
         if (pumpInPending) {
             btnPumpIn.setEnabled(false);
@@ -1006,7 +1067,7 @@ public class MainActivity extends AppCompatActivity {
             txtPumpInStatus.setText("Trạng thái: Đang đợi ESP32 xác nhận (Double Check)...");
             txtPumpInStatus.setTextColor(Color.rgb(217, 119, 6));
         } else {
-            btnPumpIn.setEnabled(true);
+            btnPumpIn.setEnabled(canControlDevice());
             btnPumpIn.setText(pumpInOn ? "TẮT BƠM" : "BẬT BƠM");
             btnPumpIn.setBackgroundResource(pumpInOn ? R.drawable.bg_button_danger : R.drawable.bg_button_primary);
             txtPumpInStatus.setText("Trạng thái: " + (pumpInOn ? "ĐANG BẬT" : "ĐANG TẮT"));
@@ -1021,11 +1082,15 @@ public class MainActivity extends AppCompatActivity {
             txtPumpOutStatus.setText("Trạng thái: Đang đợi ESP32 xác nhận (Double Check)...");
             txtPumpOutStatus.setTextColor(Color.rgb(217, 119, 6));
         } else {
-            btnPumpOut.setEnabled(true);
+            btnPumpOut.setEnabled(canControlDevice());
             btnPumpOut.setText(pumpOutOn ? "TẮT BƠM" : "BẬT BƠM");
             btnPumpOut.setBackgroundResource(pumpOutOn ? R.drawable.bg_button_danger : R.drawable.bg_button_primary);
             txtPumpOutStatus.setText("Trạng thái: " + (pumpOutOn ? "ĐANG BẬT" : "ĐANG TẮT"));
             txtPumpOutStatus.setTextColor(pumpOutOn ? Color.rgb(220, 38, 38) : Color.rgb(100, 116, 139));
+        }
+        if (!canControlDevice()) {
+            txtPumpInStatus.setText("Điều khiển đã khóa: chờ MQTT và ESP32 online.");
+            txtPumpOutStatus.setText("Điều khiển đã khóa: chờ MQTT và ESP32 online.");
         }
     }
 }
