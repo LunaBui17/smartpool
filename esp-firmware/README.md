@@ -192,3 +192,12 @@ When ON, a manual command to start the second pump is rejected and the first pum
 Version 1 MQTT settings migrate without losing Wi-Fi, HTTP or device values. Their interlock defaults OFF until a retained/new threshold configuration arrives; that group's old timestamp is reset once because v1 ignored the field. New settings use version 2, in the same blob layout. Live updates in one second are accepted in receipt order; retained replays with the same timestamp and conflicting values remain rejected.
 
 Sync All may include `"wifi":{"ssid":"","password":""}` when Android has no saved router credentials. That exact blank section is skipped without modifying Wi-Fi or its timestamp; device, thresholds and HTTP settings still apply. Standalone `UPDATE_WIFI` with an empty SSID remains invalid. The MQTT regression test includes the reported Android payload in `tests/fixtures/sync_all_empty_wifi.json`.
+
+
+## MQTT control availability
+
+The Android pump buttons and live interlock switch require a connected MQTT client and ESP32 `online:1` from the current session. They lock on startup, disconnect, or ESP32 offline. HTTP read/publish callbacks cannot reopen them; the configured HTTP control transport also requires MQTT readiness. Pending command timers and queued HTTP control requests are cancelled when readiness is lost. Reconnect waits for device status rather than reusing the previous session's online flag. Settings configuration/scan send buttons require that screen's MQTT connection; broker setup and local drafts remain accessible.
+
+ESP32 validates MQTT/Wi-Fi/STA state for both ON and OFF commands and for remote sensor toggles. It ignores incoming/queued MQTT work when disconnected. Internal disconnect cleanup bypasses the remote-command gate so remote-owned pumps can always be stopped. As requested, the local/AP web and automatic operation remain independent of broker availability, subject to the configured interlock and sensor rules.
+
+`python tests/check_mqtt_control.py` generates `build/mqtt-control-test.c` from the actual firmware control functions. Compile it with `main/pump_auto.c` and `-Imain`, then run on a host C compiler (optionally ASan/UBSan). It checks all eight connectivity combinations, remote ON/OFF and sensors, local/AP controls while offline, disconnect cleanup preserving a local-owned pump, reconnect, and interlock. Android gate unit tests are in `../android-app/app/src/test/java/com/buiducluan23011767/ck/MqttControlGateTest.java`. Building Android requires a configured JDK and Android SDK.

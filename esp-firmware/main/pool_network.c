@@ -162,6 +162,12 @@ static void publish_status(void)
     cJSON_Delete(status);
 }
 
+// Only MQTT-originated commands require this gate; AP/local control remains independent.
+static bool mqtt_control_ready(void)
+{
+    return s_mqtt_connected && s_wifi_connected && s_station_enabled;
+}
+
 static esp_err_t set_pumps(bool pump_in, bool pump_out, bool local, bool remote_stop_only, int channel)
 {
     if (xSemaphoreTake(s_relay_lock, portMAX_DELAY) != pdTRUE) return ESP_FAIL;
@@ -180,7 +186,7 @@ static esp_err_t set_pumps(bool pump_in, bool pump_out, bool local, bool remote_
         xSemaphoreGive(s_relay_lock);
         return ESP_ERR_NOT_SUPPORTED;
     }
-    if (!local && !remote_stop_only && (pump_in || pump_out) && (!s_wifi_connected || !s_mqtt_connected || !s_station_enabled)) {
+    if (!local && !remote_stop_only && !mqtt_control_ready()) {
         xSemaphoreGive(s_relay_lock);
         return ESP_ERR_INVALID_STATE;
     }
@@ -746,18 +752,13 @@ void pool_network_get_state(pool_device_state_t *state)
     xSemaphoreGive(s_relay_lock);
 }
 
-esp_err_t pool_network_local_control(const char *target, bool on)
+static esp_err_t set_sensor_enabled(const char *target, bool on, bool remote)
 {
-    if (strcmp(target, "stop") == 0) {
-        return on ? ESP_ERR_INVALID_ARG : set_pumps(false, false, true, false, 0);
-    }
-    if (strcmp(target, "relay1") == 0 || strcmp(target, "relay2") == 0) {
-        // Resolve the other channel under the relay mutex to keep controls independent.
-        return set_pumps(strcmp(target, "relay1") == 0 ? on : s_pump_in,
-                         strcmp(target, "relay2") == 0 ? on : s_pump_out,
-                         true, false, strcmp(target, "relay1") == 0 ? 1 : 2);
-    }
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+    if (remote && !mqtt_control_ready()) {
+        xSemaphoreGive(s_relay_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
     esp_err_t err = ESP_OK;
     if (strcmp(target, "temperature") == 0 && POOL_TEMPERATURE_ENABLED) {
         s_temperature_enabled = on;
@@ -776,6 +777,21 @@ esp_err_t pool_network_local_control(const char *target, bool on)
     }
     return err;
 }
+
+esp_err_t pool_network_local_control(const char *target, bool on)
+{
+    if (strcmp(target, "stop") == 0) {
+        return on ? ESP_ERR_INVALID_ARG : set_pumps(false, false, true, false, 0);
+    }
+    if (strcmp(target, "relay1") == 0 || strcmp(target, "relay2") == 0) {
+        // Resolve the other channel under the relay mutex to keep controls independent.
+        return set_pumps(strcmp(target, "relay1") == 0 ? on : s_pump_in,
+                         strcmp(target, "relay2") == 0 ? on : s_pump_out,
+                         true, false, strcmp(target, "relay1") == 0 ? 1 : 2);
+    }
+    return set_sensor_enabled(target, on, false);
+}
+
 
 void pool_network_send_telemetry(bool has_temperature, float temperature,
                                  bool has_water, bool water_normal, int water_raw)
@@ -909,6 +925,11 @@ static esp_err_t persist_mqtt_settings(const pool_mqtt_settings_t *settings, boo
 
 static void mqtt_receive(esp_mqtt_event_handle_t event)
 {
+    if (!mqtt_control_ready()) {
+        memset(&s_mqtt_rx, 0, sizeof(s_mqtt_rx));
+        ESP_LOGW(TAG, "MQTT command blocked: no active broker connection");
+        return;
+    }
     int result = pool_mqtt_rx_feed(&s_mqtt_rx, event->topic, event->topic_len, event->data,
         event->data_len, event->total_data_len, event->current_data_offset, event->retain);
     if (result < 0) { ESP_LOGW(TAG, "Rejected invalid/oversized MQTT frame"); return; }
@@ -927,7 +948,7 @@ static void mqtt_receive(esp_mqtt_event_handle_t event)
             bool inlet = command.kind == POOL_MQTT_PUMP_IN;
             err = set_pumps(inlet && command.on, !inlet && command.on, false, false, inlet ? 1 : 2);
         } else if (command.kind == POOL_MQTT_TEMPERATURE || command.kind == POOL_MQTT_WATER) {
-            err = pool_network_local_control(command.kind == POOL_MQTT_TEMPERATURE ? "temperature" : "water", command.on);
+            err = set_sensor_enabled(command.kind == POOL_MQTT_TEMPERATURE ? "temperature" : "water", command.on, true);
         }
         if (err != ESP_OK) { ESP_LOGW(TAG, "MQTT control rejected: %s", esp_err_to_name(err)); publish_status(); }
         return;
@@ -1009,6 +1030,7 @@ static void mqtt_command_task(void *arg)
     while (1) {
         pool_mqtt_rx_t *message;
         if (xQueueReceive(s_mqtt_commands, &message, portMAX_DELAY) != pdTRUE) continue;
+        if (!mqtt_control_ready()) { free(message); continue; }
         pool_mqtt_command_t command;
         bool valid = pool_mqtt_decode(message->topic, message->payload, message->received,
                                        message->retained, &s_mqtt_settings, &command);

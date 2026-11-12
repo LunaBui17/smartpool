@@ -60,10 +60,10 @@ Ngưỡng từ Android dùng **phân loại cảnh báo**, không thay quy tắc
 2. **Timeout cảm biến 15 giây:** `MainActivity.SENSOR_TIMEOUT_MS=15000` không khớp chu kỳ nghỉ 60 giây. App sẽ báo dữ liệu cũ giữa hai lần đo. Nên sửa timeout theo chu kỳ, ví dụ 125 giây lúc nghỉ/15 giây lúc bơm; firmware giữ chu kỳ người dùng đã yêu cầu.
 3. **Đơn vị ngưỡng nước:** UI ghi “% hoặc cm”, mặc định 20/85. Nhập ADC đã đo/hiệu chuẩn vào app. Nếu Sync All còn 20/85, phần lớn số đo ADC thực tế sẽ bị phân loại là tràn.
 4. **URL và chế độ HTTP:** Android mặc định `http://192.168.10.214/pool_api/pool_api.php`, khác firmware `http://192.168.60.112/pool_api.php`. Sửa URL trước Sync All. Chọn MQTT để điều khiển bơm: firmware chỉ upload HTTP, không đọc lệnh PHP/database.
-5. **ACK khi Settings reconnect:** `SettingsActivity` chưa bật automatic reconnect như `MainActivity`. Nhánh gửi tạm có thể publish trước SUBACK; nếu tạo client mới, callback nhận ACK cũng chưa gắn. Cần gắn callback, subscribe và đợi SUBACK trước khi gửi cấu hình. Timeout không chứng minh ESP32 chưa lưu.
+5. **ACK khi Settings reconnect:** đã bật automatic reconnect, bỏ nhánh tạo client gửi tạm và khóa nút gửi khi MQTT chưa kết nối. Vẫn nên đợi SUBACK trước khi publish cấu hình; timeout ACK không chứng minh ESP32 chưa lưu.
 6. **SSID có dấu ngoặc:** app cắt tên tại `" ("` để bỏ RSSI. SSID thật có chuỗi này cần nhập tay hoặc sửa parser app để giữ SSID tách riêng RSSI.
 
-Tài liệu gốc có chân 18/19, interlock bắt buộc, telemetry 2–5 giây và code Arduino bỏ kiểm tra TLS. Các đoạn này không phải cấu hình áp dụng cho firmware hiện tại. Mã Android và tài liệu ngoài thư mục firmware chưa được chỉnh sửa.
+Tài liệu gốc có chân 18/19, interlock bắt buộc, telemetry 2–5 giây và code Arduino bỏ kiểm tra TLS. Các đoạn này không phải cấu hình áp dụng cho firmware hiện tại. Mã Android nay đã được cập nhật khóa điều khiển theo kết nối MQTT; tài liệu MQTT ở thư mục gốc chưa được chỉnh sửa.
 
 ## Kiểm tra
 
@@ -82,4 +82,9 @@ Khi bật interlock lúc cả hai bơm đang chạy, firmware dừng cả hai v�
 ## Sync All khi chưa nhập Wi-Fi trong app
 
 Android có thể gửi object wifi với cả ssid và password là chuỗi rỗng. Trong CONFIG_UPDATE_ALL, firmware bỏ qua riêng nhóm Wi-Fi này, giữ nguyên credentials và timestamp Wi-Fi, vẫn kiểm tra/lưu các nhóm thiết bị, ngưỡng và HTTP rồi trả SUCCESS. Không ghi đè hoặc ngắt mạng hiện tại. SSID rỗng kèm mật khẩu có nội dung vẫn là lỗi; UPDATE_WIFI riêng vẫn bắt buộc SSID 1–32 byte. Các lỗi Wi-Fi nay được ACK bằng thông báo cụ thể. Test hồi quy dùng tests/fixtures/sync_all_empty_wifi.json từ payload thực tế.
+
+
+## Khóa điều khiển theo MQTT
+
+Theo lựa chọn người dùng, chỉ khóa điều khiển từ Android/MQTT; web local/AP vẫn hoạt động khi broker mất kết nối. App yêu cầu cả kết nối broker và trạng thái ESP32 online, khóa cả đường HTTP điều khiển khi thiếu MQTT, bỏ trạng thái/lệnh chờ cũ khi mất phiên. Các nút gửi cấu hình/quét của Settings khóa khi kết nối MQTT của màn hình đó chưa sẵn sàng; nút cấu hình broker vẫn dùng được. ESP32 kiểm tra kết nối cho cả ON/OFF và bật/tắt cảm biến từ MQTT; dừng nội bộ khi mất mạng và lệnh local không đi qua khóa remote này. Build firmware và host test trên các hàm điều khiển thật đã đạt. Chưa build APK vì máy thiếu Java/JDK; test Java đã thêm vào app nhưng chưa chạy.
 
