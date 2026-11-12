@@ -1,9 +1,11 @@
 package com.buiducluan23011767.ck;
 
 import android.Manifest;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -13,7 +15,6 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -51,8 +52,13 @@ public class MainActivity extends AppCompatActivity {
     private View rootScroll;
     private View headerContainer;
     private View alertBannerContainer;
+    private TextView txtActionFeedback;
+    private View protocolSectionTitle;
+    private View protocolDetailsSection;
+    private View interlockControlSection;
 
     private TextView txtHeaderSubtitle;
+    private TextView btnLogout;
     private ImageButton btnOpenSettings;
 
     // Thông tin chung trên Header
@@ -83,7 +89,10 @@ public class MainActivity extends AppCompatActivity {
     private TextView txtConnection;
     private TextView txtMqttCurrentBroker;
     private TextView txtMqttCurrentTopics;
+    private TextView txtLocalWebAddress;
+    private TextView txtHttpEndpointMatch;
     private Button btnGoToSettings;
+    private Button btnOpenLocalWeb;
 
     private TextView txtUpdated;
 
@@ -95,6 +104,7 @@ public class MainActivity extends AppCompatActivity {
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private AppConfig config;
+    private boolean isAdmin;
 
     private boolean updatingInterlockUi;
     private final java.util.concurrent.atomic.AtomicLong mqttSession = new java.util.concurrent.atomic.AtomicLong();
@@ -102,6 +112,8 @@ public class MainActivity extends AppCompatActivity {
     private boolean mqttConnecting;
     private volatile boolean mqttConnected;
     private volatile boolean espOnline;
+    private String espIpAddress = "";
+    private String espHttpApiUrl = "";
     private boolean polling;
 
     private boolean pumpInOn;
@@ -112,7 +124,6 @@ public class MainActivity extends AppCompatActivity {
     private boolean desiredPumpInOn;
     private boolean desiredPumpOutOn;
 
-    private static final String CONTROL_REQUEST_TAG = "mqtt-required-control";
     private static final long PUMP_ACK_TIMEOUT_MS = 7000L;
     private final Runnable pumpInTimeoutRunnable = () -> handlePumpTimeout(true);
     private final Runnable pumpOutTimeoutRunnable = () -> handlePumpTimeout(false);
@@ -122,6 +133,7 @@ public class MainActivity extends AppCompatActivity {
 
     private double currentTemp = Double.NaN;
     private int currentWaterLevel = -1;
+    private int currentWaterRaw = -1;
     private String lastHttpError = "";
 
     private long lastMqttAttemptMs;
@@ -149,6 +161,14 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        UserSession.restore(this);
+        if (!UserSession.isAuthenticated()) {
+            UserSession.clear(this);
+            startActivity(new Intent(this, LoginActivity.class));
+            finish();
+            return;
+        }
+        isAdmin = UserSession.isAdmin();
 
         notificationPermissionLauncher = registerForActivityResult(
                 new ActivityResultContracts.RequestPermission(),
@@ -173,9 +193,14 @@ public class MainActivity extends AppCompatActivity {
         rootScroll = findViewById(R.id.rootScroll);
         headerContainer = findViewById(R.id.headerContainer);
         alertBannerContainer = findViewById(R.id.alertBannerContainer);
+        txtActionFeedback = findViewById(R.id.txtActionFeedback);
 
         txtHeaderSubtitle = findViewById(R.id.txtHeaderSubtitle);
+        btnLogout = findViewById(R.id.btnLogout);
         btnOpenSettings = findViewById(R.id.btnOpenSettings);
+        protocolSectionTitle = findViewById(R.id.protocolSectionTitle);
+        protocolDetailsSection = findViewById(R.id.protocolDetailsSection);
+        interlockControlSection = findViewById(R.id.interlockControlSection);
 
         // Header thông tin chung
         txtDeviceBadge = findViewById(R.id.txtDeviceBadge);
@@ -203,9 +228,19 @@ public class MainActivity extends AppCompatActivity {
         txtConnection = findViewById(R.id.txtConnection);
         txtMqttCurrentBroker = findViewById(R.id.txtMqttCurrentBroker);
         txtMqttCurrentTopics = findViewById(R.id.txtMqttCurrentTopics);
+        txtLocalWebAddress = findViewById(R.id.txtLocalWebAddress);
+        txtHttpEndpointMatch = findViewById(R.id.txtHttpEndpointMatch);
         btnGoToSettings = findViewById(R.id.btnGoToSettings);
+        btnOpenLocalWeb = findViewById(R.id.btnOpenLocalWeb);
 
         txtUpdated = findViewById(R.id.txtUpdated);
+
+        btnLogout.setText(isAdmin ? "Admin • Thoát" : "Guest • Thoát");
+        btnOpenSettings.setVisibility(isAdmin ? View.VISIBLE : View.GONE);
+        protocolSectionTitle.setVisibility(isAdmin ? View.VISIBLE : View.GONE);
+        protocolDetailsSection.setVisibility(isAdmin ? View.VISIBLE : View.GONE);
+        interlockControlSection.setVisibility(isAdmin ? View.VISIBLE : View.GONE);
+        txtControlModeBadge.setText(isAdmin ? "Vai trò: Admin" : "Vai trò: Guest");
     }
 
     private void setupListeners() {
@@ -216,16 +251,21 @@ public class MainActivity extends AppCompatActivity {
 
         btnOpenSettings.setOnClickListener(openSettingsAction);
         btnGoToSettings.setOnClickListener(openSettingsAction);
+        btnLogout.setOnClickListener(v -> logout());
+        btnOpenLocalWeb.setOnClickListener(v -> openLocalWeb());
+        txtTemp.setOnClickListener(v -> openSensorChart(SensorChartActivity.SENSOR_TEMPERATURE));
+        txtWater.setOnClickListener(v -> openSensorChart(SensorChartActivity.SENSOR_ADC));
 
         btnPumpIn.setOnClickListener(v -> {
             if (pumpInPending || !requireMqttControl()) return;
             if (config.isInterlockEnabled() && !pumpInOn && pumpOutOn) {
-                Toast.makeText(this, "Khóa liên động đang BẬT: Hãy tắt bơm thoát trước khi bật bơm cấp.", Toast.LENGTH_LONG).show();
+                showActionFeedback("Khóa liên động đang bật. Hãy tắt bơm thoát trước khi bật bơm cấp.", true);
                 return;
             }
             boolean targetState = !pumpInOn;
             desiredPumpInOn = targetState;
             pumpInPending = true;
+            showActionFeedback("Đang gửi lệnh cho bơm cấp...", false);
             renderPumpStates();
 
             handler.removeCallbacks(pumpInTimeoutRunnable);
@@ -237,12 +277,13 @@ public class MainActivity extends AppCompatActivity {
         btnPumpOut.setOnClickListener(v -> {
             if (pumpOutPending || !requireMqttControl()) return;
             if (config.isInterlockEnabled() && !pumpOutOn && pumpInOn) {
-                Toast.makeText(this, "Khóa liên động đang BẬT: Hãy tắt bơm cấp trước khi bật bơm thoát.", Toast.LENGTH_LONG).show();
+                showActionFeedback("Khóa liên động đang bật. Hãy tắt bơm cấp trước khi bật bơm thoát.", true);
                 return;
             }
             boolean targetState = !pumpOutOn;
             desiredPumpOutOn = targetState;
             pumpOutPending = true;
+            showActionFeedback("Đang gửi lệnh cho bơm thoát...", false);
             renderPumpStates();
 
             handler.removeCallbacks(pumpOutTimeoutRunnable);
@@ -259,12 +300,9 @@ public class MainActivity extends AppCompatActivity {
             }
             config.setInterlockEnabled(isChecked);
             updateInterlockUI(isChecked);
-            Toast.makeText(
-                    this,
-                    isChecked ? "Đã BẬT khóa liên động (Chặn chạy 2 bơm cùng lúc)"
-                            : "Đã TẮT khóa liên động (Cho phép bật đồng thời 2 bơm)",
-                    Toast.LENGTH_SHORT
-            ).show();
+            showActionFeedback(isChecked
+                    ? "Đã bật khóa liên động."
+                    : "Đã tắt khóa liên động.", false);
 
             // Nếu đang kết nối MQTT, gửi cập nhật cấu hình interlock lên topic thresholds
             if (mqttClient != null && mqttClient.isConnected()) {
@@ -283,7 +321,7 @@ public class MainActivity extends AppCompatActivity {
         txtHeaderSubtitle.setText(config.getDeviceName().toUpperCase(Locale.getDefault())
                 + " • " + config.getDeviceLocation());
 
-        txtControlModeBadge.setText("Chế độ: " + config.getControlMode().toUpperCase(Locale.getDefault()));
+        txtControlModeBadge.setText(isAdmin ? "Vai trò: Admin" : "Vai trò: Guest");
 
         txtTempThresholdInfo.setText(String.format(
                 Locale.getDefault(),
@@ -292,12 +330,13 @@ public class MainActivity extends AppCompatActivity {
                 config.getTempMax()
         ));
 
-        txtWaterThresholdInfo.setText(String.format(
-                Locale.getDefault(),
-                "Ngưỡng: %.0f%% - %.0f%%",
-                config.getWaterLevelMin(),
-                config.getWaterLevelMax()
-        ));
+        if (config.hasWaterLevelCalibration()) {
+            txtWaterThresholdInfo.setText(String.format(Locale.getDefault(),
+                    "Ngưỡng: %.2f - %.2f cm",
+                    config.getWaterThresholdDisplayMin(), config.getWaterThresholdDisplayMax()));
+        } else {
+            txtWaterThresholdInfo.setText("Ngưỡng mực nước: cần hiệu chuẩn");
+        }
 
         updateInterlockUI(config.isInterlockEnabled());
 
@@ -313,6 +352,9 @@ public class MainActivity extends AppCompatActivity {
         // Đánh giá lại cảnh báo nếu đã có số liệu nhiệt độ
         if (!Double.isNaN(currentTemp)) {
             evaluateAlerts();
+        }
+        if (currentWaterLevel >= 0) {
+            updateWaterLevel(currentWaterLevel, currentWaterRaw);
         }
     }
 
@@ -339,16 +381,15 @@ public class MainActivity extends AppCompatActivity {
     private void updateGeneralStatusAndErrors() {
         StringBuilder statusBuilder = new StringBuilder();
 
-        // 1. Kiểm tra kết nối MQTT
-        if (!mqttConnected) {
-            statusBuilder.append("⚠ Mất kết nối HiveMQ Broker. ");
-        } else if (!espOnline) {
-            statusBuilder.append("ℹ MQTT đã kết nối • Chờ ESP32 online. ");
-        }
-
-        // 2. Kiểm tra lỗi HTTP nếu có
-        if (!lastHttpError.isEmpty() && "http".equalsIgnoreCase(config.getControlMode())) {
-            statusBuilder.append("⚠ HTTP API: ").append(lastHttpError).append(". ");
+        if (isAdmin) {
+            if (!mqttConnected) {
+                statusBuilder.append("⚠ Mất kết nối HiveMQ Broker. ");
+            } else if (!espOnline) {
+                statusBuilder.append("ℹ MQTT đã kết nối • Chờ ESP32 online. ");
+            }
+            if (!lastHttpError.isEmpty()) {
+                statusBuilder.append("⚠ HTTP API: ").append(lastHttpError).append(". ");
+            }
         }
 
         // 3. Kiểm tra cảm biến (Double check độ tươi mới dữ liệu)
@@ -357,7 +398,7 @@ public class MainActivity extends AppCompatActivity {
 
         if (Double.isNaN(currentTemp)) {
             statusBuilder.append("ℹ Chờ dữ liệu cảm biến. ");
-        } else if (sensorStale && mqttConnected) {
+        } else if (sensorStale) {
             statusBuilder.append("⚠ Mất tín hiệu cảm biến (>15s chưa có số liệu mới). ");
             txtTempStatus.setText("DS18B20 • Mất tín hiệu (>15s)");
             txtTempStatus.setTextColor(Color.rgb(220, 38, 38));
@@ -432,6 +473,10 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (!UserSession.isAuthenticated()) {
+            logout();
+            return;
+        }
         activityVisible = true;
         espOnline = false;
         renderPumpStates();
@@ -447,7 +492,9 @@ public class MainActivity extends AppCompatActivity {
         connectMqtt();
 
         handler.removeCallbacks(pollRunnable);
-        handler.post(pollRunnable);
+        getSensorData();
+        long intervalMs = Math.max(1000L, config.getHttpPollIntervalSec() * 1000L);
+        handler.postDelayed(pollRunnable, intervalMs);
     }
 
     @Override
@@ -616,9 +663,7 @@ public class MainActivity extends AppCompatActivity {
 
         try {
             String topicStatus = config.getTopicStatus();
-            String topicTelemetry = config.getTopicTelemetry();
             mqttClient.subscribe(topicStatus, 1);
-            mqttClient.subscribe(topicTelemetry, 1);
         } catch (MqttException e) {
             Log.e(TAG, "Lỗi đăng ký topic", e);
         }
@@ -633,10 +678,19 @@ public class MainActivity extends AppCompatActivity {
                 boolean online = json.optInt("online", 0) == 1;
                 boolean in = json.optInt("bom_vao_control", 0) == 1;
                 boolean out = json.optInt("bom_ra_control", 0) == 1;
+                JSONObject network = json.optJSONObject("network");
+                String reportedIpAddress = network == null ? "" : network.optString("ip", "").trim();
+                final String ipAddress = isValidIpv4Address(reportedIpAddress) ? reportedIpAddress : "";
+                final String httpApiUrl = network == null ? "" : network.optString("http_api_url", "").trim();
 
                 handler.post(() -> {
                     if (statusSession != mqttSession.get() || !mqttConnected) return;
                     espOnline = online;
+                    espIpAddress = online ? ipAddress : "";
+                    espHttpApiUrl = online ? httpApiUrl : "";
+                    if (online && !ipAddress.isEmpty()) {
+                        config.setEspLocalIpAddress(ipAddress);
+                    }
                     if (!online) clearPendingPumpCommands();
 
                     // DOUBLE CHECK BƠM CẤP
@@ -645,9 +699,8 @@ public class MainActivity extends AppCompatActivity {
                             handler.removeCallbacks(pumpInTimeoutRunnable);
                             pumpInPending = false;
                             pumpInOn = in;
-                            Toast.makeText(MainActivity.this,
-                                    "✓ ESP32 đã xác nhận " + (in ? "BẬT" : "TẮT") + " Bơm cấp thành công!",
-                                    Toast.LENGTH_SHORT).show();
+                            showActionFeedback("ESP32 đã xác nhận bơm cấp "
+                                    + (in ? "đang bật." : "đã tắt."), false);
                         }
                     } else {
                         pumpInOn = in;
@@ -659,9 +712,8 @@ public class MainActivity extends AppCompatActivity {
                             handler.removeCallbacks(pumpOutTimeoutRunnable);
                             pumpOutPending = false;
                             pumpOutOn = out;
-                            Toast.makeText(MainActivity.this,
-                                    "✓ ESP32 đã xác nhận " + (out ? "BẬT" : "TẮT") + " Bơm thoát thành công!",
-                                    Toast.LENGTH_SHORT).show();
+                            showActionFeedback("ESP32 đã xác nhận bơm thoát "
+                                    + (out ? "đang bật." : "đã tắt."), false);
                         }
                     } else {
                         pumpOutOn = out;
@@ -672,22 +724,6 @@ public class MainActivity extends AppCompatActivity {
                     updateGeneralStatusAndErrors();
                 });
 
-            } else if (topic.equals(config.getTopicTelemetry())) {
-                double temp = json.optDouble("nhiet_do", Double.NaN);
-                int water = json.optInt("muc_nuoc", -1);
-
-                handler.post(() -> {
-                    if (!activityVisible) return;
-                    lastTelemetryTimestampMs = System.currentTimeMillis();
-                    currentTemp = temp;
-                    currentWaterLevel = water;
-
-                    updateTemperature(temp);
-                    updateWaterLevel(water);
-                    updateTimestamp();
-                    evaluateAlerts();
-                    updateGeneralStatusAndErrors();
-                });
             }
 
         } catch (Exception e) {
@@ -699,13 +735,9 @@ public class MainActivity extends AppCompatActivity {
 
     private void sendPumpCommand(boolean pumpIn, boolean turnOn) {
         if (!requireMqttControl()) { clearPendingPumpCommands(); renderPumpStates(); return; }
-        if ("http".equalsIgnoreCase(config.getControlMode())) {
-            sendHttpPumpCommand(pumpIn, turnOn);
-            return;
-        }
 
         if (mqttClient == null || !mqttClient.isConnected()) {
-            Toast.makeText(this, "MQTT chưa kết nối Broker.", Toast.LENGTH_LONG).show();
+            showActionFeedback("Không thể gửi lệnh: thiết bị chưa sẵn sàng.", true);
             return;
         }
 
@@ -731,7 +763,6 @@ public class MainActivity extends AppCompatActivity {
                         public void onSuccess(IMqttToken token) {
                             handler.post(() -> {
                                 Log.i(TAG, "Đã gửi lệnh tới HiveMQ Broker, đang đợi ESP32 kích hoạt Relay...");
-                                Toast.makeText(MainActivity.this, "Đã gửi lệnh, đang đợi ESP32 phản hồi...", Toast.LENGTH_SHORT).show();
                             });
                         }
 
@@ -746,7 +777,7 @@ public class MainActivity extends AppCompatActivity {
                                     pumpOutPending = false;
                                 }
                                 renderPumpStates();
-                                Toast.makeText(MainActivity.this, "Gửi lệnh điều khiển thất bại.", Toast.LENGTH_LONG).show();
+                                showActionFeedback("Gửi lệnh điều khiển thất bại.", true);
                             });
                             Log.e(TAG, "Publish MQTT lỗi", error);
                         }
@@ -763,68 +794,8 @@ public class MainActivity extends AppCompatActivity {
             }
             renderPumpStates();
             Log.e(TAG, "Không gửi được lệnh MQTT", e);
+            showActionFeedback("Không gửi được lệnh điều khiển.", true);
         }
-    }
-
-    private void sendHttpPumpCommand(boolean pumpIn, boolean turnOn) {
-        if (!requireMqttControl()) { clearPendingPumpCommands(); renderPumpStates(); return; }
-        if (requestQueue == null) {
-            return;
-        }
-        boolean desiredIn = pumpIn ? turnOn : pumpInOn;
-        boolean desiredOut = pumpIn ? pumpOutOn : turnOn;
-        if (config.isInterlockEnabled() && desiredIn && desiredOut) {
-            Toast.makeText(this, "Khóa liên động đang BẬT: Không thể bật hai bơm cùng lúc.", Toast.LENGTH_LONG).show();
-            return;
-        }
-        if (pumpIn) {
-            pumpInPending = true;
-            btnPumpIn.setEnabled(false);
-        } else {
-            pumpOutPending = true;
-            btnPumpOut.setEnabled(false);
-        }
-
-        try {
-            JSONObject command = new JSONObject();
-            command.put("bom_vao", desiredIn ? 1 : 0);
-            command.put("bom_ra", desiredOut ? 1 : 0);
-            JSONObject body = new JSONObject();
-            body.put("command", command);
-
-            JsonObjectRequest request = new JsonObjectRequest(
-                    Request.Method.POST,
-                    config.getHttpApiUrl(),
-                    body,
-                    response -> {
-                        finishPumpRequest(pumpIn);
-                        Toast.makeText(this, "Đã gửi lệnh qua HTTP, chờ ESP32 xác nhận.", Toast.LENGTH_SHORT).show();
-                    },
-                    error -> {
-                        finishPumpRequest(pumpIn);
-                        Log.e(TAG, "Lệnh bơm qua HTTP thất bại", error);
-                        Toast.makeText(this, "Không gửi được lệnh qua HTTP API.", Toast.LENGTH_LONG).show();
-                    }
-            );
-            request.setShouldCache(false);
-            request.setRetryPolicy(new DefaultRetryPolicy(4000, 0, 1.0f));
-            request.setTag(CONTROL_REQUEST_TAG);
-            requestQueue.add(request);
-        } catch (Exception error) {
-            finishPumpRequest(pumpIn);
-            Log.e(TAG, "Không tạo được lệnh HTTP", error);
-        }
-    }
-
-    private void finishPumpRequest(boolean pumpIn) {
-        if (pumpIn) {
-            pumpInPending = false;
-            btnPumpIn.setEnabled(canControlDevice());
-        } else {
-            pumpOutPending = false;
-            btnPumpOut.setEnabled(canControlDevice());
-        }
-        renderPumpStates();
     }
 
     private void closeMqtt() {
@@ -852,7 +823,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateMqttStatus() {
-        if (!mqttConnected || !espOnline) clearPendingPumpCommands();
+        if (!mqttConnected || !espOnline) {
+            clearPendingPumpCommands();
+        }
         renderPumpStates();
         if (!mqttConnected) {
             txtMqttBadge.setText("MQTT: Mất kết nối HiveMQ Broker");
@@ -864,7 +837,100 @@ public class MainActivity extends AppCompatActivity {
             txtMqttBadge.setText("MQTT: Đã kết nối • ESP32 đang Online");
             txtMqttBadge.setTextColor(Color.rgb(22, 163, 74));
         }
+        updateLocalWebAccess();
         updateGeneralStatusAndErrors();
+    }
+
+    private void updateLocalWebAccess() {
+        boolean hasLanAddress = espOnline && isValidIpv4Address(espIpAddress);
+        if (hasLanAddress) {
+            txtLocalWebAddress.setText("IP ESP32 (LAN): " + espIpAddress
+                    + "\nWeb local: http://" + espIpAddress + "/"
+                    + "\nĐiện thoại cần cùng mạng Wi-Fi với ESP32.");
+        } else {
+            txtLocalWebAddress.setText("Chưa nhận IP LAN của ESP32."
+                    + "\nWeb cấu hình dự phòng: http://192.168.4.1/"
+                    + "\nĐể dùng, kết nối Wi-Fi SmartPool-Setup.");
+        }
+
+        if (!espOnline || espHttpApiUrl.isEmpty()) {
+            txtHttpEndpointMatch.setText("Đối chiếu HTTP: đang chờ cấu hình từ ESP32.");
+            txtHttpEndpointMatch.setTextColor(Color.rgb(148, 163, 184));
+        } else if (config.getHttpApiUrl().trim().equals(espHttpApiUrl)) {
+            txtHttpEndpointMatch.setText("HTTP API: app và ESP32 đang dùng cùng URL.");
+            txtHttpEndpointMatch.setTextColor(Color.rgb(22, 163, 74));
+        } else {
+            txtHttpEndpointMatch.setText("HTTP API chưa khớp.\nApp: "
+                    + config.getHttpApiUrl().trim() + "\nESP32: " + espHttpApiUrl);
+            txtHttpEndpointMatch.setTextColor(Color.rgb(220, 38, 38));
+        }
+    }
+
+    private void openLocalWeb() {
+        String ipAddress = espOnline && isValidIpv4Address(espIpAddress)
+                ? espIpAddress : "192.168.4.1";
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("http://" + ipAddress + "/")));
+        } catch (ActivityNotFoundException e) {
+            showActionFeedback("Không tìm thấy trình duyệt để mở web local.", true);
+            Log.e(TAG, "Không mở được web local ESP32", e);
+        }
+    }
+
+    private void showActionFeedback(String message, boolean error) {
+        txtActionFeedback.setText(message);
+        txtActionFeedback.setTextColor(error ? Color.rgb(185, 28, 28) : Color.rgb(30, 64, 175));
+        txtActionFeedback.setVisibility(View.VISIBLE);
+    }
+
+    private void openSensorChart(String sensor) {
+        Intent intent = new Intent(this, SensorChartActivity.class);
+        intent.putExtra(SensorChartActivity.EXTRA_SENSOR, sensor);
+        startActivity(intent);
+    }
+
+    private void logout() {
+        String token = UserSession.getToken();
+        if (token != null && !token.isEmpty()) {
+            JSONObject body = new JSONObject();
+            try {
+                body.put("action", "logout");
+                JsonObjectRequest request = new JsonObjectRequest(
+                        Request.Method.POST, config.getHttpApiUrl().trim(), body,
+                        response -> { },
+                        error -> Log.w(TAG, "Không thu hồi được phiên đăng nhập trên máy chủ", error)
+                ) {
+                    @Override
+                    public java.util.Map<String, String> getHeaders() {
+                        java.util.Map<String, String> headers = new java.util.HashMap<>();
+                        headers.put("Authorization", "Bearer " + token);
+                        return headers;
+                    }
+                };
+                Volley.newRequestQueue(getApplicationContext()).add(request);
+            } catch (org.json.JSONException e) {
+                Log.e(TAG, "Không tạo được yêu cầu đăng xuất", e);
+            }
+        }
+        UserSession.clear(this);
+        startActivity(new Intent(this, LoginActivity.class));
+        finish();
+    }
+
+    private static boolean isValidIpv4Address(String address) {
+        String[] parts = address.split("\\.", -1);
+        if (parts.length != 4) return false;
+        for (String part : parts) {
+            if (part.isEmpty() || part.length() > 3) return false;
+            int value = 0;
+            for (int i = 0; i < part.length(); i++) {
+                char digit = part.charAt(i);
+                if (digit < '0' || digit > '9') return false;
+                value = value * 10 + digit - '0';
+            }
+            if (value > 255) return false;
+        }
+        return true;
     }
 
     // ==================== HTTP / XAMPP ====================
@@ -894,19 +960,20 @@ public class MainActivity extends AppCompatActivity {
                     lastHttpError = "";
 
                     double temp = response.optDouble("nhiet_do", Double.NaN);
+                    boolean validTemp = !Double.isNaN(temp) && !Double.isInfinite(temp);
                     int water = response.optInt("muc_nuoc", -1);
+                    int waterRaw = response.optInt("muc_nuoc_raw", -1);
 
-                    if ("http".equalsIgnoreCase(config.getControlMode()) || !mqttConnected) {
-                        pumpInOn = response.optInt("bom_control", 0) == 1;
-                        pumpOutOn = response.optInt("van_control", 0) == 1;
-                        renderPumpStates();
-                    }
-
-                    currentTemp = temp;
-                    currentWaterLevel = water;
-
-                    updateTemperature(temp);
-                    updateWaterLevel(water);
+                    // HTTP supplies sensor data. Pump state is updated from MQTT status.
+                    lastTelemetryTimestampMs = System.currentTimeMillis();
+                    if (validTemp) currentTemp = temp;
+                    currentWaterRaw = waterRaw >= 0 && waterRaw <= 4095 ? waterRaw : -1;
+                    currentWaterLevel = waterRaw >= 0
+                            ? (waterRaw < config.getWaterLevelMin() ? 0
+                            : waterRaw > config.getWaterLevelMax() ? 2 : 1)
+                            : water;
+                    if (validTemp) updateTemperature(temp);
+                    updateWaterLevel(currentWaterLevel, currentWaterRaw);
                     updateTimestamp();
                     evaluateAlerts();
 
@@ -918,6 +985,7 @@ public class MainActivity extends AppCompatActivity {
                 error -> {
                     polling = false;
                     lastHttpError = "Lỗi kết nối";
+                    renderPumpStates();
                     Log.e(TAG, "Lỗi HTTP GET: " + error);
                     txtConnection.setText("HTTP API: Không thể kết nối (" + error.getMessage() + ")");
                     txtConnection.setTextColor(Color.rgb(220, 38, 38));
@@ -934,19 +1002,34 @@ public class MainActivity extends AppCompatActivity {
 
     // ==================== HIỂN THỊ CẢM BIẾN & CẢNH BÁO ====================
 
-    private void updateWaterLevel(int water) {
+    private void updateWaterLevel(int water, int waterRaw) {
+        boolean withinMeasuredRange = config.isWaterAdcWithinCalibration(waterRaw);
+        if (withinMeasuredRange) {
+            txtWater.setText(String.format(Locale.getDefault(), "%.1f cm",
+                    config.waterAdcToCm(waterRaw)));
+        } else {
+            txtWater.setText(!config.hasWaterLevelCalibration() ? "Chưa hiệu chuẩn"
+                    : waterRaw >= 0 ? "Ngoài khoảng đo" : "Chưa có dữ liệu");
+        }
+        if (!withinMeasuredRange) {
+            txtWater.setTextColor(Color.rgb(100, 116, 139));
+            txtWaterStatus.setText(config.hasWaterLevelCalibration()
+                    ? "Số đo nằm ngoài khoảng cảm biến đã hiệu chuẩn"
+                    : "Chưa có khoảng đo được hiệu chuẩn");
+            return;
+        }
         if (water == 1) {
-            txtWater.setText("Bình thường");
             txtWater.setTextColor(Color.rgb(22, 163, 74));
             txtWaterStatus.setText("Nước trong khoảng an toàn");
         } else if (water == 0) {
-            txtWater.setText("CẢNH BÁO: Cạn nước");
             txtWater.setTextColor(Color.rgb(220, 38, 38));
-            txtWaterStatus.setText("Mực nước thấp hơn ngưỡng min");
+            txtWaterStatus.setText("Cảnh báo: mực nước dưới ngưỡng thấp");
         } else if (water == 2) {
-            txtWater.setText("CẢNH BÁO: Tràn nước");
             txtWater.setTextColor(Color.rgb(220, 38, 38));
-            txtWaterStatus.setText("Mực nước vượt ngưỡng max");
+            txtWaterStatus.setText("Cảnh báo: mực nước vượt ngưỡng cao");
+        } else {
+            txtWater.setTextColor(Color.rgb(100, 116, 139));
+            txtWaterStatus.setText("Chưa có trạng thái cảm biến nước");
         }
     }
 
@@ -996,7 +1079,7 @@ public class MainActivity extends AppCompatActivity {
             alertMsg.append("⚠ Mực nước cạn nguy hiểm, cần cấp nước!");
         } else if (currentWaterLevel == 2) {
             tempAlert = true;
-            alertMsg.append("⚠ Mực nước tràn hồ, cần xả bớt nước!");
+            alertMsg.append("⚠ Mực nước vượt ngưỡng cao đã cài đặt; kiểm tra cảm biến!");
         }
 
         if (tempAlert) {
@@ -1019,16 +1102,12 @@ public class MainActivity extends AppCompatActivity {
         if (isPumpIn && pumpInPending) {
             pumpInPending = false;
             renderPumpStates();
-            Toast.makeText(this,
-                    "⚠ Quá thời gian (7s): ESP32 chưa xác nhận trạng thái Bơm cấp! Vui lòng kiểm tra thiết bị.",
-                    Toast.LENGTH_LONG).show();
+            showActionFeedback("Quá thời gian chờ xác nhận bơm cấp. Hãy kiểm tra thiết bị.", true);
             updateGeneralStatusAndErrors();
         } else if (!isPumpIn && pumpOutPending) {
             pumpOutPending = false;
             renderPumpStates();
-            Toast.makeText(this,
-                    "⚠ Quá thời gian (7s): ESP32 chưa xác nhận trạng thái Bơm thoát! Vui lòng kiểm tra thiết bị.",
-                    Toast.LENGTH_LONG).show();
+            showActionFeedback("Quá thời gian chờ xác nhận bơm thoát. Hãy kiểm tra thiết bị.", true);
             updateGeneralStatusAndErrors();
         }
     }
@@ -1041,12 +1120,13 @@ public class MainActivity extends AppCompatActivity {
 
     private boolean requireMqttControl() {
         if (canControlDevice()) return true;
-        Toast.makeText(this, "Cần kết nối MQTT và ESP32 online để điều khiển.", Toast.LENGTH_LONG).show();
+        showActionFeedback(isAdmin
+                ? "Cần kết nối thiết bị để điều khiển."
+                : "Thiết bị hiện chưa sẵn sàng điều khiển.", true);
         return false;
     }
 
     private void clearPendingPumpCommands() {
-        if (requestQueue != null) requestQueue.cancelAll(CONTROL_REQUEST_TAG);
         handler.removeCallbacks(pumpInTimeoutRunnable);
         handler.removeCallbacks(pumpOutTimeoutRunnable);
         pumpInPending = false;
@@ -1089,8 +1169,11 @@ public class MainActivity extends AppCompatActivity {
             txtPumpOutStatus.setTextColor(pumpOutOn ? Color.rgb(220, 38, 38) : Color.rgb(100, 116, 139));
         }
         if (!canControlDevice()) {
-            txtPumpInStatus.setText("Điều khiển đã khóa: chờ MQTT và ESP32 online.");
-            txtPumpOutStatus.setText("Điều khiển đã khóa: chờ MQTT và ESP32 online.");
+            String unavailable = isAdmin
+                    ? "Điều khiển đã khóa: chờ MQTT và ESP32 online."
+                    : "Thiết bị chưa sẵn sàng điều khiển.";
+            txtPumpInStatus.setText(unavailable);
+            txtPumpOutStatus.setText(unavailable);
         }
     }
 }

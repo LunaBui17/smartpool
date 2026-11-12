@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "pump_auto.h"
 
 #define POOL_MQTT_PAYLOAD_MAX 4096
 #define POOL_MQTT_TOPIC_MAX 80
@@ -21,7 +22,8 @@ typedef struct {
 
 typedef enum {
     POOL_MQTT_INVALID, POOL_MQTT_PUMP_IN, POOL_MQTT_PUMP_OUT,
-    POOL_MQTT_TEMPERATURE, POOL_MQTT_WATER, POOL_MQTT_SCAN, POOL_MQTT_CONFIG
+    POOL_MQTT_TEMPERATURE, POOL_MQTT_WATER, POOL_MQTT_SCAN, POOL_MQTT_CONFIG,
+    POOL_MQTT_AUTOMATION
 } pool_mqtt_command_kind_t;
 
 typedef struct {
@@ -29,6 +31,8 @@ typedef struct {
     bool on, retained, wifi_skipped;
     const char *error_message;
     unsigned fields;
+    int automation_channel;
+    pump_auto_config_t automation;
     char req_id[97], action[32];
     pool_mqtt_settings_t settings;
 } pool_mqtt_command_t;

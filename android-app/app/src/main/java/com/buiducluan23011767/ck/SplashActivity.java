@@ -33,10 +33,8 @@ public class SplashActivity extends AppCompatActivity {
 
         openedMain = true;
 
-        Intent intent = new Intent(
-                SplashActivity.this,
-                MainActivity.class
-        );
+        Class<?> destination = UserSession.restore(this) ? MainActivity.class : LoginActivity.class;
+        Intent intent = new Intent(SplashActivity.this, destination);
 
         startActivity(intent);
 

@@ -54,7 +54,7 @@ Local endpoints (JSON requests require `Content-Type: application/json`):
 
 ## MQTT control
 
-Configure the broker in `CONFIG_POOL_MQTT_URI` and credentials in `main/mqtt_credentials.h` using the adjacent example file. Wi-Fi setup is available through the SmartPool setup AP and `http://192.168.4.1`. TLS MQTT starts after SNTP clock synchronization.
+Configure the broker in `CONFIG_POOL_MQTT_URI` and credentials in `main/mqtt_credentials.h` using the adjacent example file, or enter them on the local dashboard at `http://192.168.4.1` under **MQTT & HTTP**. Dashboard MQTT settings are stored in NVS and take effect after the automatic restart; the password is never returned by the config API. The same panel saves the HTTP upload URL in NVS and applies it to subsequent uploads without restart. TLS MQTT starts after SNTP clock synchronization. Keep the Android app configured for the same broker and credentials.
 
 Publish an exact one-byte payload: `1` means ON/enabled; `0` means OFF/disabled.
 
@@ -87,7 +87,7 @@ The firmware POSTs `application/json` on each measurement interval, including wh
 {"sample_id":"1234567800000001","nhiet_do":26.50,"muc_nuoc":1,"muc_nuoc_raw":2400,"bom_control":0,"van_control":0,"temperature_enabled":1,"water_level_enabled":1,"online":1}
 ```
 
-`bom_control` and `van_control` retain their existing API names and correspond to relay 1 and relay 2. For HTTP uploads, unavailable sensor fields are omitted, including in state-only samples. This supports the deployed PHP API, which rejects JSON null in numeric fields. Missing fields must not be interpreted as a new zero reading. MQTT telemetry and the local dashboard still use JSON null for missing readings. A disabled sensor has its enable field set to 0; an enabled but unavailable sensor has its enable field set to 1 and its reading set to null. `online` records Wi-Fi connectivity when the sample was captured. Each sample captures relay and sensor state at that moment, so retries do not rewrite historical state using current relay values.
+`bom_control` and `van_control` retain their existing API names and correspond to relay 1 and relay 2. For HTTP uploads, unavailable sensor fields are omitted, including in state-only samples. This supports the deployed PHP API, which rejects JSON null in numeric fields. Missing fields must not be interpreted as a new zero reading. MQTT telemetry still uses JSON null for missing readings. The local dashboard keeps the last successful temperature reading during a read failure and marks it as stale; before the first valid reading it shows a placeholder. A disabled sensor has its enable field set to 0; an enabled but unavailable sensor has its enable field set to 1 and its reading set to null. `online` records Wi-Fi connectivity when the sample was captured. Each sample captures relay and sensor state at that moment, so retries do not rewrite historical state using current relay values.
 
 Uploads run in a separate task. Failed uploads enter the existing NVS queue (128 samples); the oldest is dropped when full. A 16-sample RAM inbox buffers new samples while HTTP is busy; if that inbox fills, new samples are dropped with a warning. The inbox is not retained across reboot. Pending NVS samples are retried even when both sensors are disabled. Firmware v1 queued readings are migrated without inventing historical device state; their POST payload omits the state fields.
 
@@ -146,25 +146,27 @@ Expected logs: `SNTP started after IP`, followed by `SNTP synchronized`, then `M
 
 ## Per-pump automatic control
 
-Open **Automatic pump setup** on the local dashboard. Each pump has a separate enable checkbox, sensor (water ADC or temperature), start direction (at/below or at/above), start threshold, stop mode, stop threshold, and run-time limit in seconds (1-86400). Automation is disabled by default. Water thresholds use raw ADC values 0-4095, not centimeters or percent; temperature thresholds use Celsius (-55 to 125). Calibrate the water sensor first. Analog ADC readings alone cannot reliably distinguish a disconnected sensor from a valid dry/low reading.
+Open **Automatic pump setup** on the local dashboard. Each pump has independent water and temperature conditions for starting and stopping. Enabled conditions within each group use OR: either sensor can start the pump, and either stop condition can stop it. Set a direction (at/below or at/above) and threshold for each enabled condition. Automation is disabled by default. Water uses raw ADC 0-4095; temperature uses Celsius (-55 to 125). Calibrate the water sensor first. Analog ADC alone cannot reliably distinguish a disconnected sensor from a valid dry reading.
 
-- **Duration:** start on the selected sensor condition and run for the configured seconds. Invalid/stale sensor data still stops an automatic run early.
-- **Threshold:** start on the selected condition and stop at the opposite threshold. The duration field is the maximum run time even if the target is never reached. For a below-start rule, stop must be greater than start; for an above-start rule, stop must be smaller.
-- After a completed, timed-out, or sensor-fault run, the trigger condition must clear before a new automatic run is armed. This prevents repeated timed runs while the same condition remains asserted.
+- **Duration:** start when either enabled start condition is met and run for the configured seconds.
+- **Threshold:** start when either enabled start condition is met; stop when either enabled stop condition is met. The duration field is still the maximum run time. If the same sensor is used in both groups, its stop condition must have the opposite direction with a separated threshold.
+- If a selected stop sensor becomes unavailable while running, the pump stops safely. A start is blocked while a stop condition is already met. After any run, all enabled start conditions must become valid and clear before a new run is armed.
 - Time limits and sensor validity are evaluated every 250 ms in a separate task. Sensor thresholds are evaluated against the existing measurement cadence (60 seconds idle / 5 seconds pumping by default); the timer does not wait for a sensor measurement to stop a pump.
 - **Save and apply** persists both rule configurations atomically to NVS, stops the selected automatic/transitioning channel, requests a fresh sample, and rearms that channel. Enabled rules wait for a fresh reading after boot. Automation takes precedence over an initial-ON boot setting for that channel until a valid reading is available.
 - Manual web/MQTT relay commands pause automation for the target channel, including OFF commands. Stop-all and explicit Wi-Fi mode/credential transitions pause both. Parameters and enable settings remain saved; save/apply to resume, or reboot to resume an enabled saved rule. To keep automation disabled across reboot, uncheck it and save. Manual runs are not subject to the automatic rule's timer/threshold.
 - Automatic runs continue without MQTT or router connectivity. Both pumps may operate simultaneously when interlock is OFF; otherwise a blocked automatic pump waits without consuming its trigger or run-time budget. A disabled relay or sensor in menuconfig cannot be used to enable a rule; disabling a sensor at runtime stops any automatic run that depends on it.
 
-Example: inlet starts when water ADC <=1500, stops at >=2500, with a 300-second maximum; outlet may independently use temperature >=30 C and stop at <=28 C, or run for a fixed duration. Defaults are examples only and remain OFF until explicitly enabled.
+Example: inlet starts when water ADC <=1500 **or** temperature >=30 C, stops when water ADC >=2500 **or** temperature <=28 C, with a 300-second maximum. Defaults remain OFF until explicitly enabled.
 
 `POST /api/automation` accepts the complete rule for one channel:
 
 ```json
-{"channel":1,"enabled":true,"sensor":"water","comparison":"below","start_threshold":1500,"stop_mode":"threshold","stop_threshold":2500,"duration_seconds":300}
+{"channel":1,"enabled":true,"start_conditions":{"water":{"enabled":true,"comparison":"below","threshold":1500},"temperature":{"enabled":true,"comparison":"above","threshold":30}},"stop_conditions":{"water":{"enabled":true,"comparison":"above","threshold":2500},"temperature":{"enabled":true,"comparison":"below","threshold":28}},"stop_mode":"threshold","duration_seconds":300}
 ```
 
-Use channel 1 or 2; sensor `water` or `temperature`; comparison `below` or `above`; stop mode `duration` or `threshold`. `stop_threshold` is required but unused in duration mode (the browser normalizes it to the start threshold). `/api/status` includes an `automation` array with configuration, paused/running flags, current and last-stop reasons, and remaining seconds. Runtime state and timers reset on reboot; configuration survives in NVS. HTTP/MQTT telemetry continues reporting actual commanded relay states.
+Use channel 1 or 2; comparison `below` or `above`; stop mode `duration` or `threshold`. The API still accepts the earlier single-sensor request format. `/api/status` includes an `automation` array with both condition groups, paused/running flags, current and last-stop reasons, and remaining seconds. Runtime state and timers reset on reboot; configuration survives in NVS. Existing one-sensor rules are migrated when the new firmware boots. HTTP/MQTT telemetry continues reporting actual commanded relay states.
+
+Android can also configure these rules without the local web page. Publish an `UPDATE_AUTOMATION` JSON payload to `smartpool/config/automation` with QoS 1 and **retain disabled**; include `req_id`, integer Unix `timestamp`, `channel` (1 or 2), `enabled`, `stop_mode`, `duration_seconds`, and the same complete `start_conditions` / `stop_conditions` objects shown above. The firmware validates the rule, stores it in NVS, applies it, then publishes the result to `smartpool/ack`. Retained automation commands are rejected to prevent stale rules from being applied after reconnect. The retained `smartpool/status` payload includes the two current rules and runtime state so clients can load them over MQTT.
 
 Host policy tests run the actual C implementation independently of ESP hardware:
 
@@ -173,7 +175,7 @@ cc -std=c11 -Wall -Wextra -Werror -Imain main/pump_auto.c tests/test_pump_auto.c
 ./build/pump_auto_tests
 ```
 
-On Windows the same test can be compiled/run in Ubuntu WSL. The dashboard test covers both forms, unsaved edits across polling, separate sensor choices, invalid hysteresis, timed mode, manual override, stop-all, and rearming. Board tests are still needed for physical relay operation, sensor disconnection, ADC calibration, and NVS persistence across power cycles.
+On Windows the same test can be compiled/run in Ubuntu WSL. The dashboard test covers both forms, unsaved edits across polling, OR conditions, invalid hysteresis, timed mode, manual override, stop-all, and rearming. Board tests are still needed for physical relay operation, sensor disconnection, ADC calibration, and NVS persistence across power cycles.
 
 
 ## Android MQTT configuration and review

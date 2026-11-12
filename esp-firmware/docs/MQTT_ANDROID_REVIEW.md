@@ -70,7 +70,7 @@ Tài liệu gốc có chân 18/19, interlock bắt buộc, telemetry 2–5 giây
 `tests/test_mqtt_protocol.c` chạy C thật với payload Android: lệnh relay/sensor, retained ON, cấu hình từng phần/tổng hợp, req_id lỗi, ADC ba trạng thái, timestamp cũ/trùng, phân mảnh ở mọi vị trí, giới hạn bộ đệm. Dùng cJSON đi kèm ESP-IDF:
 
 ```sh
-cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Imain -I/path/to/cJSON main/pool_mqtt_protocol.c tests/test_mqtt_protocol.c /path/to/cJSON/cJSON.c -lm -o build/mqtt_protocol_tests
+cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Imain -I/path/to/cJSON main/pool_mqtt_protocol.c main/pump_auto.c tests/test_mqtt_protocol.c /path/to/cJSON/cJSON.c -lm -o build/mqtt_protocol_tests
 ./build/mqtt_protocol_tests
 ```
 
@@ -87,4 +87,3 @@ Android có thể gửi object wifi với cả ssid và password là chuỗi r�
 ## Khóa điều khiển theo MQTT
 
 Theo lựa chọn người dùng, chỉ khóa điều khiển từ Android/MQTT; web local/AP vẫn hoạt động khi broker mất kết nối. App yêu cầu cả kết nối broker và trạng thái ESP32 online, khóa cả đường HTTP điều khiển khi thiếu MQTT, bỏ trạng thái/lệnh chờ cũ khi mất phiên. Các nút gửi cấu hình/quét của Settings khóa khi kết nối MQTT của màn hình đó chưa sẵn sàng; nút cấu hình broker vẫn dùng được. ESP32 kiểm tra kết nối cho cả ON/OFF và bật/tắt cảm biến từ MQTT; dừng nội bộ khi mất mạng và lệnh local không đi qua khóa remote này. Build firmware và host test trên các hàm điều khiển thật đã đạt. Chưa build APK vì máy thiếu Java/JDK; test Java đã thêm vào app nhưng chưa chạy.
-

@@ -82,6 +82,50 @@ static bool http(const cJSON *o, pool_mqtt_settings_t *s)
     return true;
 }
 
+static bool automation_condition(const cJSON *group, const char *name,
+                                 pump_auto_condition_t *condition)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(group, name);
+    const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(item, "enabled");
+    const cJSON *comparison = cJSON_GetObjectItemCaseSensitive(item, "comparison");
+    const cJSON *threshold = cJSON_GetObjectItemCaseSensitive(item, "threshold");
+    if (!cJSON_IsObject(item) || !cJSON_IsBool(enabled) || !cJSON_IsString(comparison) ||
+        (strcmp(comparison->valuestring, "below") != 0 &&
+         strcmp(comparison->valuestring, "above") != 0) || !cJSON_IsNumber(threshold)) return false;
+    condition->enabled = cJSON_IsTrue(enabled);
+    condition->below = strcmp(comparison->valuestring, "below") == 0;
+    condition->threshold = threshold->valuedouble;
+    return true;
+}
+
+static bool automation(const cJSON *root, pool_mqtt_command_t *command)
+{
+    const cJSON *channel = cJSON_GetObjectItemCaseSensitive(root, "channel");
+    const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(root, "enabled");
+    const cJSON *mode = cJSON_GetObjectItemCaseSensitive(root, "stop_mode");
+    const cJSON *duration = cJSON_GetObjectItemCaseSensitive(root, "duration_seconds");
+    const cJSON *starts = cJSON_GetObjectItemCaseSensitive(root, "start_conditions");
+    const cJSON *stops = cJSON_GetObjectItemCaseSensitive(root, "stop_conditions");
+    if (!cJSON_IsNumber(channel) || (channel->valuedouble != 1 && channel->valuedouble != 2) ||
+        !cJSON_IsBool(enabled) || !cJSON_IsString(mode) ||
+        (strcmp(mode->valuestring, "duration") != 0 && strcmp(mode->valuestring, "threshold") != 0) ||
+        !cJSON_IsNumber(duration) || duration->valuedouble < 1 || duration->valuedouble > 86400 ||
+        floor(duration->valuedouble) != duration->valuedouble || !cJSON_IsObject(starts) ||
+        !cJSON_IsObject(stops)) return false;
+
+    command->automation_channel = (int)channel->valuedouble;
+    command->automation.enabled = cJSON_IsTrue(enabled);
+    command->automation.stop_mode = strcmp(mode->valuestring, "duration") == 0
+        ? PUMP_STOP_DURATION : PUMP_STOP_THRESHOLD;
+    command->automation.duration_seconds = (uint32_t)duration->valuedouble;
+    for (int sensor = 0; sensor < PUMP_SENSOR_COUNT; sensor++) {
+        const char *name = sensor == PUMP_SENSOR_WATER ? "water" : "temperature";
+        if (!automation_condition(starts, name, &command->automation.start[sensor]) ||
+            !automation_condition(stops, name, &command->automation.stop[sensor])) return false;
+    }
+    return pump_auto_config_valid(&command->automation);
+}
+
 bool pool_mqtt_decode(const char *topic, const char *payload, size_t length, bool retained,
                        const pool_mqtt_settings_t *base, pool_mqtt_command_t *c)
 {
@@ -103,6 +147,10 @@ bool pool_mqtt_decode(const char *topic, const char *payload, size_t length, boo
     if (!cJSON_IsObject(root) || end != payload + length) { cJSON_Delete(root); return false; }
     const char *action = NULL;
     if (strcmp(topic, "smartpool/config/thresholds") == 0) { action = "UPDATE_THRESHOLDS"; c->fields = POOL_CFG_THRESHOLDS; }
+    else if (strcmp(topic, "smartpool/config/automation") == 0) {
+        action = "UPDATE_AUTOMATION";
+        c->kind = POOL_MQTT_AUTOMATION;
+    }
     else if (strcmp(topic, "smartpool/config/wifi") == 0) { action = "UPDATE_WIFI"; c->fields = POOL_CFG_WIFI; }
     else if (strcmp(topic, "smartpool/config/device") == 0) { action = "UPDATE_DEVICE"; c->fields = POOL_CFG_DEVICE; }
     else if (strcmp(topic, "smartpool/config/http") == 0) { action = "UPDATE_HTTP"; c->fields = POOL_CFG_HTTP; }
@@ -122,6 +170,14 @@ bool pool_mqtt_decode(const char *topic, const char *payload, size_t length, boo
     else { strcpy(c->action, action); ok = ok && cJSON_IsString(a) && strcmp(a->valuestring, action) == 0; }
     double timestamp = 0;
     ok = ok && number_field(root, "timestamp", &timestamp, 0, 4102444799.0) && timestamp == floor(timestamp);
+    if (c->kind == POOL_MQTT_AUTOMATION) {
+        ok = ok && request && c->req_id[0] && !retained && automation(root, c);
+        if (!ok) c->error_message = retained
+            ? "Automation commands must not be retained"
+            : "Invalid automation rule; nothing applied";
+        cJSON_Delete(root);
+        return ok;
+    }
     c->settings = *base;
     bool all = c->fields == 15;
     if (ok && (c->fields & POOL_CFG_THRESHOLDS)) ok = thresholds(all ? cJSON_GetObjectItemCaseSensitive(root, "thresholds") : root, c);

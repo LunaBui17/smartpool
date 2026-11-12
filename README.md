@@ -1,6 +1,6 @@
 # Smart Pool
 
-Hệ thống dùng ESP32-S3 để đo nhiệt độ nước bằng DS18B20, đọc cảm biến mực nước dạng analog và điều khiển hai bơm qua relay. Ứng dụng Android và ESP trao đổi lệnh bơm qua HiveMQ Cloud (MQTT/TLS) hoặc XAMPP (HTTP), tùy cấu hình. Dữ liệu mới nhất và lịch sử luôn được gửi đến API PHP trên XAMPP trong mạng nội bộ.
+Hệ thống dùng ESP32-S3 để đo nhiệt độ nước bằng DS18B20, đọc cảm biến mực nước dạng analog và điều khiển hai bơm qua relay. Ứng dụng Android điều khiển bơm qua HiveMQ Cloud (MQTT/TLS). App đọc dữ liệu cảm biến và lịch sử qua API PHP trên XAMPP để hiển thị và vẽ biểu đồ.
 
 ## Sơ đồ đấu nối
 
@@ -21,31 +21,33 @@ Sơ đồ dưới đây dùng **một nguồn 12 V** và hai nhánh hạ áp ri�
             │             NO2 → (+) bơm 2
             └── GND → (-) của hai bơm
 
-     ESP GPIO16 ───────────────────────────────→ IN1 relay
-     ESP GPIO17 ───────────────────────────────→ IN2 relay
+     ESP GPIO15 ───────────────────────────────→ IN1 relay
+     ESP GPIO16 ───────────────────────────────→ IN2 relay
      ESP GND    ───────────────────────────────→ GND relay và GND cảm biến
 
      ESP 3V3 ──┬───────────────────────────────→ VDD DS18B20
                └── điện trở 4,7 kΩ ──┐
-     ESP GPIO15 ──────────────────────┴────────→ DQ DS18B20
+     ESP GPIO9 ──────────────────────┴────────→ DQ DS18B20
      ESP GND ──────────────────────────────────→ GND DS18B20
 
-     ESP GPIO18 ←──────────────────────────────── AO cảm biến mực nước
+     ESP GPIO10 ←──────────────────────────────── AO cảm biến mực nước
      ESP GND ──────────────────────────────────→ GND cảm biến mực nước
 ```
 
 (*) Chỉ cấp 5 V vào chân **5V/VIN nếu bo ESP32-S3 của bạn hỗ trợ**. Nếu dùng module ESP32-S3 trần, phải dùng bộ ổn áp 3,3 V phù hợp; không đưa 5 V vào chân 3V3. Không nối 12 V trực tiếp vào ESP, cảm biến hoặc bơm 5 V.
 
-(**) Cấp nguồn cho module relay đúng điện áp ghi trên module. GPIO16 và GPIO17 chỉ điều khiển chân IN; không cấp dòng cho bơm. Firmware hiện chọn **kích mức HIGH**: GPIO HIGH bật relay, GPIO LOW tắt relay. Có thể đổi mức kích trong `menuconfig → Relay Configuration → Relay input active level`. Dùng tiếp điểm **COM–NO** để bơm mặc định tắt khi relay chưa hút. Sau khi nạp firmware, thử đèn relay khi chưa nối bơm: lệnh `0` phải làm đèn tắt, lệnh `1` làm đèn sáng. Nếu không đúng, dừng thử với tải và kiểm tra chốt chọn mức kích cùng điện áp chân IN.
+(**) Cấp nguồn cho module relay đúng điện áp ghi trên module. GPIO15 và GPIO16 chỉ điều khiển chân IN; không cấp dòng cho bơm. Firmware hiện chọn **kích mức HIGH**: GPIO HIGH bật relay, GPIO LOW tắt relay. Có thể đổi mức kích trong `menuconfig → Relay Configuration → Relay input active level`. Dùng tiếp điểm **COM–NO** để bơm mặc định tắt khi relay chưa hút. Sau khi nạp firmware, thử đèn relay khi chưa nối bơm: lệnh `0` phải làm đèn tắt, lệnh `1` làm đèn sáng. Nếu không đúng, dừng thử với tải và kiểm tra chốt chọn mức kích cùng điện áp chân IN.
 
-Đường GND của ESP, relay và cảm biến cần chung mốc điện áp. Cho dòng bơm đi trên dây nguồn và dây GND riêng về nhánh cấp bơm, tránh đi qua dây GND của ESP. Nếu cảm biến mực nước được cấp 5 V, phải bảo đảm điện áp tại AO **không vượt 3,3 V** trước khi nối vào GPIO18; dùng mạch chia áp nếu cần. Nếu bo cảm biến hỗ trợ cấp 3,3 V, có thể cấp từ 3V3 của ESP.
+Đường GND của ESP, relay và cảm biến cần chung mốc điện áp. Cho dòng bơm đi trên dây nguồn và dây GND riêng về nhánh cấp bơm, tránh đi qua dây GND của ESP. Nếu cảm biến mực nước được cấp 5 V, phải bảo đảm điện áp tại AO **không vượt 3,3 V** trước khi nối vào GPIO10; dùng mạch chia áp nếu cần. Nếu bo cảm biến hỗ trợ cấp 3,3 V, có thể cấp từ 3V3 của ESP.
 
 | Thiết bị | Chân ESP32-S3 | Ghi chú |
 | --- | --- | --- |
-| DS18B20 DQ | GPIO15 | Điện trở kéo lên 4,7 kΩ từ DQ đến 3V3 |
-| Relay 1 / bơm vào | GPIO16 | IN1, mức kích chọn trong Kconfig |
-| Relay 2 / bơm ra | GPIO17 | IN2, mức kích chọn trong Kconfig |
-| Cảm biến mực nước AO | GPIO18 | ADC2, tín hiệu tối đa 3,3 V |
+| DS18B20 DQ | GPIO9 | Điện trở kéo lên 4,7 kΩ từ DQ đến 3V3 |
+| Relay 1 / bơm vào | GPIO15 | IN1, mức kích chọn trong Kconfig |
+| Relay 2 / bơm ra | GPIO16 | IN2, mức kích chọn trong Kconfig |
+| Cảm biến mực nước AO | GPIO10 | ADC1, tín hiệu tối đa 3,3 V |
+
+DS18B20 có thể cấp VDD bằng 5 V, nhưng dây DQ nối GPIO9 của ESP32-S3 phải được kéo lên **3V3**, không kéo lên 5 V. Nếu dùng module DS18B20 có điện trở kéo lên tích hợp, kiểm tra điện áp DQ khi bus rảnh và vị trí nối điện trở trên module trước khi cắm vào ESP.
 
 ## Cấu hình của project
 
@@ -53,12 +55,12 @@ Các mục firmware nằm trong `esp-firmware/main/Kconfig.projbuild` và chỉn
 
 | Mục cấu hình | Mặc định | Cấu hình hiện có | Ý nghĩa |
 | --- | --- | --- | --- |
-| `DS18B20_GPIO` | 15 | 15 | Chân DQ của DS18B20 |
+| `DS18B20_GPIO` | 9 | 9 | Chân DQ của DS18B20 |
 | `DS18B20_MAX_DEVICES` | 2 | 2 | Số cảm biến nhiệt tối đa trên bus |
 | `DS18B20_READ_INTERVAL_MS` | 1000 ms | 10000 ms | Chu kỳ đọc và gửi mẫu |
-| `WATER_LEVEL_GPIO` | 18 | 18 | Chân ADC đọc mực nước |
+| `WATER_LEVEL_GPIO` | 10 | 10 | Chân ADC đọc mực nước |
 | `WATER_LOW_THRESHOLD` | 2000 | 2000 | ADC dưới ngưỡng nghĩa là thiếu nước |
-| `RELAY_1_GPIO` / `RELAY_2_GPIO` | 16 / 17 | 16 / 17 | Hai chân điều khiển relay |
+| `RELAY_1_GPIO` / `RELAY_2_GPIO` | 15 / 16 | 15 / 16 | Hai chân điều khiển relay |
 | `RELAY_ACTIVE_LEVEL` | HIGH | HIGH | Mức GPIO làm relay hút; có thể đổi sang LOW nếu module cần |
 | `POOL_SETUP_AP_SSID` | `SmartPool-Setup` | `SmartPool-Setup` | Tên Wi-Fi cấu hình của ESP |
 | `POOL_SETUP_AP_PASSWORD` | `12345678` | `12345678` | Mật khẩu Wi-Fi cấu hình |
@@ -68,16 +70,17 @@ Các mục firmware nằm trong `esp-firmware/main/Kconfig.projbuild` và chỉn
 
 Ứng dụng Android dùng HiveMQ Cloud qua `ssl://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883` trong `MainActivity.java` và `PoolMonitorService.java`. API XAMPP vẫn ở `192.168.10.214`; nếu IP máy XAMPP thay đổi, sửa URL API trong firmware và `MainActivity.java` rồi triển khai lại. Có thể giữ địa chỉ bằng DHCP reservation trên router.
 
-Mosquitto cục bộ không còn được firmware và ứng dụng sử dụng; `mqtt-broker/mosquitto.conf` chỉ là cấu hình cũ để tham khảo. API PHP dùng MySQL tại `localhost`, cơ sở dữ liệu `pool_db`, tài khoản `root` và mật khẩu rỗng; sửa `web-backend/pool_api.php` nếu cấu hình MySQL của bạn khác. API HTTP hiện dành cho mạng nội bộ.
+Mosquitto cục bộ không còn được firmware và ứng dụng sử dụng; `mqtt-broker/mosquitto.conf` chỉ là cấu hình cũ để tham khảo. API PHP dùng MySQL tại `localhost`, cơ sở dữ liệu `pool_db`, tài khoản `root` và mật khẩu rỗng; nếu cấu hình MySQL khác, cập nhật thông tin kết nối trong cả `backend/pool_api.php` và `backend/create_admin.php`. API HTTP hiện dành cho mạng nội bộ.
 
 ## Cài đặt máy chủ và ứng dụng
 
-1. Khởi động Apache và MySQL trong XAMPP. Nhập lại `web-backend/pool_db.sql` bằng phpMyAdmin. Tệp SQL tạo các bảng `pool_status`, `pool_history`, `pool_commands` và bản ghi `id = 1`; nhập lại không xóa dữ liệu cũ. Bảng `pool_commands` cần thiết cho chế độ HTTP.
-2. Chép `web-backend/pool_api.php` vào `xampp/htdocs/pool_api/pool_api.php`. Trên điện thoại cùng mạng, mở `http://192.168.10.214/pool_api/pool_api.php` và kiểm tra API trả về JSON.
-3. Tạo tài khoản MQTT trên HiveMQ Cloud với quyền đọc và ghi các topic của project. Sao chép `esp-firmware/main/mqtt_credentials.h.example` thành `esp-firmware/main/mqtt_credentials.h`, rồi điền `SMARTPOOL_MQTT_USERNAME` và `SMARTPOOL_MQTT_PASSWORD`. Tệp này được Git bỏ qua. Nếu hai giá trị còn rỗng, ESP vẫn gửi HTTP nhưng không khởi động MQTT.
-4. Sao chép `android-app/mqtt.properties.example` thành `android-app/mqtt.properties`, rồi điền `hivemq.username` và `hivemq.password`. Nếu tệp đã có, giữ nguyên tài khoản và thêm `control.mode=mqtt` hoặc `control.mode=http`. Tệp này được Git bỏ qua. Tài khoản được nhúng vào APK; nên dùng tài khoản riêng có quyền phù hợp.
-5. Trong thư mục `esp-firmware`, chạy `idf.py menuconfig` và chọn **Pump control transport** khớp với `control.mode` của Android; kiểm tra chân, ngưỡng ADC, URL API và URI MQTT. Sau đó build/flash ESP32-S3, build và cài lại ứng dụng Android. Mặc định cả hai phía dùng MQTT.
-6. ESP và điện thoại cần truy cập XAMPP trong LAN qua cổng **80**. Khi dùng MQTT để điều khiển hoặc nhận telemetry trực tiếp, cả hai cần truy cập HiveMQ Cloud cổng **8883**; ESP cần đồng bộ giờ qua NTP (`pool.ntp.org`, UDP **123**) trước khi kiểm tra chứng chỉ TLS.
+1. Khởi động Apache và MySQL trong XAMPP. Nhập lại `backend/pool_db.sql` bằng phpMyAdmin. Tệp SQL tạo các bảng cảm biến, lệnh bơm, tài khoản và phiên đăng nhập; nhập lại không xóa dữ liệu cũ.
+2. Chép `backend/pool_api.php` vào `xampp/htdocs/pool_api/pool_api.php`. Trên điện thoại cùng mạng, mở `http://192.168.10.214/pool_api/pool_api.php` và kiểm tra API trả về JSON.
+3. Tạo admin đầu tiên một lần bằng PHP CLI trên máy chạy MySQL (Windows/XAMPP: `C:\xampp\php\php.exe backend\create_admin.php`). Script chỉ chạy ở CLI, từ chối tạo thêm admin nếu đã có admin, và lưu mật khẩu dạng hash. Đăng nhập app bằng tài khoản đó; vào tab **Người dùng** để quản lý guest. Không có đăng ký công khai hoặc nút tự nâng quyền.
+4. Tạo tài khoản MQTT trên HiveMQ Cloud với quyền đọc và ghi các topic của project. Sao chép `esp-firmware/main/mqtt_credentials.h.example` thành `esp-firmware/main/mqtt_credentials.h`, rồi điền `SMARTPOOL_MQTT_USERNAME` và `SMARTPOOL_MQTT_PASSWORD`. Tệp này được Git bỏ qua. Nếu hai giá trị còn rỗng, ESP vẫn gửi HTTP nhưng không khởi động MQTT.
+5. Sao chép `android-app/mqtt.properties.example` thành `android-app/mqtt.properties`, rồi điền `hivemq.username` và `hivemq.password`. App chỉ điều khiển bằng MQTT; tệp này được Git bỏ qua. Tài khoản được nhúng vào APK; nên dùng tài khoản riêng có quyền phù hợp.
+6. Trong thư mục `esp-firmware`, chạy `idf.py menuconfig` và chọn **Pump control transport: MQTT**; kiểm tra chân, ngưỡng ADC, URL API và URI MQTT. Sau đó build/flash ESP32-S3, build và cài lại ứng dụng Android.
+7. ESP và điện thoại cần truy cập XAMPP trong LAN qua cổng **80**. Khi dùng MQTT để điều khiển hoặc nhận telemetry trực tiếp, cả hai cần truy cập HiveMQ Cloud cổng **8883**; ESP cần đồng bộ giờ qua NTP (`pool.ntp.org`, UDP **123**) trước khi kiểm tra chứng chỉ TLS.
 
 ## Cấu hình Wi-Fi cho ESP
 
@@ -87,12 +90,28 @@ Khi kết nối thành công, ESP tắt mạng cấu hình. Trang cấu hình v�
 
 ## Dữ liệu, điều khiển và lịch sử
 
-ESP gửi `nhiet_do`, `muc_nuoc` và `muc_nuoc_raw` đến API bằng HTTP POST, đồng thời phát mẫu đo trực tiếp qua MQTT. Ứng dụng Android nhận MQTT khi kết nối và đọc API mỗi **3 giây**. `muc_nuoc = 1` khi ADC lớn hơn hoặc bằng `WATER_LOW_THRESHOLD`; `muc_nuoc = 0` khi thấp hơn ngưỡng. Nếu một cảm biến đọc lỗi, ESP không gửi giá trị mới của cảm biến đó trong mẫu hiện tại.
+ESP gửi `nhiet_do`, `muc_nuoc` và `muc_nuoc_raw` đến API bằng HTTP POST, đồng thời phát mẫu đo trực tiếp qua MQTT. Ứng dụng Android đọc API mỗi **3 giây** để hiển thị cảm biến và biểu đồ; MQTT dùng để điều khiển bơm và nhận trạng thái relay. `muc_nuoc = 1` khi ADC lớn hơn hoặc bằng `WATER_LOW_THRESHOLD`; `muc_nuoc = 0` khi thấp hơn ngưỡng. Nếu một cảm biến đọc lỗi, ESP không gửi giá trị mới của cảm biến đó trong mẫu hiện tại.
+
+App dùng MQTT cho lệnh bơm và xác nhận trạng thái relay. `GET pool_api.php` trả dữ liệu cảm biến mới nhất, gồm `muc_nuoc_raw`; `GET pool_api.php?history=1&limit=100` trả tối đa 100 mẫu từ `pool_history` theo thứ tự thời gian để vẽ biểu đồ nhiệt độ và mực nước cm. Cần chép bản `backend/pool_api.php` mới lên XAMPP cùng với bản app mới.
+
+Trong Cài đặt app, nhập mực nước thấp nhất và cao nhất có thể đo cho từng bể, theo cm. App chỉ hiển thị mực nước và cho nhập ngưỡng cảnh báo/tự động hóa bằng cm trong khoảng này; ánh xạ sang ADC được giữ nội bộ trước khi lưu/gửi ESP để tương thích firmware. Cấu hình mới mặc định ánh xạ toàn dải cảm biến, còn các điểm ADC đã hiệu chuẩn từ phiên bản trước được giữ lại khi cập nhật.
+
+Topic trạng thái MQTT cũng gửi IP LAN và URL HTTP API đang cấu hình trên ESP. App đối chiếu URL này với URL HTTP của app để báo hai bên có cùng cấu hình endpoint hay không; đây là phép so sánh URL, không xác minh máy chủ đích. App hiển thị nút mở web local tại IP LAN của ESP khi online; điện thoại cần cùng mạng Wi-Fi. Nếu chưa có IP LAN, có thể kết nối Wi-Fi `SmartPool-Setup` rồi mở `http://192.168.4.1/`.
+
+Tab **Tự động hóa** trong Cài đặt app đọc quy tắc hiện tại từ MQTT `smartpool/status` và lưu từng bơm qua `smartpool/config/automation`; ESP xác nhận bằng `smartpool/ack` và lưu quy tắc trong NVS. Điều kiện mực nước chỉ nhập bằng cm, giới hạn trong khoảng đo đã hiệu chuẩn, rồi app tự ánh xạ sang ADC trước khi gửi để giữ tương thích firmware. Có thể kết hợp với nhiệt độ và dừng theo ngưỡng hoặc thời gian tối đa. Lệnh cấu hình không retained để tránh áp dụng lại quy tắc cũ khi kết nối lại.
+
+## Đăng nhập và quyền
+
+Tài khoản và role (`admin`/`guest`) được lưu trong MySQL `pool_users`; mật khẩu chỉ lưu dưới dạng `password_hash`, token phiên đăng nhập được lưu dạng hash trong `pool_user_sessions`. Admin đầu tiên được khởi tạo bằng `backend/create_admin.php`; tab **Người dùng** trong Cài đặt dành riêng cho admin để xem, thêm, sửa, khóa/mở khóa và xóa guest. Không có đăng ký tự do hoặc sửa tài khoản admin trong tab này. Tùy chọn **Ghi nhớ đăng nhập** lưu phiên riêng tư trên thiết bị và cấp phiên máy chủ 30 ngày; khi bỏ chọn, phiên chỉ có hạn 12 giờ. Đăng xuất chủ động sẽ xóa phiên đã ghi nhớ. Admin giữ toàn bộ giao diện cấu hình; guest chỉ thấy cảm biến/biểu đồ và điều khiển hai bơm, còn Settings/Automation, HTTP/MQTT diagnostics và thông tin IP/web local bị ẩn.
+
+Đăng nhập hiện gửi tới API HTTP của project nên chỉ dùng trong mạng tin cậy; trên mạng không tin cậy cần triển khai HTTPS. Role trong app giới hạn giao diện và thao tác trong app, không thay thế ACL cho MQTT broker hay xác thực cho các endpoint telemetry công khai hiện có.
 
 | MQTT topic | Dữ liệu |
 | --- | --- |
 | `smartpool/telemetry` | Nhiệt độ và mực nước từ ESP |
-| `smartpool/status` | Trạng thái trực tuyến và trạng thái thực tế của hai bơm |
+| `smartpool/status` | Trạng thái trực tuyến, trạng thái thực tế của hai bơm, IP LAN và URL HTTP API đã cấu hình |
+| `smartpool/config/automation` | Lưu quy tắc tự động của một bơm; không retained |
+| `smartpool/ack` | ESP xác nhận kết quả lưu cấu hình tự động hóa |
 | `smartpool/cmd/bom_vao` | Lệnh `0`/`1` tắt/bật bơm 1 |
 | `smartpool/cmd/bom_ra` | Lệnh `0`/`1` tắt/bật bơm 2 |
 
@@ -104,9 +123,9 @@ Khi mất Wi-Fi hoặc API không phản hồi, ESP lưu mẫu chưa gửi vào 
 
 ## Kiểm tra khi có lỗi
 
-- **Không thấy DS18B20:** kiểm tra VDD 3,3 V, GND, DQ GPIO15 và điện trở kéo lên 4,7 kΩ. Khi chưa có cảm biến hoạt động, ESP tìm lại mỗi **5 giây** mà vẫn tiếp tục đọc mực nước. Sau khi tìm thấy, log có dạng `DS18B20[0]: 27.50 C`.
-- **DS18B20 báo CRC hoặc 85 °C:** firmware đọc lại một lần sau **20 ms** nếu sai CRC và bỏ qua giá trị 85 °C. Nếu lỗi lặp lại, kiểm tra dây, nguồn cảm biến và nhiễu khi bơm chạy. Sau ba lần đọc lỗi liên tiếp, cảm biến tạm ngừng đọc; ESP sẽ tìm lại khi không còn cảm biến nào hoạt động.
-- **Mực nước thay đổi bất thường:** xem giá trị `Water ADC` trong log, kiểm tra dây AO/GND và đo điện áp AO. GPIO18 thuộc ADC2; nếu tín hiệu vẫn không ổn định khi Wi-Fi hoạt động, chuyển dây AO sang chân ADC1 còn trống (GPIO1–10) và đổi `WATER_LEVEL_GPIO` trong `menuconfig`, rồi hiệu chỉnh lại ngưỡng.
+- **Không thấy DS18B20:** kiểm tra VDD 3,3 V, GND, DQ GPIO9 và điện trở kéo lên 4,7 kΩ. Khi chưa có cảm biến hoạt động, ESP tìm lại mỗi **5 giây** mà vẫn tiếp tục đọc mực nước. Sau khi tìm thấy, log có dạng `DS18B20[0]: 27.50 C`.
+- **DS18B20 báo CRC, mất kết nối hoặc 85 °C:** firmware thử lại tối đa ba lần, cách nhau 50 ms, khi sai CRC hoặc mất phản hồi trên bus; giá trị 85 °C vẫn bị bỏ qua. Nếu lỗi lặp lại, kiểm tra dây, nguồn cảm biến và nhiễu khi bơm chạy. Sau ba chu kỳ đọc lỗi liên tiếp, cảm biến tạm ngừng đọc; ESP sẽ tìm lại khi không còn cảm biến nào hoạt động.
+- **Mực nước thay đổi bất thường:** xem giá trị `Water ADC` trong log, kiểm tra dây AO/GND và đo điện áp AO tại GPIO10 (ADC1). Tách dây tín hiệu cảm biến khỏi dây cấp nguồn bơm và hiệu chỉnh lại ngưỡng trong `menuconfig` nếu cần.
 - **Lỗi xuất hiện khi bật bơm 5 V:** kiểm tra điện áp 5 V tại bơm và điện áp cấp cho ESP đúng lúc khởi động bơm. Để dây cấp bơm tách khỏi dây cấp ESP; nếu dùng chung một bộ hạ áp, kiểm tra dòng đầu ra của bộ hạ áp hoặc dùng hai nhánh hạ áp như sơ đồ trên.
 - **Không kết nối API:** kiểm tra IP máy XAMPP, Apache, đường dẫn PHP và tường lửa cổng 80. ESP in `HTTP API target` khi khởi động và `HTTP POST OK` khi gửi mẫu thành công.
 - **Không kết nối HiveMQ Cloud:** kiểm tra tên đăng nhập/mật khẩu trong hai tệp cục bộ, quyền đọc/ghi topic, Internet, cổng 8883 và đồng bộ giờ NTP của ESP. ESP in lỗi MQTT/TLS khi không kết nối được.

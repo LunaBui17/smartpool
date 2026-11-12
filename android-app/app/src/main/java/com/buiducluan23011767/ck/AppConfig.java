@@ -29,6 +29,13 @@ public class AppConfig {
     private static final String KEY_TEMP_MAX = "temp_max";
     private static final String KEY_WATER_MIN = "water_min";
     private static final String KEY_WATER_MAX = "water_max";
+    private static final String KEY_WATER_CALIBRATION_ADC_START = "water_calibration_adc_start";
+    private static final String KEY_WATER_CALIBRATION_CM_START = "water_calibration_cm_start";
+    private static final String KEY_WATER_CALIBRATION_ADC_END = "water_calibration_adc_end";
+    private static final String KEY_WATER_CALIBRATION_CM_END = "water_calibration_cm_end";
+    private static final String KEY_WATER_CALIBRATION_ADC_ZERO = "water_calibration_adc_zero";
+    private static final String KEY_WATER_CALIBRATION_ADC_REFERENCE = "water_calibration_adc_reference";
+    private static final String KEY_WATER_CALIBRATION_HEIGHT_CM = "water_calibration_height_cm";
 
     private static final String KEY_WIFI_SSID = "wifi_ssid";
     private static final String KEY_WIFI_PASS = "wifi_password";
@@ -56,9 +63,11 @@ public class AppConfig {
     private static final String KEY_TOPIC_CMD_PUMP_OUT = "mqtt_topic_cmd_pump_out";
 
     private static final String KEY_HTTP_API_URL = "http_api_url";
+    private static final String KEY_HTTP_API_URL_MIGRATED = "http_api_url_migrated_165";
     private static final String KEY_HTTP_POLL_INTERVAL = "http_poll_interval";
     private static final String KEY_CONTROL_MODE = "control_mode";
     private static final String KEY_INTERLOCK_ENABLED = "interlock_enabled";
+    private static final String KEY_ESP_LOCAL_IP_ADDRESS = "esp_local_ip_address";
 
     // Default values
     public static final boolean DEFAULT_INTERLOCK_ENABLED = true;
@@ -68,8 +77,9 @@ public class AppConfig {
 
     public static final float DEFAULT_TEMP_MIN = 20.0f;
     public static final float DEFAULT_TEMP_MAX = 35.0f;
-    public static final float DEFAULT_WATER_MIN = 20.0f;
-    public static final float DEFAULT_WATER_MAX = 85.0f;
+    // Firmware compares water thresholds with the 12-bit ADC reading, not percent.
+    public static final float DEFAULT_WATER_MIN = 2000.0f;
+    public static final float DEFAULT_WATER_MAX = 4095.0f;
 
     public static final String DEFAULT_WIFI_SSID = "";
     public static final String DEFAULT_WIFI_PASS = "";
@@ -85,6 +95,7 @@ public class AppConfig {
     public static final String DEFAULT_TOPIC_CONFIG_WIFI = "smartpool/config/wifi";
     public static final String DEFAULT_TOPIC_CONFIG_DEVICE = "smartpool/config/device";
     public static final String DEFAULT_TOPIC_CONFIG_HTTP = "smartpool/config/http";
+    public static final String DEFAULT_TOPIC_CONFIG_AUTOMATION = "smartpool/config/automation";
 
     public static final String DEFAULT_TOPIC_CMD_WIFI_SCAN = "smartpool/cmd/wifi_scan";
     public static final String DEFAULT_TOPIC_WIFI_SCAN_RESULT = "smartpool/wifi/scan_result";
@@ -95,9 +106,8 @@ public class AppConfig {
     public static final String DEFAULT_TOPIC_CMD_PUMP_IN = "smartpool/cmd/bom_vao";
     public static final String DEFAULT_TOPIC_CMD_PUMP_OUT = "smartpool/cmd/bom_ra";
 
-    public static final String DEFAULT_HTTP_API_URL = "http://192.168.10.214/pool_api/pool_api.php";
+    public static final String DEFAULT_HTTP_API_URL = "http://192.168.10.165/pool_api/pool_api.php";
     public static final int DEFAULT_HTTP_POLL_INTERVAL = 3;
-    public static final String DEFAULT_CONTROL_MODE = "mqtt";
 
     private static AppConfig instance;
     private final SharedPreferences prefs;
@@ -105,6 +115,22 @@ public class AppConfig {
     private AppConfig(Context context) {
         prefs = context.getApplicationContext()
                 .getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        if (!prefs.getBoolean(KEY_HTTP_API_URL_MIGRATED, false)) {
+            SharedPreferences.Editor edit = prefs.edit();
+            if ("http://192.168.10.214/pool_api/pool_api.php".equals(
+                    prefs.getString(KEY_HTTP_API_URL, null))) {
+                edit.putString(KEY_HTTP_API_URL, DEFAULT_HTTP_API_URL);
+            }
+            edit.putBoolean(KEY_HTTP_API_URL_MIGRATED, true).apply();
+        }
+        // Older app versions saved the percent-style defaults 20/85 as ADC limits.
+        if (prefs.contains(KEY_WATER_MIN) && prefs.contains(KEY_WATER_MAX)
+                && prefs.getFloat(KEY_WATER_MIN, 0) == 20.0f
+                && prefs.getFloat(KEY_WATER_MAX, 0) == 85.0f) {
+            prefs.edit().putFloat(KEY_WATER_MIN, DEFAULT_WATER_MIN)
+                    .putFloat(KEY_WATER_MAX, DEFAULT_WATER_MAX).apply();
+        }
+        migrateWaterCalibration();
     }
 
     public static synchronized AppConfig getInstance(Context context) {
@@ -172,6 +198,122 @@ public class AppConfig {
         prefs.edit().putFloat(KEY_WATER_MAX, value).apply();
     }
 
+    public float getWaterThresholdDisplayMin() {
+        return getWaterThresholdDisplayValue(true);
+    }
+
+    public float getWaterThresholdDisplayMax() {
+        return getWaterThresholdDisplayValue(false);
+    }
+
+    private float getWaterThresholdDisplayValue(boolean minimum) {
+        if (!hasWaterLevelCalibration()) return Float.NaN;
+        float minCm = waterAdcToCm(getWaterLevelMin());
+        float maxCm = waterAdcToCm(getWaterLevelMax());
+        return minimum ? Math.min(minCm, maxCm) : Math.max(minCm, maxCm);
+    }
+
+    public void setWaterThresholdsFromCm(float minCm, float maxCm) {
+        if (!hasWaterLevelCalibration()) {
+            throw new IllegalStateException("Water level calibration is required.");
+        }
+        float minAdc = Math.round(waterCmToAdc(minCm));
+        float maxAdc = Math.round(waterCmToAdc(maxCm));
+        prefs.edit()
+                .putFloat(KEY_WATER_MIN, Math.min(minAdc, maxAdc))
+                .putFloat(KEY_WATER_MAX, Math.max(minAdc, maxAdc))
+                .apply();
+    }
+
+    public boolean hasWaterLevelCalibration() {
+        if (!prefs.contains(KEY_WATER_CALIBRATION_ADC_START)
+                || !prefs.contains(KEY_WATER_CALIBRATION_CM_START)
+                || !prefs.contains(KEY_WATER_CALIBRATION_ADC_END)
+                || !prefs.contains(KEY_WATER_CALIBRATION_CM_END)) {
+            return false;
+        }
+        int adcStart = getWaterCalibrationAdcStart();
+        int adcEnd = getWaterCalibrationAdcEnd();
+        float cmStart = getWaterCalibrationCmStart();
+        float cmEnd = getWaterCalibrationCmEnd();
+        return adcStart >= 0 && adcStart <= 4095
+                && adcEnd > adcStart && adcEnd <= 4095
+                && Float.isFinite(cmStart) && Float.isFinite(cmEnd)
+                && cmEnd > cmStart;
+    }
+
+    private void migrateWaterCalibration() {
+        if (prefs.contains(KEY_WATER_CALIBRATION_ADC_START)
+                || !prefs.contains(KEY_WATER_CALIBRATION_ADC_ZERO)
+                || !prefs.contains(KEY_WATER_CALIBRATION_ADC_REFERENCE)
+                || !prefs.contains(KEY_WATER_CALIBRATION_HEIGHT_CM)) {
+            return;
+        }
+        int adcStart = prefs.getInt(KEY_WATER_CALIBRATION_ADC_ZERO, -1);
+        int adcEnd = prefs.getInt(KEY_WATER_CALIBRATION_ADC_REFERENCE, -1);
+        float cmEnd = prefs.getFloat(KEY_WATER_CALIBRATION_HEIGHT_CM, Float.NaN);
+        if (adcStart >= 0 && adcStart < adcEnd && adcEnd <= 4095
+                && Float.isFinite(cmEnd) && cmEnd > 0) {
+            prefs.edit()
+                    .putInt(KEY_WATER_CALIBRATION_ADC_START, adcStart)
+                    .putFloat(KEY_WATER_CALIBRATION_CM_START, 0)
+                    .putInt(KEY_WATER_CALIBRATION_ADC_END, adcEnd)
+                    .putFloat(KEY_WATER_CALIBRATION_CM_END, cmEnd)
+                    .apply();
+        }
+    }
+
+    public int getWaterCalibrationAdcStart() {
+        return prefs.getInt(KEY_WATER_CALIBRATION_ADC_START, -1);
+    }
+
+    public float getWaterCalibrationCmStart() {
+        return prefs.getFloat(KEY_WATER_CALIBRATION_CM_START, Float.NaN);
+    }
+
+    public int getWaterCalibrationAdcEnd() {
+        return prefs.getInt(KEY_WATER_CALIBRATION_ADC_END, -1);
+    }
+
+    public boolean isWaterAdcWithinCalibration(double adcRaw) {
+        return hasWaterLevelCalibration() && Double.isFinite(adcRaw)
+                && adcRaw >= getWaterCalibrationAdcStart()
+                && adcRaw <= getWaterCalibrationAdcEnd();
+    }
+
+    public float getWaterCalibrationCmEnd() {
+        return prefs.getFloat(KEY_WATER_CALIBRATION_CM_END, Float.NaN);
+    }
+
+    public void setWaterLevelCalibration(int adcStart, float cmStart, int adcEnd, float cmEnd) {
+        prefs.edit()
+                .putInt(KEY_WATER_CALIBRATION_ADC_START, adcStart)
+                .putFloat(KEY_WATER_CALIBRATION_CM_START, cmStart)
+                .putInt(KEY_WATER_CALIBRATION_ADC_END, adcEnd)
+                .putFloat(KEY_WATER_CALIBRATION_CM_END, cmEnd)
+                .apply();
+    }
+
+    public float waterAdcToCm(double adcRaw) {
+        if (!hasWaterLevelCalibration() || !Double.isFinite(adcRaw)) return Float.NaN;
+        int adcStart = getWaterCalibrationAdcStart();
+        int adcEnd = getWaterCalibrationAdcEnd();
+        double ratio = (adcRaw - adcStart) / (adcEnd - adcStart);
+        ratio = Math.max(0, Math.min(1, ratio));
+        return (float) (getWaterCalibrationCmStart()
+                + ratio * (getWaterCalibrationCmEnd() - getWaterCalibrationCmStart()));
+    }
+
+    public float waterCmToAdc(double heightCm) {
+        if (!hasWaterLevelCalibration() || !Double.isFinite(heightCm)) return Float.NaN;
+        double cmStart = getWaterCalibrationCmStart();
+        double cmEnd = getWaterCalibrationCmEnd();
+        double ratio = (heightCm - cmStart) / (cmEnd - cmStart);
+        ratio = Math.max(0, Math.min(1, ratio));
+        return (float) (getWaterCalibrationAdcStart()
+                + ratio * (getWaterCalibrationAdcEnd() - getWaterCalibrationAdcStart()));
+    }
+
     // ================= INTERLOCK (KHÓA LIÊN ĐỘNG 2 BƠM) =================
     public boolean isInterlockEnabled() {
         return prefs.getBoolean(KEY_INTERLOCK_ENABLED, DEFAULT_INTERLOCK_ENABLED);
@@ -179,6 +321,14 @@ public class AppConfig {
 
     public void setInterlockEnabled(boolean value) {
         prefs.edit().putBoolean(KEY_INTERLOCK_ENABLED, value).apply();
+    }
+
+    public String getEspLocalIpAddress() {
+        return prefs.getString(KEY_ESP_LOCAL_IP_ADDRESS, "");
+    }
+
+    public void setEspLocalIpAddress(String value) {
+        prefs.edit().putString(KEY_ESP_LOCAL_IP_ADDRESS, value).apply();
     }
 
     // ================= WIFI =================
@@ -258,6 +408,10 @@ public class AppConfig {
         return DEFAULT_TOPIC_CONFIG_HTTP;
     }
 
+    public String getTopicConfigAutomation() {
+        return DEFAULT_TOPIC_CONFIG_AUTOMATION;
+    }
+
     public String getTopicCmdWifiScan() {
         return DEFAULT_TOPIC_CMD_WIFI_SCAN;
     }
@@ -304,12 +458,11 @@ public class AppConfig {
     }
 
     public String getControlMode() {
-        String fallback = BuildConfig.CONTROL_MODE;
-        return prefs.getString(KEY_CONTROL_MODE, fallback != null ? fallback : DEFAULT_CONTROL_MODE);
+        return "mqtt";
     }
 
     public void setControlMode(String value) {
-        prefs.edit().putString(KEY_CONTROL_MODE, value).apply();
+        prefs.edit().putString(KEY_CONTROL_MODE, "mqtt").apply();
     }
 
     // ================= JSON BUILDERS (CHIA NHỎ TỪNG PHẦN) =================

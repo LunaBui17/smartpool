@@ -33,6 +33,7 @@ typedef struct {
     bool temperature_enabled;
     bool water_enabled;
     bool has_temperature;
+    bool has_last_temperature;
     bool has_water;
     float temperature;
     int water_raw;
@@ -40,7 +41,18 @@ typedef struct {
     int sample_age_seconds;
 } pool_device_state_t;
 
+typedef struct {
+    char broker[257];
+    char username[129];
+    bool password_set;
+    char api_url[257];
+} pool_connection_config_t;
+
 esp_err_t pool_network_init(void);
+void pool_network_get_connection_config(pool_connection_config_t *config);
+esp_err_t pool_network_save_http_url(const char *url);
+esp_err_t pool_network_save_mqtt_connection(const char *broker, const char *username,
+                                            const char *password);
 esp_err_t pool_network_set_time(int64_t unix_time);
 esp_err_t pool_network_configure_pump(int channel, const pump_auto_config_t *config);
 bool pool_network_take_sample_request(void);

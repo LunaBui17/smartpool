@@ -12,6 +12,9 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
+#include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "pool_features.h"
 #include "pool_network.h"
 
@@ -57,7 +60,7 @@ static cJSON *read_json(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Content-Type must be application/json");
         return NULL;
     }
-    char body[384];
+    char body[768];
     if (req->content_len <= 0 || req->content_len >= sizeof(body)) {
         httpd_resp_send_err(req, HTTPD_413_CONTENT_TOO_LARGE, "Request is too large");
         return NULL;
@@ -119,8 +122,9 @@ static esp_err_t status_get(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "water_supported", POOL_WATER_ENABLED);
     cJSON_AddBoolToObject(root, "temperature_enabled", state.temperature_enabled);
     cJSON_AddBoolToObject(root, "water_enabled", state.water_enabled);
-    if (state.has_temperature) cJSON_AddNumberToObject(root, "temperature", state.temperature);
+    if (state.has_last_temperature) cJSON_AddNumberToObject(root, "temperature", state.temperature);
     else cJSON_AddNullToObject(root, "temperature");
+    cJSON_AddBoolToObject(root, "temperature_fresh", state.has_temperature);
     if (state.has_water) {
         cJSON_AddNumberToObject(root, "water_raw", state.water_raw);
         cJSON_AddBoolToObject(root, "water_normal", state.water_normal);
@@ -138,12 +142,21 @@ static esp_err_t status_get(httpd_req_t *req)
         cJSON_AddItemToArray(rules, rule);
         cJSON_AddNumberToObject(rule, "channel", i + 1);
         cJSON_AddBoolToObject(rule, "enabled", view->config.enabled);
-        cJSON_AddStringToObject(rule, "sensor", view->config.sensor == PUMP_SENSOR_WATER ? "water" : "temperature");
-        cJSON_AddStringToObject(rule, "comparison", view->config.start_below ? "below" : "above");
-        cJSON_AddNumberToObject(rule, "start_threshold", view->config.start_threshold);
         cJSON_AddStringToObject(rule, "stop_mode", view->config.stop_mode == PUMP_STOP_DURATION ? "duration" : "threshold");
-        cJSON_AddNumberToObject(rule, "stop_threshold", view->config.stop_threshold);
         cJSON_AddNumberToObject(rule, "duration_seconds", view->config.duration_seconds);
+        cJSON *start_conditions = cJSON_AddObjectToObject(rule, "start_conditions");
+        cJSON *stop_conditions = cJSON_AddObjectToObject(rule, "stop_conditions");
+        for (int sensor = 0; sensor < PUMP_SENSOR_COUNT; sensor++) {
+            const char *name = sensor == PUMP_SENSOR_WATER ? "water" : "temperature";
+            cJSON *start = cJSON_AddObjectToObject(start_conditions, name);
+            cJSON *stop = cJSON_AddObjectToObject(stop_conditions, name);
+            cJSON_AddBoolToObject(start, "enabled", view->config.start[sensor].enabled);
+            cJSON_AddStringToObject(start, "comparison", view->config.start[sensor].below ? "below" : "above");
+            cJSON_AddNumberToObject(start, "threshold", view->config.start[sensor].threshold);
+            cJSON_AddBoolToObject(stop, "enabled", view->config.stop[sensor].enabled);
+            cJSON_AddStringToObject(stop, "comparison", view->config.stop[sensor].below ? "below" : "above");
+            cJSON_AddNumberToObject(stop, "threshold", view->config.stop[sensor].threshold);
+        }
         cJSON_AddBoolToObject(rule, "paused", view->paused);
         cJSON_AddBoolToObject(rule, "running", view->running);
         cJSON_AddStringToObject(rule, "reason", view->reason);
@@ -162,6 +175,58 @@ static esp_err_t status_get(httpd_req_t *req)
     }
     cJSON_AddStringToObject(root, "ip", ip_text);
     return json_response(req, root);
+}
+
+static esp_err_t connection_get(httpd_req_t *req)
+{
+    pool_connection_config_t config;
+    pool_network_get_connection_config(&config);
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return json_response(req, NULL);
+    cJSON_AddStringToObject(root, "mqtt_broker", config.broker);
+    cJSON_AddStringToObject(root, "mqtt_username", config.username);
+    cJSON_AddBoolToObject(root, "mqtt_password_set", config.password_set);
+    cJSON_AddStringToObject(root, "http_api_url", config.api_url);
+    cJSON_AddBoolToObject(root, "mqtt_supported", POOL_MQTT_ENABLED);
+    cJSON_AddBoolToObject(root, "http_supported", POOL_HTTP_ENABLED);
+    return json_response(req, root);
+}
+
+static void restart_after_save(void *arg)
+{
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    esp_restart();
+}
+
+static esp_err_t connection_post(httpd_req_t *req)
+{
+    cJSON *root = read_json(req);
+    if (!root) return ESP_OK;
+    const cJSON *broker = cJSON_GetObjectItemCaseSensitive(root, "mqtt_broker");
+    const cJSON *username = cJSON_GetObjectItemCaseSensitive(root, "mqtt_username");
+    const cJSON *password = cJSON_GetObjectItemCaseSensitive(root, "mqtt_password");
+    const cJSON *url = cJSON_GetObjectItemCaseSensitive(root, "http_api_url");
+    esp_err_t err = ESP_ERR_INVALID_ARG;
+    bool restart = false;
+    if (strcmp(req->uri, "/api/config/mqtt") == 0 && cJSON_IsString(broker) &&
+        cJSON_IsString(username) && cJSON_IsString(password)) {
+        err = pool_network_save_mqtt_connection(broker->valuestring, username->valuestring,
+                                                password->valuestring);
+        restart = err == ESP_OK;
+    } else if (strcmp(req->uri, "/api/config/http") == 0 && cJSON_IsString(url)) {
+        err = pool_network_save_http_url(url->valuestring);
+    }
+    cJSON_Delete(root);
+    if (err != ESP_OK) return action_response(req, err);
+    if (restart && xTaskCreate(restart_after_save, "mqtt_restart", 2048, NULL, 4, NULL) != pdPASS) {
+        restart = false;
+    }
+    cJSON *reply = cJSON_CreateObject();
+    if (!reply) return json_response(req, NULL);
+    cJSON_AddBoolToObject(reply, "ok", true);
+    cJSON_AddBoolToObject(reply, "restarting", restart);
+    esp_err_t sent = json_response(req, reply);
+    return sent;
 }
 
 static esp_err_t control_post(httpd_req_t *req)
@@ -201,43 +266,67 @@ static esp_err_t invalid_pump_rule(httpd_req_t *req)
     return json_response(req, error);
 }
 
+static bool read_auto_condition(const cJSON *group, const char *name, pump_auto_condition_t *condition)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(group, name);
+    const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(item, "enabled");
+    const cJSON *comparison = cJSON_GetObjectItemCaseSensitive(item, "comparison");
+    const cJSON *threshold = cJSON_GetObjectItemCaseSensitive(item, "threshold");
+    if (!cJSON_IsObject(item) || !cJSON_IsBool(enabled) || !cJSON_IsString(comparison) ||
+        (strcmp(comparison->valuestring, "below") != 0 && strcmp(comparison->valuestring, "above") != 0) ||
+        !cJSON_IsNumber(threshold)) return false;
+    *condition = (pump_auto_condition_t){cJSON_IsTrue(enabled),
+        strcmp(comparison->valuestring, "below") == 0, threshold->valuedouble};
+    return true;
+}
+
 static esp_err_t automation_post(httpd_req_t *req)
 {
     cJSON *root = read_json(req);
     if (!root) return ESP_OK;
     const cJSON *channel = cJSON_GetObjectItemCaseSensitive(root, "channel");
     const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(root, "enabled");
-    const cJSON *sensor = cJSON_GetObjectItemCaseSensitive(root, "sensor");
-    const cJSON *comparison = cJSON_GetObjectItemCaseSensitive(root, "comparison");
-    const cJSON *start = cJSON_GetObjectItemCaseSensitive(root, "start_threshold");
+    const cJSON *starts = cJSON_GetObjectItemCaseSensitive(root, "start_conditions");
+    const cJSON *stops = cJSON_GetObjectItemCaseSensitive(root, "stop_conditions");
+    const cJSON *legacy_sensor = cJSON_GetObjectItemCaseSensitive(root, "sensor");
+    const cJSON *legacy_comparison = cJSON_GetObjectItemCaseSensitive(root, "comparison");
+    const cJSON *legacy_start = cJSON_GetObjectItemCaseSensitive(root, "start_threshold");
+    const cJSON *legacy_stop = cJSON_GetObjectItemCaseSensitive(root, "stop_threshold");
     const cJSON *mode = cJSON_GetObjectItemCaseSensitive(root, "stop_mode");
-    const cJSON *stop = cJSON_GetObjectItemCaseSensitive(root, "stop_threshold");
     const cJSON *duration = cJSON_GetObjectItemCaseSensitive(root, "duration_seconds");
     bool valid = cJSON_IsNumber(channel) && (channel->valuedouble == 1 || channel->valuedouble == 2) &&
-        cJSON_IsBool(enabled) && cJSON_IsString(sensor) &&
-        (strcmp(sensor->valuestring, "water") == 0 || strcmp(sensor->valuestring, "temperature") == 0) &&
-        cJSON_IsString(comparison) && (strcmp(comparison->valuestring, "below") == 0 || strcmp(comparison->valuestring, "above") == 0) &&
-        cJSON_IsNumber(start) && cJSON_IsNumber(stop) && cJSON_IsString(mode) &&
+        cJSON_IsBool(enabled) && cJSON_IsString(mode) &&
         (strcmp(mode->valuestring, "duration") == 0 || strcmp(mode->valuestring, "threshold") == 0) &&
         cJSON_IsNumber(duration) && duration->valuedouble >= 1 && duration->valuedouble <= 86400 &&
         (double)(uint32_t)duration->valuedouble == duration->valuedouble;
-    if (!valid) { cJSON_Delete(root); return invalid_pump_rule(req); }
-    double minimum = strcmp(sensor->valuestring, "water") == 0 ? 0 : -55;
-    double maximum = strcmp(sensor->valuestring, "water") == 0 ? 4095 : 125;
-    if (!(start->valuedouble >= minimum && start->valuedouble <= maximum &&
-          stop->valuedouble >= minimum && stop->valuedouble <= maximum)) {
-        cJSON_Delete(root);
-        return invalid_pump_rule(req);
-    }
+    bool modern = cJSON_IsObject(starts) && cJSON_IsObject(stops);
+    bool legacy = cJSON_IsString(legacy_sensor) &&
+        (strcmp(legacy_sensor->valuestring, "water") == 0 || strcmp(legacy_sensor->valuestring, "temperature") == 0) &&
+        cJSON_IsString(legacy_comparison) &&
+        (strcmp(legacy_comparison->valuestring, "below") == 0 || strcmp(legacy_comparison->valuestring, "above") == 0) &&
+        cJSON_IsNumber(legacy_start) && cJSON_IsNumber(legacy_stop);
+    if (!valid || (!modern && !legacy)) { cJSON_Delete(root); return invalid_pump_rule(req); }
     pump_auto_config_t config = {
         .enabled = cJSON_IsTrue(enabled),
-        .sensor = strcmp(sensor->valuestring, "water") == 0 ? PUMP_SENSOR_WATER : PUMP_SENSOR_TEMPERATURE,
-        .start_below = strcmp(comparison->valuestring, "below") == 0,
-        .start_threshold = start->valuedouble,
         .stop_mode = strcmp(mode->valuestring, "duration") == 0 ? PUMP_STOP_DURATION : PUMP_STOP_THRESHOLD,
-        .stop_threshold = stop->valuedouble,
         .duration_seconds = (uint32_t)duration->valuedouble,
     };
+    if (modern) {
+        for (int sensor = 0; sensor < PUMP_SENSOR_COUNT; sensor++) {
+            const char *name = sensor == PUMP_SENSOR_WATER ? "water" : "temperature";
+            if (!read_auto_condition(starts, name, &config.start[sensor]) ||
+                !read_auto_condition(stops, name, &config.stop[sensor])) {
+                cJSON_Delete(root);
+                return invalid_pump_rule(req);
+            }
+        }
+    } else {
+        int sensor = strcmp(legacy_sensor->valuestring, "water") == 0
+            ? PUMP_SENSOR_WATER : PUMP_SENSOR_TEMPERATURE;
+        bool below = strcmp(legacy_comparison->valuestring, "below") == 0;
+        config.start[sensor] = (pump_auto_condition_t){true, below, legacy_start->valuedouble};
+        config.stop[sensor] = (pump_auto_condition_t){true, !below, legacy_stop->valuedouble};
+    }
     esp_err_t err = pool_network_configure_pump((int)channel->valuedouble - 1, &config);
     cJSON_Delete(root);
     return err == ESP_ERR_INVALID_ARG ? invalid_pump_rule(req) : action_response(req, err);
@@ -353,11 +442,12 @@ esp_err_t wifi_setup_init(esp_err_t (*on_credentials_saved)(void))
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
     server_config.stack_size = 8192;
     server_config.lru_purge_enable = true;
-    esp_err_t err = httpd_start(&s_server, &server_config);
-    if (err != ESP_OK) return err;
     const httpd_uri_t routes[] = {
         {.uri = "/", .method = HTTP_GET, .handler = setup_get},
         {.uri = "/api/status", .method = HTTP_GET, .handler = status_get},
+        {.uri = "/api/config", .method = HTTP_GET, .handler = connection_get},
+        {.uri = "/api/config/mqtt", .method = HTTP_POST, .handler = connection_post},
+        {.uri = "/api/config/http", .method = HTTP_POST, .handler = connection_post},
         {.uri = "/api/control", .method = HTTP_POST, .handler = control_post},
         {.uri = "/api/automation", .method = HTTP_POST, .handler = automation_post},
         {.uri = "/api/time", .method = HTTP_POST, .handler = time_post},
@@ -365,6 +455,9 @@ esp_err_t wifi_setup_init(esp_err_t (*on_credentials_saved)(void))
         {.uri = "/api/networks", .method = HTTP_GET, .handler = networks_get},
         {.uri = "/wifi", .method = HTTP_POST, .handler = setup_post},
     };
+    server_config.max_uri_handlers = sizeof(routes) / sizeof(routes[0]);
+    esp_err_t err = httpd_start(&s_server, &server_config);
+    if (err != ESP_OK) return err;
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         err = httpd_register_uri_handler(s_server, &routes[i]);
         if (err != ESP_OK) break;

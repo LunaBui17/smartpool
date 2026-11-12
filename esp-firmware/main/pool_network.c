@@ -92,12 +92,20 @@ static pool_mqtt_settings_t s_mqtt_settings = {
     .temp_min = 20, .temp_max = 35, .water_min = CONFIG_WATER_LOW_THRESHOLD, .water_max = 4095,
     .id = "SmartPool", .name = "SmartPool", .api_url = CONFIG_POOL_API_URL,
 };
+typedef struct {
+    uint32_t version;
+    char broker[257];
+    char username[129];
+    char password[129];
+} stored_connection_t;
+static stored_connection_t s_connection;
 typedef struct { uint32_t version; bool wifi_pending; pool_mqtt_settings_t settings; } stored_mqtt_settings_t;
 _Static_assert(sizeof(pool_mqtt_settings_t) == 744 && offsetof(pool_mqtt_settings_t, timestamps) == 712,
                "Preserve v1 settings blob layout for migration");
 static bool s_mqtt_wifi_pending;
 static void mqtt_command_task(void *arg);
 static esp_err_t persist_mqtt_settings(const pool_mqtt_settings_t *settings, bool wifi_pending);
+static void load_connection_config(void);
 static void mqtt_receive(esp_mqtt_event_handle_t event);
 static void send_sample(bool has_temperature, float temperature, bool has_water,
                          bool water_normal, int water_raw, bool measurement);
@@ -105,22 +113,42 @@ static void telemetry_task(void *arg);
 static void automation_task(void *arg);
 static _Atomic bool s_sample_requested;
 static pump_auto_config_t s_auto_config[2] = {
-    {.sensor = PUMP_SENSOR_WATER, .start_below = true, .start_threshold = 1500,
-     .stop_mode = PUMP_STOP_THRESHOLD, .stop_threshold = 2500, .duration_seconds = 300},
-    {.sensor = PUMP_SENSOR_WATER, .start_below = false, .start_threshold = 3000,
-     .stop_mode = PUMP_STOP_THRESHOLD, .stop_threshold = 2000, .duration_seconds = 300},
+    {.start = {[PUMP_SENSOR_WATER] = {.enabled = true, .below = true, .threshold = 1500}},
+     .stop = {[PUMP_SENSOR_WATER] = {.enabled = true, .below = false, .threshold = 2500}},
+     .stop_mode = PUMP_STOP_THRESHOLD, .duration_seconds = 300},
+    {.start = {[PUMP_SENSOR_WATER] = {.enabled = true, .below = false, .threshold = 3000}},
+     .stop = {[PUMP_SENSOR_WATER] = {.enabled = true, .below = true, .threshold = 2000}},
+     .stop_mode = PUMP_STOP_THRESHOLD, .duration_seconds = 300},
 };
 static pump_auto_runtime_t s_auto_runtime[2];
+static char s_last_automation_req_ids[2][97];
 static int64_t s_auto_wait_after_us[2];
 typedef struct {
     uint32_t version;
     pump_auto_config_t rules[2];
 } stored_auto_rules_t;
 
+typedef struct {
+    bool enabled;
+    pump_sensor_t sensor;
+    bool start_below;
+    double start_threshold;
+    pump_stop_mode_t stop_mode;
+    double stop_threshold;
+    uint32_t duration_seconds;
+} old_auto_rule_t;
+typedef struct { uint32_t version; old_auto_rule_t rules[2]; } old_auto_rules_t;
+_Static_assert(sizeof(old_auto_rule_t) == 48, "Preserve v1 automation NVS layout");
+
 static bool automation_available(int channel, const pump_auto_config_t *config)
 {
-    return (channel == 0 ? POOL_RELAY_1_ENABLED : POOL_RELAY_2_ENABLED) &&
-        (config->sensor == PUMP_SENSOR_WATER ? s_water_enabled : s_temperature_enabled);
+    if (!(channel == 0 ? POOL_RELAY_1_ENABLED : POOL_RELAY_2_ENABLED)) return false;
+    for (int sensor = 0; sensor < PUMP_SENSOR_COUNT; sensor++) {
+        if ((config->start[sensor].enabled ||
+             (config->stop_mode == PUMP_STOP_THRESHOLD && config->stop[sensor].enabled)) &&
+            !(sensor == PUMP_SENSOR_WATER ? s_water_enabled : s_temperature_enabled)) return false;
+    }
+    return true;
 }
 
 static uint32_t s_boot_nonce;
@@ -132,14 +160,29 @@ static void publish_status(void)
     if (!s_mqtt_connected) {
         return;
     }
+    pool_device_state_t device_state;
+    pool_network_get_state(&device_state);
     cJSON *status = cJSON_CreateObject();
     if (!status) return;
+    char ip_text[16] = "";
+    if (s_wifi_connected) {
+        esp_netif_ip_info_t ip;
+        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (netif && esp_netif_get_ip_info(netif, &ip) == ESP_OK) {
+            snprintf(ip_text, sizeof(ip_text), IPSTR, IP2STR(&ip.ip));
+        }
+    }
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
     cJSON_AddNumberToObject(status, "online", 1);
     cJSON_AddNumberToObject(status, "bom_vao_control", s_pump_in ? 1 : 0);
     cJSON_AddNumberToObject(status, "bom_ra_control", s_pump_out ? 1 : 0);
+    cJSON_AddBoolToObject(status, "relay1_supported", POOL_RELAY_1_ENABLED);
+    cJSON_AddBoolToObject(status, "relay2_supported", POOL_RELAY_2_ENABLED);
+    cJSON_AddBoolToObject(status, "temperature_supported", POOL_TEMPERATURE_ENABLED);
+    cJSON_AddBoolToObject(status, "water_supported", POOL_WATER_ENABLED);
     cJSON_AddNumberToObject(status, "temperature_enabled", s_temperature_enabled ? 1 : 0);
     cJSON_AddNumberToObject(status, "water_level_enabled", s_water_enabled ? 1 : 0);
+    cJSON_AddBoolToObject(status, "water_enabled", s_water_enabled);
     cJSON_AddStringToObject(status, "water_unit", "adc");
     cJSON_AddNumberToObject(status, "interlock", s_mqtt_settings.interlock ? 1 : 0);
     cJSON *device = cJSON_AddObjectToObject(status, "device");
@@ -154,6 +197,42 @@ static void publish_status(void)
         cJSON_AddNumberToObject(thresholds, "temp_max", s_mqtt_settings.temp_max);
         cJSON_AddNumberToObject(thresholds, "water_min", s_mqtt_settings.water_min);
         cJSON_AddNumberToObject(thresholds, "water_max", s_mqtt_settings.water_max);
+    }
+    cJSON *automation = cJSON_AddArrayToObject(status, "automation");
+    for (int i = 0; automation && i < 2; i++) {
+        const pump_auto_view_t *view = &device_state.automation[i];
+        cJSON *rule = cJSON_CreateObject();
+        if (!rule) continue;
+        cJSON_AddItemToArray(automation, rule);
+        cJSON_AddNumberToObject(rule, "channel", i + 1);
+        cJSON_AddBoolToObject(rule, "enabled", view->config.enabled);
+        cJSON_AddStringToObject(rule, "stop_mode", view->config.stop_mode == PUMP_STOP_DURATION
+            ? "duration" : "threshold");
+        cJSON_AddNumberToObject(rule, "duration_seconds", view->config.duration_seconds);
+        cJSON *start_conditions = cJSON_AddObjectToObject(rule, "start_conditions");
+        cJSON *stop_conditions = cJSON_AddObjectToObject(rule, "stop_conditions");
+        for (int sensor = 0; start_conditions && stop_conditions && sensor < PUMP_SENSOR_COUNT; sensor++) {
+            const char *name = sensor == PUMP_SENSOR_WATER ? "water" : "temperature";
+            cJSON *start = cJSON_AddObjectToObject(start_conditions, name);
+            cJSON *stop = cJSON_AddObjectToObject(stop_conditions, name);
+            if (!start || !stop) continue;
+            cJSON_AddBoolToObject(start, "enabled", view->config.start[sensor].enabled);
+            cJSON_AddStringToObject(start, "comparison", view->config.start[sensor].below ? "below" : "above");
+            cJSON_AddNumberToObject(start, "threshold", view->config.start[sensor].threshold);
+            cJSON_AddBoolToObject(stop, "enabled", view->config.stop[sensor].enabled);
+            cJSON_AddStringToObject(stop, "comparison", view->config.stop[sensor].below ? "below" : "above");
+            cJSON_AddNumberToObject(stop, "threshold", view->config.stop[sensor].threshold);
+        }
+        cJSON_AddBoolToObject(rule, "paused", view->paused);
+        cJSON_AddBoolToObject(rule, "running", view->running);
+        cJSON_AddStringToObject(rule, "reason", view->reason);
+        cJSON_AddStringToObject(rule, "last_stop_reason", view->last_stop_reason);
+        cJSON_AddNumberToObject(rule, "remaining_seconds", view->remaining_seconds);
+    }
+    cJSON *network = cJSON_AddObjectToObject(status, "network");
+    if (network) {
+        cJSON_AddStringToObject(network, "ip", ip_text);
+        cJSON_AddStringToObject(network, "http_api_url", s_mqtt_settings.api_url);
     }
     xSemaphoreGive(s_relay_lock);
     char *json = cJSON_PrintUnformatted(status);
@@ -240,7 +319,8 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
         if (POOL_TEMPERATURE_ENABLED) esp_mqtt_client_subscribe(s_mqtt, TOPIC_CMD_TEMPERATURE, 1);
         if (POOL_WATER_ENABLED) esp_mqtt_client_subscribe(s_mqtt, TOPIC_CMD_WATER, 1);
         const char *configs[] = {"smartpool/config", "smartpool/config/thresholds", "smartpool/config/wifi",
-            "smartpool/config/device", "smartpool/config/http", "smartpool/cmd/wifi_scan"};
+            "smartpool/config/device", "smartpool/config/http", "smartpool/config/automation",
+            "smartpool/cmd/wifi_scan"};
         for (size_t i = 0; i < sizeof(configs) / sizeof(configs[0]); i++) esp_mqtt_client_subscribe(s_mqtt, configs[i], 1);
         s_sample_requested = true;
         publish_status();
@@ -396,12 +476,22 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t event_i
 
 static esp_err_t load_auto_rules(void)
 {
-    stored_auto_rules_t stored;
+    union { stored_auto_rules_t current; old_auto_rules_t old; } stored = {0};
     size_t size = sizeof(stored);
     esp_err_t err = nvs_get_blob(s_network_nvs, "auto_rules", &stored, &size);
-    if (err == ESP_OK && size == sizeof(stored) && stored.version == 1 &&
-        pump_auto_config_valid(&stored.rules[0]) && pump_auto_config_valid(&stored.rules[1])) {
-        memcpy(s_auto_config, stored.rules, sizeof(s_auto_config));
+    if (err == ESP_OK && size == sizeof(stored.current) && stored.current.version == 2 &&
+        pump_auto_config_valid(&stored.current.rules[0]) && pump_auto_config_valid(&stored.current.rules[1])) {
+        memcpy(s_auto_config, stored.current.rules, sizeof(s_auto_config));
+    } else if (err == ESP_OK && size == sizeof(stored.old) && stored.old.version == 1) {
+        for (int i = 0; i < 2; i++) {
+            old_auto_rule_t *previous = &stored.old.rules[i];
+            if (previous->sensor != PUMP_SENSOR_WATER && previous->sensor != PUMP_SENSOR_TEMPERATURE) continue;
+            pump_auto_config_t migrated = {.enabled = previous->enabled,
+                .stop_mode = previous->stop_mode, .duration_seconds = previous->duration_seconds};
+            migrated.start[previous->sensor] = (pump_auto_condition_t){true, previous->start_below, previous->start_threshold};
+            migrated.stop[previous->sensor] = (pump_auto_condition_t){true, !previous->start_below, previous->stop_threshold};
+            if (pump_auto_config_valid(&migrated)) s_auto_config[i] = migrated;
+        }
     } else if (err != ESP_ERR_NVS_NOT_FOUND) {
         ESP_LOGW(TAG, "Invalid automation settings; defaults remain disabled");
     }
@@ -420,6 +510,87 @@ static esp_err_t load_auto_rules(void)
     return ESP_OK;
 }
 
+static bool connection_url_valid(const char *url, bool mqtt)
+{
+    if (!url || !url[0] || strlen(url) > 256) return false;
+    const char *host = NULL;
+    if (mqtt && strncmp(url, "mqtts://", 8) == 0) host = url + 8;
+    if (!mqtt && strncmp(url, "http://", 7) == 0) host = url + 7;
+    if (!mqtt && strncmp(url, "https://", 8) == 0) host = url + 8;
+    if (!host || !host[0] || *host == '/' || *host == ':') return false;
+    for (const char *p = host; *p; p++) {
+        if ((unsigned char)*p <= 32 || *p == '@' || *p == '#') return false;
+    }
+    return true;
+}
+
+static void load_connection_config(void)
+{
+    memset(&s_connection, 0, sizeof(s_connection));
+    s_connection.version = 1;
+    snprintf(s_connection.broker, sizeof(s_connection.broker), "%s", CONFIG_POOL_MQTT_URI);
+    snprintf(s_connection.username, sizeof(s_connection.username), "%s", SMARTPOOL_MQTT_USERNAME);
+    snprintf(s_connection.password, sizeof(s_connection.password), "%s", SMARTPOOL_MQTT_PASSWORD);
+    stored_connection_t saved;
+    size_t size = sizeof(saved);
+    if (nvs_get_blob(s_network_nvs, "mqtt_conn", &saved, &size) == ESP_OK &&
+        size == sizeof(saved) && saved.version == 1 &&
+        memchr(saved.broker, 0, sizeof(saved.broker)) &&
+        memchr(saved.username, 0, sizeof(saved.username)) &&
+        memchr(saved.password, 0, sizeof(saved.password)) &&
+        connection_url_valid(saved.broker, true)) {
+        s_connection = saved;
+    }
+}
+
+void pool_network_get_connection_config(pool_connection_config_t *config)
+{
+    if (!config) return;
+    xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+    snprintf(config->broker, sizeof(config->broker), "%s", s_connection.broker);
+    snprintf(config->username, sizeof(config->username), "%s", s_connection.username);
+    config->password_set = s_connection.password[0] != '\0';
+    snprintf(config->api_url, sizeof(config->api_url), "%s", s_mqtt_settings.api_url);
+    xSemaphoreGive(s_relay_lock);
+}
+
+esp_err_t pool_network_save_http_url(const char *url)
+{
+    if (!POOL_HTTP_ENABLED) return ESP_ERR_NOT_SUPPORTED;
+    if (!connection_url_valid(url, false)) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+    pool_mqtt_settings_t next = s_mqtt_settings;
+    snprintf(next.api_url, sizeof(next.api_url), "%s", url);
+    time_t current_time = time(NULL);
+    uint64_t now = current_time >= 1704067200 ? (uint64_t)current_time : 0;
+    next.timestamps[3] = now > next.timestamps[3] ? now : next.timestamps[3] + 1;
+    esp_err_t err = persist_mqtt_settings(&next, s_mqtt_wifi_pending);
+    if (err == ESP_OK) s_mqtt_settings = next;
+    xSemaphoreGive(s_relay_lock);
+    if (err == ESP_OK) publish_status();
+    return err;
+}
+
+esp_err_t pool_network_save_mqtt_connection(const char *broker, const char *username,
+                                             const char *password)
+{
+    if (!POOL_MQTT_ENABLED) return ESP_ERR_NOT_SUPPORTED;
+    if (!connection_url_valid(broker, true) || !username || !username[0] ||
+        strlen(username) >= sizeof(s_connection.username) || !password ||
+        strlen(password) >= sizeof(s_connection.password)) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+    stored_connection_t next = s_connection;
+    snprintf(next.broker, sizeof(next.broker), "%s", broker);
+    snprintf(next.username, sizeof(next.username), "%s", username);
+    if (password[0]) snprintf(next.password, sizeof(next.password), "%s", password);
+    esp_err_t err = next.password[0] ? nvs_set_blob(s_network_nvs, "mqtt_conn", &next, sizeof(next))
+                                    : ESP_ERR_INVALID_ARG;
+    if (err == ESP_OK) err = nvs_commit(s_network_nvs);
+    if (err == ESP_OK) s_connection = next;
+    xSemaphoreGive(s_relay_lock);
+    return err;
+}
+
 esp_err_t pool_network_init(void)
 {
     s_relay_lock = xSemaphoreCreateMutex();
@@ -430,6 +601,7 @@ esp_err_t pool_network_init(void)
     if (err != ESP_OK) return err;
     err = nvs_open("poolnet", NVS_READWRITE, &s_network_nvs);
     if (err != ESP_OK) return err;
+    load_connection_config();
     uint8_t station_enabled = 1;
     err = nvs_get_u8(s_network_nvs, "sta_enabled", &station_enabled);
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) return err;
@@ -518,17 +690,17 @@ esp_err_t pool_network_init(void)
         s_mqtt_published = xQueueCreate(16, sizeof(int));
         if (!s_mqtt_commands || !s_mqtt_published) return ESP_ERR_NO_MEM;
         const esp_mqtt_client_config_t mqtt_config = {
-            .broker.address.uri = CONFIG_POOL_MQTT_URI,
+            .broker.address.uri = s_connection.broker,
             .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
-            .credentials.username = SMARTPOOL_MQTT_USERNAME,
-            .credentials.authentication.password = SMARTPOOL_MQTT_PASSWORD,
+            .credentials.username = s_connection.username,
+            .credentials.authentication.password = s_connection.password,
             .session.last_will.topic = TOPIC_STATUS,
             .session.last_will.msg = "{\"online\":0}",
             .session.last_will.qos = 1,
             .session.last_will.retain = 1,
         };
-        if (SMARTPOOL_MQTT_USERNAME[0] == '\0' || SMARTPOOL_MQTT_PASSWORD[0] == '\0') {
-            ESP_LOGW(TAG, "HiveMQ credentials missing in mqtt_credentials.h; MQTT disabled");
+        if (s_connection.username[0] == '\0' || s_connection.password[0] == '\0') {
+            ESP_LOGW(TAG, "MQTT credentials missing; configure them on the local dashboard");
         } else {
             s_mqtt = esp_mqtt_client_init(&mqtt_config);
             if (!s_mqtt) return ESP_FAIL;
@@ -688,7 +860,10 @@ void pool_network_update_readings(bool has_temperature, float temperature,
 {
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
     s_readings.has_temperature = has_temperature && s_temperature_enabled;
-    s_readings.temperature = temperature;
+    if (s_readings.has_temperature) {
+        s_readings.temperature = temperature;
+        s_readings.has_last_temperature = true;
+    }
     s_readings.has_water = has_water && s_water_enabled;
     s_readings.water_normal = water_normal;
     s_readings.water_raw = water_raw;
@@ -841,7 +1016,7 @@ esp_err_t pool_network_configure_pump(int channel, const pump_auto_config_t *con
         xSemaphoreGive(s_relay_lock);
         return ESP_ERR_NOT_SUPPORTED;
     }
-    stored_auto_rules_t stored = {.version = 1, .rules = {s_auto_config[0], s_auto_config[1]}};
+    stored_auto_rules_t stored = {.version = 2, .rules = {s_auto_config[0], s_auto_config[1]}};
     stored.rules[channel] = *config;
     esp_err_t err = nvs_set_blob(s_network_nvs, "auto_rules", &stored, sizeof(stored));
     if (err == ESP_OK) err = nvs_commit(s_network_nvs);
@@ -887,10 +1062,11 @@ static void automation_task(void *arg)
             pump_auto_config_t *config = &s_auto_config[i];
             pump_auto_runtime_t *runtime = &s_auto_runtime[i];
             if (!config->enabled || runtime->paused) continue;
-            bool valid = fresh && s_last_sample_us > s_auto_wait_after_us[i] &&
-                automation_available(i, config) && (config->sensor == PUMP_SENSOR_WATER
-                    ? s_readings.has_water : s_readings.has_temperature);
-            float value = config->sensor == PUMP_SENSOR_WATER ? s_readings.water_raw : s_readings.temperature;
+            bool sample_ready = fresh && s_last_sample_us > s_auto_wait_after_us[i] &&
+                automation_available(i, config);
+            bool valid[PUMP_SENSOR_COUNT] = {sample_ready && s_readings.has_water,
+                                            sample_ready && s_readings.has_temperature};
+            float value[PUMP_SENSOR_COUNT] = {s_readings.water_raw, s_readings.temperature};
             bool was_running = runtime->running;
             bool start_allowed = !s_mqtt_settings.interlock || !(i == 0 ? s_pump_out : s_pump_in);
             pump_auto_step_allowed(config, runtime, valid, value, now_us / 1000, start_allowed);
@@ -1037,6 +1213,24 @@ static void mqtt_command_task(void *arg)
         free(message);
         if (!valid) { mqtt_ack(&command, false, command.error_message ? command.error_message : "Invalid topic, action or configuration values; nothing applied"); continue; }
         if (command.kind == POOL_MQTT_SCAN) { mqtt_scan(); continue; }
+        if (command.kind == POOL_MQTT_AUTOMATION) {
+            int channel = command.automation_channel - 1;
+            if (command.req_id[0] && strcmp(command.req_id, s_last_automation_req_ids[channel]) == 0) {
+                mqtt_ack(&command, true, "Duplicate request already applied.");
+                continue;
+            }
+            esp_err_t err = pool_network_configure_pump(channel, &command.automation);
+            if (err == ESP_OK && command.req_id[0]) {
+                memcpy(s_last_automation_req_ids[channel], command.req_id,
+                       sizeof(s_last_automation_req_ids[channel]));
+            }
+            mqtt_ack(&command, err == ESP_OK, err == ESP_OK
+                ? "Automation saved to NVS and applied. Water thresholds use raw ADC 0-4095."
+                : err == ESP_ERR_NOT_SUPPORTED
+                ? "Relay or sensor unavailable; automation was not applied."
+                : "Automation could not be saved or applied; nothing was activated.");
+            continue;
+        }
         if (command.kind != POOL_MQTT_CONFIG) continue;
         if (pool_mqtt_config_is_stale(&command, &s_mqtt_settings)) { mqtt_ack(&command, false, "Stale configuration; send a newer timestamp; nothing applied"); continue; }
         if ((command.fields & POOL_CFG_WIFI) && !POOL_WIFI_STA_ENABLED) {

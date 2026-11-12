@@ -106,7 +106,7 @@ public class PoolMonitorService extends Service {
                 "Smart Pool - Giám sát nền",
                 NotificationManager.IMPORTANCE_LOW
         );
-        serviceChannel.setDescription("Thông báo dịch vụ giám sát MQTT đang chạy");
+        serviceChannel.setDescription("Thông báo dịch vụ giám sát Smart Pool đang chạy");
         serviceChannel.setShowBadge(false);
 
         NotificationChannel alertChannel = new NotificationChannel(
@@ -185,7 +185,7 @@ public class PoolMonitorService extends Service {
         final String password = config.getMqttPassword();
 
         if (broker == null || broker.trim().isEmpty()) {
-            updateServiceNotification("Chưa cấu hình Broker");
+            updateServiceNotification("Đang chờ cấu hình hệ thống");
             return;
         }
 
@@ -216,13 +216,13 @@ public class PoolMonitorService extends Service {
                         mqttConnecting = false;
                         currentConnectedBroker = broker;
                         subscribeTopics();
-                        updateServiceNotification("Đang theo dõi nhiệt độ bể bơi qua MQTT");
+                        updateServiceNotification("Đang giám sát cảm biến bể bơi");
                     }
 
                     @Override
                     public void connectionLost(Throwable cause) {
                         mqttConnecting = false;
-                        updateServiceNotification("Mất MQTT - đang thử kết nối lại");
+                        updateServiceNotification("Đang khôi phục kết nối giám sát");
                         scheduleReconnect();
                     }
 
@@ -263,7 +263,7 @@ public class PoolMonitorService extends Service {
                 public void onFailure(IMqttToken token, Throwable error) {
                     mqttConnecting = false;
                     Log.e(TAG, "Kết nối MQTT thất bại: " + error);
-                    updateServiceNotification("Chưa kết nối Broker - đang thử lại");
+                    updateServiceNotification("Đang thử kết nối hệ thống");
                     scheduleReconnect();
                 }
             });

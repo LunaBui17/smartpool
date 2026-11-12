@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 typedef enum { PUMP_SENSOR_WATER, PUMP_SENSOR_TEMPERATURE } pump_sensor_t;
+#define PUMP_SENSOR_COUNT 2
 typedef enum { PUMP_STOP_DURATION, PUMP_STOP_THRESHOLD } pump_stop_mode_t;
 typedef enum {
     PUMP_AUTO_DISABLED, PUMP_AUTO_WAIT_SENSOR, PUMP_AUTO_READY, PUMP_AUTO_RUNNING,
@@ -13,11 +14,15 @@ typedef enum {
 
 typedef struct {
     bool enabled;
-    pump_sensor_t sensor;
-    bool start_below;
-    double start_threshold;
+    bool below;
+    double threshold;
+} pump_auto_condition_t;
+
+typedef struct {
+    bool enabled;
+    pump_auto_condition_t start[PUMP_SENSOR_COUNT];
+    pump_auto_condition_t stop[PUMP_SENSOR_COUNT];
     pump_stop_mode_t stop_mode;
-    double stop_threshold;
     uint32_t duration_seconds;
 } pump_auto_config_t;
 
@@ -34,9 +39,10 @@ bool pump_auto_config_valid(const pump_auto_config_t *config);
 void pump_auto_reset(pump_auto_runtime_t *runtime);
 void pump_auto_pause(pump_auto_runtime_t *runtime);
 void pump_auto_step(const pump_auto_config_t *config, pump_auto_runtime_t *runtime,
-                    bool sensor_valid, float value, uint64_t now_ms);
+                    const bool valid[PUMP_SENSOR_COUNT], const float value[PUMP_SENSOR_COUNT], uint64_t now_ms);
 const char *pump_auto_reason_name(pump_auto_reason_t reason);
 
 // Block only new starts; running pumps still evaluate sensor validity and stop limits.
 void pump_auto_step_allowed(const pump_auto_config_t *config, pump_auto_runtime_t *runtime,
-                            bool sensor_valid, float value, uint64_t now_ms, bool start_allowed);
+                            const bool valid[PUMP_SENSOR_COUNT], const float value[PUMP_SENSOR_COUNT],
+                            uint64_t now_ms, bool start_allowed);

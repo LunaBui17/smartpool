@@ -34,6 +34,38 @@ static void test_commands(void)
     assert(c.kind==POOL_MQTT_SCAN);
     assert(!decode("smartpool/cmd/wifi_scan","{\"cmd\":\"SCAN_WIFI\"}",true,&base,&c));
 }
+static void test_automation_config(void)
+{
+    pool_mqtt_settings_t base=defaults(); pool_mqtt_command_t c;
+    const char *rule="{\"action\":\"UPDATE_AUTOMATION\",\"req_id\":\"req_auto_1_test\","
+        "\"timestamp\":1718000000,\"channel\":1,\"enabled\":true,\"stop_mode\":\"threshold\","
+        "\"duration_seconds\":300,"
+        "\"start_conditions\":{\"water\":{\"enabled\":true,\"comparison\":\"below\",\"threshold\":1500},"
+        "\"temperature\":{\"enabled\":false,\"comparison\":\"above\",\"threshold\":30}},"
+        "\"stop_conditions\":{\"water\":{\"enabled\":true,\"comparison\":\"above\",\"threshold\":2500},"
+        "\"temperature\":{\"enabled\":false,\"comparison\":\"below\",\"threshold\":20}}}";
+    assert(decode("smartpool/config/automation",rule,false,&base,&c));
+    assert(c.kind==POOL_MQTT_AUTOMATION && c.automation_channel==1);
+    assert(c.automation.enabled && c.automation.stop_mode==PUMP_STOP_THRESHOLD);
+    assert(c.automation.start[PUMP_SENSOR_WATER].enabled &&
+        c.automation.start[PUMP_SENSOR_WATER].below &&
+        c.automation.start[PUMP_SENSOR_WATER].threshold==1500);
+    assert(!decode("smartpool/config/automation",rule,true,&base,&c));
+    assert(c.error_message && !strcmp(c.req_id,"req_auto_1_test"));
+    const char *bad_order="{\"action\":\"UPDATE_AUTOMATION\",\"req_id\":\"bad-order\","
+        "\"timestamp\":1718000000,\"channel\":1,\"enabled\":true,\"stop_mode\":\"threshold\","
+        "\"duration_seconds\":300,"
+        "\"start_conditions\":{\"water\":{\"enabled\":true,\"comparison\":\"below\",\"threshold\":2500},"
+        "\"temperature\":{\"enabled\":false,\"comparison\":\"above\",\"threshold\":30}},"
+        "\"stop_conditions\":{\"water\":{\"enabled\":true,\"comparison\":\"above\",\"threshold\":1500},"
+        "\"temperature\":{\"enabled\":false,\"comparison\":\"below\",\"threshold\":20}}}";
+    assert(!decode("smartpool/config/automation",bad_order,false,&base,&c));
+    assert(!strcmp(c.req_id,"bad-order"));
+    const char *bad_channel="{\"action\":\"UPDATE_AUTOMATION\",\"timestamp\":1718000000,"
+        "\"channel\":3,\"enabled\":true,\"stop_mode\":\"duration\",\"duration_seconds\":300,"
+        "\"start_conditions\":{},\"stop_conditions\":{}}";
+    assert(!decode("smartpool/config/automation",bad_channel,false,&base,&c));
+}
 static const char *rule="{\"action\":\"UPDATE_THRESHOLDS\",\"req_id\":\"req_thresh_1718000000\",\"timestamp\":1718000000,\"temp_min\":20.1,\"temp_max\":35.2,\"water_min\":1500,\"water_max\":3500,\"interlock\":1}";
 static void test_config_and_replay(void)
 {
@@ -172,7 +204,7 @@ static void test_sync_all_empty_wifi(const char *path)
 int main(int argc, char **argv)
 {
     test_sync_all_empty_wifi(argc > 1 ? argv[1] : "tests/fixtures/sync_all_empty_wifi.json");
-    test_commands(); test_interlock_config(); test_config_and_replay(); test_app_payloads(); test_fragmentation();
-    puts("PASS: Android MQTT commands, configuration/ACK correlation, raw ADC states, replay protection, fragmented frames");
+    test_commands(); test_interlock_config(); test_config_and_replay(); test_app_payloads(); test_automation_config(); test_fragmentation();
+    puts("PASS: MQTT commands, automation rules, ACK correlation, raw ADC states, replay protection, fragmented frames");
     return 0;
 }

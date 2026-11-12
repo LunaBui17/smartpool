@@ -17,8 +17,39 @@
 
 #define MAX_SENSOR_FAILURES 3
 #define MAX_SEARCH_ATTEMPTS 32
+#define SENSOR_IO_ATTEMPTS 3
+#define SENSOR_RETRY_DELAY_MS 50
 
 static const char *TAG = "smartpool";
+
+static esp_err_t trigger_temperature_conversion(onewire_bus_handle_t bus)
+{
+    esp_err_t err = ESP_FAIL;
+    for (int attempt = 0; attempt < SENSOR_IO_ATTEMPTS; attempt++) {
+        if (attempt) vTaskDelay(pdMS_TO_TICKS(SENSOR_RETRY_DELAY_MS));
+        err = ds18b20_trigger_temperature_conversion_for_all(bus);
+        if (err == ESP_OK) {
+            if (attempt) ESP_LOGI(TAG, "Temperature conversion recovered after %d retries", attempt);
+            break;
+        }
+    }
+    return err;
+}
+
+static esp_err_t read_temperature(ds18b20_device_handle_t sensor, float *reading, int slot)
+{
+    esp_err_t err = ESP_FAIL;
+    for (int attempt = 0; attempt < SENSOR_IO_ATTEMPTS; attempt++) {
+        if (attempt) vTaskDelay(pdMS_TO_TICKS(SENSOR_RETRY_DELAY_MS));
+        err = ds18b20_get_temperature(sensor, reading);
+        if (err == ESP_OK) {
+            if (attempt) ESP_LOGI(TAG, "DS18B20[%d] read recovered after %d retries", slot, attempt);
+            break;
+        }
+        if (err != ESP_ERR_INVALID_CRC && err != ESP_ERR_NOT_FOUND) break;
+    }
+    return err;
+}
 
 typedef struct {
     ds18b20_device_handle_t handle;
@@ -164,7 +195,7 @@ void app_main(void)
         bool has_temperature = false;
         float temperature = 0;
         if (pool_network_temperature_enabled() && active_sensor_count > 0) {
-            esp_err_t err = ds18b20_trigger_temperature_conversion_for_all(bus);
+            esp_err_t err = trigger_temperature_conversion(bus);
             if (err == ESP_OK) {
                 conversion_failures = 0;
                 for (int i = 0; i < CONFIG_DS18B20_MAX_DEVICES; i++) {
@@ -172,14 +203,7 @@ void app_main(void)
                         continue;
                     }
                     float reading;
-                    err = ds18b20_get_temperature(sensors[i].handle, &reading);
-                    if (err == ESP_ERR_INVALID_CRC) {
-                        vTaskDelay(pdMS_TO_TICKS(20));
-                        err = ds18b20_get_temperature(sensors[i].handle, &reading);
-                        if (err == ESP_OK) {
-                            ESP_LOGI(TAG, "DS18B20[%d] read recovered after CRC retry", i);
-                        }
-                    }
+                    err = read_temperature(sensors[i].handle, &reading, i);
                     if (err == ESP_OK && reading == 85.0f) {
                         ESP_LOGW(TAG, "DS18B20[%d] returned power-on value 85 C; sample ignored", i);
                         err = ESP_ERR_INVALID_RESPONSE;

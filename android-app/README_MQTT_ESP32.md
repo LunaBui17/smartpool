@@ -31,6 +31,9 @@
 | **9** | App ➔ ESP32 | `smartpool/config/device` | JSON | **True** | Cấu hình thông tin thiết bị (ID, Tên, Vị trí) |
 | **10**| App ➔ ESP32 | `smartpool/config` | JSON | **True** | Gói cấu hình tổng hợp toàn bộ hệ thống (khi bấm Sync All) |
 | **11**| ESP32 ➔ App | `smartpool/ack` | JSON | False | **Xác nhận cấu hình (ACK - Cơ chế 2):** Phản hồi khi ESP32 lưu xong Flash NVS |
+| **12**| App ➔ ESP32 | `smartpool/config/automation` | JSON | False | Lưu quy tắc tự động cho bơm cấp/xả; ESP32 xác nhận qua ACK và phát quy tắc/trạng thái hiện tại trong `smartpool/status` |
+
+Tab **Tự động hóa** trong Android tải cấu hình từ retained status và gửi thay đổi qua MQTT. Người dùng chọn ngưỡng mực nước theo ADC raw hoặc cm; khi chọn cm, app dùng hiệu chuẩn ADC/cm hiện có để đổi ngưỡng sang ADC trước khi gửi. Payload `UPDATE_AUTOMATION` có channel, điều kiện bật/tắt theo nước ADC hoặc nhiệt độ, kiểu dừng, giới hạn thời gian và request ID. Lệnh không retained để tránh phát lại thay đổi cũ; ESP32 lưu quy tắc vào NVS trước khi xác nhận.
 
 ---
 

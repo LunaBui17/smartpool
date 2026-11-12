@@ -29,12 +29,22 @@ INITIAL = {
     "http_last_success_age_seconds": -1, "http_queued_samples": 12,
     "clock_ready": False,
     "automation": [
-        {"channel": 1, "enabled": False, "sensor": "water", "comparison": "below",
-         "start_threshold": 1500, "stop_mode": "threshold", "stop_threshold": 2500,
+        {"channel": 1, "enabled": False, "start_conditions": {
+             "water": {"enabled": True, "comparison": "below", "threshold": 1500},
+             "temperature": {"enabled": False, "comparison": "above", "threshold": 30}},
+         "stop_conditions": {
+             "water": {"enabled": True, "comparison": "above", "threshold": 2500},
+             "temperature": {"enabled": False, "comparison": "below", "threshold": 28}},
+         "stop_mode": "threshold",
          "duration_seconds": 300, "paused": False, "running": False, "reason": "disabled",
          "remaining_seconds": 0, "last_stop_reason": "disabled"},
-        {"channel": 2, "enabled": False, "sensor": "water", "comparison": "above",
-         "start_threshold": 3000, "stop_mode": "threshold", "stop_threshold": 2000,
+        {"channel": 2, "enabled": False, "start_conditions": {
+             "water": {"enabled": True, "comparison": "above", "threshold": 3000},
+             "temperature": {"enabled": False, "comparison": "above", "threshold": 30}},
+         "stop_conditions": {
+             "water": {"enabled": True, "comparison": "below", "threshold": 2000},
+             "temperature": {"enabled": False, "comparison": "below", "threshold": 28}},
+         "stop_mode": "threshold",
          "duration_seconds": 300, "paused": False, "running": False, "reason": "disabled",
          "remaining_seconds": 0, "last_stop_reason": "disabled"},
     ],
@@ -50,6 +60,14 @@ TEST_SCRIPT = r"""
  const click=async selector=>{document.querySelector(selector).click();await wait(()=>!busy);};
  try{
   await wait(()=>state!==null);
+  await wait(()=>$('mqtt-broker').value!=='' && $('http-api-url').value!=='');
+  check($('mqtt-password').value===''&&$('mqtt-password-note').textContent.includes('Đã lưu'),'MQTT password stays hidden');
+  $('http-api-url').value='http://192.168.1.10/pool_api.php';
+  $('http-form').dispatchEvent(new Event('submit',{cancelable:true}));await wait(()=>!busy);
+  check($('notice').textContent.includes('URL HTTP'),'HTTP URL saved from dashboard');
+  $('mqtt-password').value='new-secret';
+  $('mqtt-form').dispatchEvent(new Event('submit',{cancelable:true}));await wait(()=>!busy);
+  check($('mqtt-password').value===''&&$('notice').textContent.includes('khởi động lại'),'MQTT saved without echoing password');
   check($('temperature').textContent==='27.4','temperature reading');
   check($('water').textContent.includes('bình thường'),'water reading');
   check($('mqtt').textContent==='Chờ Wi-Fi'&&$('http').textContent==='Chờ Wi-Fi','offline service states');
@@ -81,17 +99,17 @@ TEST_SCRIPT = r"""
   await fixture({mqtt_supported:false,http_supported:false});
   check($('mqtt').textContent==='Đã tắt'&&$('http').textContent==='Đã tắt'&&$('http-queue').textContent==='','disabled transports');
   await fixture({mqtt_supported:true,http_supported:true,mqtt_state:'connected',mqtt_connected:true});
-  check(autoField(1,'start_threshold').value==='1500'&&!autoField(1,'enabled').checked,'automation defaults disabled');
-  autoField(1,'enabled').checked=true;autoField(1,'sensor').value='temperature';autoField(1,'comparison').value='above';autoField(1,'start_threshold').value='30.1';autoField(1,'stop_threshold').value='28.2';autoField(1,'duration_seconds').value='10';
+  check(autoField(1,'start_water_threshold').value==='1500'&&!autoField(1,'enabled').checked,'automation defaults disabled');
+  autoField(1,'enabled').checked=true;autoField(1,'start_temperature_enabled').checked=true;autoField(1,'start_temperature_threshold').value='30.1';autoField(1,'stop_temperature_enabled').checked=true;autoField(1,'stop_temperature_threshold').value='28.2';autoField(1,'duration_seconds').value='10';
   $('auto1').dispatchEvent(new Event('input',{bubbles:true}));await refresh();
-  check(autoField(1,'sensor').value==='temperature'&&autoField(1,'start_threshold').value==='30.1','polling preserves unsaved pump setup');
+  check(autoField(1,'start_temperature_enabled').checked&&autoField(1,'start_temperature_threshold').value==='30.1','polling preserves unsaved pump setup');
   $('auto1').dispatchEvent(new Event('submit',{cancelable:true}));await wait(()=>!busy);
-  check(state.automation[0].enabled&&state.automation[0].sensor==='temperature'&&state.automation[0].stop_threshold===28.2,'temperature threshold rule saved');
-  autoField(1,'stop_threshold').value='32';$('auto1').dispatchEvent(new Event('submit',{cancelable:true}));await wait(()=>!busy);
-  check($('notice').classList.contains('error')&&state.automation[0].stop_threshold===28.2,'invalid hysteresis rejected before apply');
-  autoField(1,'stop_threshold').value='28.2';
+  check(state.automation[0].enabled&&state.automation[0].start_conditions.temperature.enabled&&state.automation[0].stop_conditions.temperature.threshold===28.2,'water or temperature rule saved');
+  autoField(1,'stop_temperature_threshold').value='32';$('auto1').dispatchEvent(new Event('submit',{cancelable:true}));await wait(()=>!busy);
+  check($('notice').classList.contains('error')&&state.automation[0].stop_conditions.temperature.threshold===28.2,'invalid hysteresis rejected before apply');
+  autoField(1,'stop_temperature_threshold').value='28.2';
   autoField(2,'enabled').checked=true;autoField(2,'stop_mode').value='duration';autoField(2,'duration_seconds').value='7';$('auto2').dispatchEvent(new Event('change',{bubbles:true}));
-  check(autoField(2,'stop_threshold').disabled,'timed rule does not require stop threshold');
+  check(autoField(2,'stop_water_threshold').disabled,'timed rule does not require stop threshold');
   $('auto2').dispatchEvent(new Event('submit',{cancelable:true}));await wait(()=>!busy);
   check(state.automation[1].enabled&&state.automation[1].stop_mode==='duration'&&state.automation[1].duration_seconds===7,'independent water timed rule saved');
   await click('[data-control="relay1"]');check(state.relay1,'local relay ON without router/MQTT');
@@ -149,6 +167,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/status"):
             self.reply({"ok": False} if device.get("fail") else device,
                        503 if device.get("fail") else 200)
+        elif self.path == "/api/config":
+            self.reply({"mqtt_broker": "mqtts://broker.example.com:8883", "mqtt_username": "pool",
+                        "mqtt_password_set": True, "http_api_url": "http://192.168.1.2/pool_api.php",
+                        "mqtt_supported": True, "http_supported": True})
         elif self.path == "/api/networks":
             self.reply([{"ssid": "<img src=x onerror=window.injected=true>", "rssi": -50, "secure": True},
                         {"ssid": "Home Pool", "rssi": -68, "secure": False}])
@@ -195,6 +217,8 @@ class Handler(BaseHTTPRequestHandler):
             if type(timestamp) is not int or not 1704067200 <= timestamp <= 4102444799:
                 return self.reply({"ok": False, "message": "Invalid time"}, 400)
             device.update(clock_ready=True, mqtt_state="connecting")
+        elif self.path == "/api/config/mqtt":
+            return self.reply({"ok": True, "restarting": True})
         elif self.path == "/api/network":
             device["station_enabled"] = data["enabled"]
             device.update(relay1=False, relay2=False)
@@ -234,6 +258,8 @@ try:
         subprocess.run(command, capture_output=True, timeout=50, check=True)
     assert any(path == "/wifi" and body["ssid"] == "Pool Wi-Fi" for path, body in calls)
     assert any(path == "/api/time" and 1704067200 <= body["unix_time"] <= 4102444799 for path, body in calls)
-    assert any(path == "/api/automation" and body["sensor"] == "temperature" for path, body in calls)
+    assert any(path == "/api/automation" and body["start_conditions"]["temperature"]["enabled"] for path, body in calls)
+    assert any(path == "/api/config/mqtt" and body["mqtt_password"] == "new-secret" for path, body in calls)
+    assert any(path == "/api/config/http" and body["http_api_url"] == "http://192.168.1.10/pool_api.php" for path, body in calls)
 finally:
     server.shutdown()

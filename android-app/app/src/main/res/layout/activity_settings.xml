@@ -61,8 +61,72 @@
 
     </LinearLayout>
 
+    <LinearLayout
+        android:id="@+id/settingsTabs"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:background="@color/white"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/tabSettings"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="Cài đặt"
+            android:textColor="@color/white"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:background="@color/water_accent"
+            android:clickable="true"
+            android:focusable="true" />
+
+        <TextView
+            android:id="@+id/tabAutomation"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="Tự động hóa"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:background="@color/white"
+            android:clickable="true"
+            android:focusable="true" />
+
+        <TextView
+            android:id="@+id/tabUsers"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="Người dùng"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:background="@color/white"
+            android:clickable="true"
+            android:focusable="true"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/txtSettingsFeedback"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="6dp"
+        android:layout_marginEnd="16dp"
+        android:background="@drawable/bg_card"
+        android:padding="8dp"
+        android:textSize="12sp"
+        android:visibility="gone" />
+
     <!-- CONTENT SCROLL -->
     <ScrollView
+        android:id="@+id/settingsContent"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
@@ -77,6 +141,19 @@
             android:paddingTop="16dp"
             android:paddingEnd="16dp"
             android:paddingBottom="36dp">
+
+            <TextView
+                android:id="@+id/txtPreviewJsonInline"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="14dp"
+                android:background="@drawable/bg_input_field"
+                android:maxHeight="240dp"
+                android:padding="10dp"
+                android:textColor="@color/text_primary"
+                android:textIsSelectable="true"
+                android:textSize="11sp"
+                android:visibility="gone" />
 
             <!-- CARD 1: CẤU HÌNH NGƯỠNG CẢM BIẾN (CÓ NÚT LƯU RIÊNG) -->
             <TextView
@@ -176,14 +253,22 @@
                     android:layout_marginBottom="14dp"
                     android:background="@color/line" />
 
-                <!-- NGƯỠNG MỰC NƯỚC -->
+                <!-- NGƯỠNG CẢNH BÁO -->
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="💧  Ngưỡng mực nước an toàn (% hoặc cm)"
+                    android:text="💧  Ngưỡng cảnh báo"
                     android:textColor="@color/water_accent"
                     android:textSize="13sp"
                     android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/txtWaterThresholdUnitInfo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Nhập ngưỡng theo cm trong khoảng đo đã hiệu chuẩn."
+                    android:textColor="@color/text_muted"
+                    android:textSize="11sp" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -198,9 +283,10 @@
                         android:orientation="vertical">
 
                         <TextView
+                            android:id="@+id/txtWaterMinLabel"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Cảnh báo cạn (Min)"
+                            android:text="Ngưỡng thấp (cm)"
                             android:textColor="@color/text_secondary"
                             android:textSize="12sp" />
 
@@ -210,7 +296,7 @@
                             android:layout_height="46dp"
                             android:layout_marginTop="4dp"
                             android:background="@drawable/bg_input_field"
-                            android:hint="20.0"
+                            android:hint="Ví dụ: 10"
                             android:inputType="numberDecimal"
                             android:paddingStart="12dp"
                             android:paddingEnd="12dp"
@@ -229,9 +315,10 @@
                         android:orientation="vertical">
 
                         <TextView
+                            android:id="@+id/txtWaterMaxLabel"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Cảnh báo tràn (Max)"
+                            android:text="Ngưỡng cao (cm)"
                             android:textColor="@color/text_secondary"
                             android:textSize="12sp" />
 
@@ -241,7 +328,7 @@
                             android:layout_height="46dp"
                             android:layout_marginTop="4dp"
                             android:background="@drawable/bg_input_field"
-                            android:hint="85.0"
+                            android:hint="Ví dụ: 15"
                             android:inputType="numberDecimal"
                             android:paddingStart="12dp"
                             android:paddingEnd="12dp"
@@ -258,6 +345,91 @@
                     android:text="MQTT Topic: smartpool/config/thresholds"
                     android:textColor="@color/blue"
                     android:textSize="11sp" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="14dp"
+                    android:layout_marginBottom="12dp"
+                    android:background="@color/line" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="Hiệu chuẩn hai đầu mút (cấu hình theo từng bể)"
+                    android:textColor="@color/water_accent"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Mực nước thấp nhất đo được (cm)"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
+
+                    <EditText
+                        android:id="@+id/edtCalibrationCmStart"
+                        android:layout_width="match_parent"
+                        android:layout_height="46dp"
+                        android:layout_marginTop="4dp"
+                        android:background="@drawable/bg_input_field"
+                        android:hint="Ví dụ: 10"
+                        android:inputType="numberDecimal"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="Mực nước cao nhất đo được (cm)"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
+
+                    <EditText
+                        android:id="@+id/edtCalibrationCmEnd"
+                        android:layout_width="match_parent"
+                        android:layout_height="46dp"
+                        android:layout_marginTop="4dp"
+                        android:background="@drawable/bg_input_field"
+                        android:hint="Ví dụ: 15"
+                        android:inputType="numberDecimal"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/txtWaterCalibrationInfo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="App tự ánh xạ khoảng cm sang cảm biến và không hiển thị giá trị ADC."
+                    android:textColor="@color/text_muted"
+                    android:textSize="11sp" />
+
+                <Button
+                    android:id="@+id/btnSaveWaterCalibration"
+                    android:layout_width="match_parent"
+                    android:layout_height="46dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_button_secondary"
+                    android:text="Lưu hiệu chuẩn"
+                    android:textAllCaps="false"
+                    android:textColor="@color/blue"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
 
                 <View
                     android:layout_width="match_parent"
@@ -768,7 +940,7 @@
                     android:layout_height="46dp"
                     android:layout_marginTop="6dp"
                     android:background="@drawable/bg_input_field"
-                    android:hint="http://192.168.10.214/pool_api/pool_api.php"
+                    android:hint="http://192.168.10.165/pool_api/pool_api.php"
                     android:inputType="textUri"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"
@@ -808,30 +980,6 @@
                             android:textSize="14sp" />
                     </LinearLayout>
 
-                    <Space
-                        android:layout_width="12dp"
-                        android:layout_height="wrap_content" />
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Chế độ điều khiển:"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-
-                        <Spinner
-                            android:id="@+id/spnControlMode"
-                            android:layout_width="match_parent"
-                            android:layout_height="46dp"
-                            android:layout_marginTop="4dp"
-                            android:background="@drawable/bg_input_field" />
-                    </LinearLayout>
                 </LinearLayout>
 
                 <Button
@@ -888,4 +1036,14 @@
 
         </LinearLayout>
     </ScrollView>
+
+    <include
+        android:id="@+id/automationContent"
+        layout="@layout/content_automation_tab"
+        android:visibility="gone" />
+
+    <include
+        android:id="@+id/usersContent"
+        layout="@layout/content_users_tab"
+        android:visibility="gone" />
 </LinearLayout>
