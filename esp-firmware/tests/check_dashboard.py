@@ -54,6 +54,10 @@ TEST_SCRIPT = r"""
   check($('water').textContent.includes('bình thường'),'water reading');
   check($('mqtt').textContent==='Chờ Wi-Fi'&&$('http').textContent==='Chờ Wi-Fi','offline service states');
   const fixture=async update=>{await fetch('/fixture',{method:'POST',body:JSON.stringify(update)});await refresh();};
+  await fixture({interlock:true});
+  check($('interlock-note').textContent.includes('chỉ một bơm'),'enabled interlock visible');
+  await fixture({interlock:false});
+  check($('interlock-note').textContent.includes('đồng thời'),'disabled interlock visible');
   for(const [phase,label,tone] of [['disabled','Đã tắt',''],['missing_credentials','Chưa có tài khoản','error'],['waiting_wifi','Chờ Wi-Fi','pending'],['waiting_time','Chờ đồng bộ giờ','pending'],['connecting','Đang kết nối','pending'],['connected','Đã kết nối','good'],['disconnected','Mất kết nối','error'],['error','Lỗi kết nối','error']]){
     await fixture({mqtt_state:phase,mqtt_connected:phase==='connected'});
     check($('mqtt').textContent===label&&(!tone||$('mqtt').classList.contains(tone)),'MQTT '+phase);

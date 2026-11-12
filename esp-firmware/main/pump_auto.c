@@ -36,6 +36,12 @@ void pump_auto_pause(pump_auto_runtime_t *runtime)
 void pump_auto_step(const pump_auto_config_t *config, pump_auto_runtime_t *runtime,
                     bool sensor_valid, float value, uint64_t now_ms)
 {
+    pump_auto_step_allowed(config, runtime, sensor_valid, value, now_ms, true);
+}
+
+void pump_auto_step_allowed(const pump_auto_config_t *config, pump_auto_runtime_t *runtime,
+                            bool sensor_valid, float value, uint64_t now_ms, bool start_allowed)
+{
     if (!config->enabled || runtime->paused) {
         runtime->running = false;
         if (!runtime->paused) runtime->reason = PUMP_AUTO_DISABLED;
@@ -66,6 +72,8 @@ void pump_auto_step(const pump_auto_config_t *config, pump_auto_runtime_t *runti
     if (!trigger) {
         runtime->armed = true;
         runtime->reason = PUMP_AUTO_READY;
+    } else if (runtime->armed && !start_allowed) {
+        runtime->reason = PUMP_AUTO_INTERLOCK;
     } else if (runtime->armed) {
         runtime->running = true;
         runtime->armed = false;
@@ -80,6 +88,6 @@ void pump_auto_step(const pump_auto_config_t *config, pump_auto_runtime_t *runti
 const char *pump_auto_reason_name(pump_auto_reason_t reason)
 {
     static const char *names[] = {"disabled", "waiting_sensor", "ready", "running", "waiting_reset",
-        "duration_done", "target_reached", "timeout", "sensor_error", "manual", "relay_error"};
+        "duration_done", "target_reached", "timeout", "sensor_error", "manual", "relay_error", "interlock"};
     return (unsigned)reason < sizeof(names) / sizeof(names[0]) ? names[(unsigned)reason] : "unknown";
 }

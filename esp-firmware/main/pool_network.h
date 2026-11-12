@@ -27,6 +27,7 @@ typedef struct {
     int http_last_attempt_age_seconds;
     int http_last_success_age_seconds;
     unsigned int http_queued_samples;
+    bool interlock;
     bool relay_1_on;
     bool relay_2_on;
     bool temperature_enabled;

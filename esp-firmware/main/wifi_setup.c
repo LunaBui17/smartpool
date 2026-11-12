@@ -112,6 +112,7 @@ static esp_err_t status_get(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "http_queued_samples", state.http_queued_samples);
     cJSON_AddBoolToObject(root, "relay1_supported", POOL_RELAY_1_ENABLED);
     cJSON_AddBoolToObject(root, "relay2_supported", POOL_RELAY_2_ENABLED);
+    cJSON_AddBoolToObject(root, "interlock", state.interlock);
     cJSON_AddBoolToObject(root, "relay1", state.relay_1_on);
     cJSON_AddBoolToObject(root, "relay2", state.relay_2_on);
     cJSON_AddBoolToObject(root, "temperature_supported", POOL_TEMPERATURE_ENABLED);
@@ -174,7 +175,18 @@ static esp_err_t control_post(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Expected target and boolean enabled");
     }
     esp_err_t err = pool_network_local_control(target->valuestring, cJSON_IsTrue(enabled));
+    bool interlock_blocked = err == ESP_ERR_INVALID_STATE &&
+        (strcmp(target->valuestring, "relay1") == 0 || strcmp(target->valuestring, "relay2") == 0);
     cJSON_Delete(root);
+    if (interlock_blocked) {
+        httpd_resp_set_status(req, "409 Conflict");
+        cJSON *error = cJSON_CreateObject();
+        if (error) {
+            cJSON_AddBoolToObject(error, "ok", false);
+            cJSON_AddStringToObject(error, "message", "Interlock đang bật. Hãy tắt bơm còn lại trước.");
+        }
+        return json_response(req, error);
+    }
     return action_response(req, err);
 }
 

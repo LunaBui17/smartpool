@@ -1,4 +1,7 @@
 #include "pool_network.h"
+#include "pool_mqtt_protocol.h"
+#include "cJSON.h"
+#include <stdlib.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -81,7 +84,23 @@ static _Atomic bool s_pump_in = POOL_RELAY_INITIAL_1_ON;
 static _Atomic bool s_pump_out = POOL_RELAY_INITIAL_2_ON;
 static _Atomic bool s_temperature_enabled = POOL_TEMPERATURE_ENABLED;
 static _Atomic bool s_water_enabled = POOL_WATER_ENABLED;
+typedef struct { telemetry_sample_t sample; bool measurement; } network_sample_t;
 static QueueHandle_t s_pending_samples;
+static QueueHandle_t s_mqtt_commands, s_mqtt_published;
+static pool_mqtt_rx_t s_mqtt_rx;
+static pool_mqtt_settings_t s_mqtt_settings = {
+    .temp_min = 20, .temp_max = 35, .water_min = CONFIG_WATER_LOW_THRESHOLD, .water_max = 4095,
+    .id = "SmartPool", .name = "SmartPool", .api_url = CONFIG_POOL_API_URL,
+};
+typedef struct { uint32_t version; bool wifi_pending; pool_mqtt_settings_t settings; } stored_mqtt_settings_t;
+_Static_assert(sizeof(pool_mqtt_settings_t) == 744 && offsetof(pool_mqtt_settings_t, timestamps) == 712,
+               "Preserve v1 settings blob layout for migration");
+static bool s_mqtt_wifi_pending;
+static void mqtt_command_task(void *arg);
+static esp_err_t persist_mqtt_settings(const pool_mqtt_settings_t *settings, bool wifi_pending);
+static void mqtt_receive(esp_mqtt_event_handle_t event);
+static void send_sample(bool has_temperature, float temperature, bool has_water,
+                         bool water_normal, int water_raw, bool measurement);
 static void telemetry_task(void *arg);
 static void automation_task(void *arg);
 static _Atomic bool s_sample_requested;
@@ -113,21 +132,34 @@ static void publish_status(void)
     if (!s_mqtt_connected) {
         return;
     }
-    char json[192];
+    cJSON *status = cJSON_CreateObject();
+    if (!status) return;
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
-    snprintf(json, sizeof(json),
-             "{\"online\":1,\"bom_vao_control\":%d,\"bom_ra_control\":%d,"
-             "\"temperature_enabled\":%d,\"water_level_enabled\":%d}",
-             s_pump_in ? 1 : 0, s_pump_out ? 1 : 0,
-             s_temperature_enabled ? 1 : 0, s_water_enabled ? 1 : 0);
+    cJSON_AddNumberToObject(status, "online", 1);
+    cJSON_AddNumberToObject(status, "bom_vao_control", s_pump_in ? 1 : 0);
+    cJSON_AddNumberToObject(status, "bom_ra_control", s_pump_out ? 1 : 0);
+    cJSON_AddNumberToObject(status, "temperature_enabled", s_temperature_enabled ? 1 : 0);
+    cJSON_AddNumberToObject(status, "water_level_enabled", s_water_enabled ? 1 : 0);
+    cJSON_AddStringToObject(status, "water_unit", "adc");
+    cJSON_AddNumberToObject(status, "interlock", s_mqtt_settings.interlock ? 1 : 0);
+    cJSON *device = cJSON_AddObjectToObject(status, "device");
+    if (device) {
+        cJSON_AddStringToObject(device, "id", s_mqtt_settings.id);
+        cJSON_AddStringToObject(device, "name", s_mqtt_settings.name);
+        cJSON_AddStringToObject(device, "location", s_mqtt_settings.location);
+    }
+    cJSON *thresholds = cJSON_AddObjectToObject(status, "thresholds");
+    if (thresholds) {
+        cJSON_AddNumberToObject(thresholds, "temp_min", s_mqtt_settings.temp_min);
+        cJSON_AddNumberToObject(thresholds, "temp_max", s_mqtt_settings.temp_max);
+        cJSON_AddNumberToObject(thresholds, "water_min", s_mqtt_settings.water_min);
+        cJSON_AddNumberToObject(thresholds, "water_max", s_mqtt_settings.water_max);
+    }
     xSemaphoreGive(s_relay_lock);
-    esp_mqtt_client_enqueue(s_mqtt, TOPIC_STATUS, json, 0, 1, 1, true);
-}
-
-static bool is_topic(const esp_mqtt_event_handle_t event, const char *topic)
-{
-    size_t length = strlen(topic);
-    return event->topic_len == length && memcmp(event->topic, topic, length) == 0;
+    char *json = cJSON_PrintUnformatted(status);
+    if (json) esp_mqtt_client_enqueue(s_mqtt, TOPIC_STATUS, json, 0, 1, 1, true);
+    free(json);
+    cJSON_Delete(status);
 }
 
 static esp_err_t set_pumps(bool pump_in, bool pump_out, bool local, bool remote_stop_only, int channel)
@@ -139,6 +171,10 @@ static esp_err_t set_pumps(bool pump_in, bool pump_out, bool local, bool remote_
     } else {
         if (channel == 1) pump_out = s_pump_out;
         if (channel == 2) pump_in = s_pump_in;
+    }
+    if (s_mqtt_settings.interlock && pump_in && pump_out) {
+        xSemaphoreGive(s_relay_lock);
+        return ESP_ERR_INVALID_STATE;
     }
     if ((pump_in && !POOL_RELAY_1_ENABLED) || (pump_out && !POOL_RELAY_2_ENABLED)) {
         xSemaphoreGive(s_relay_lock);
@@ -197,12 +233,17 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
         if (POOL_RELAY_2_ENABLED) esp_mqtt_client_subscribe(s_mqtt, TOPIC_CMD_OUT, 1);
         if (POOL_TEMPERATURE_ENABLED) esp_mqtt_client_subscribe(s_mqtt, TOPIC_CMD_TEMPERATURE, 1);
         if (POOL_WATER_ENABLED) esp_mqtt_client_subscribe(s_mqtt, TOPIC_CMD_WATER, 1);
+        const char *configs[] = {"smartpool/config", "smartpool/config/thresholds", "smartpool/config/wifi",
+            "smartpool/config/device", "smartpool/config/http", "smartpool/cmd/wifi_scan"};
+        for (size_t i = 0; i < sizeof(configs) / sizeof(configs[0]); i++) esp_mqtt_client_subscribe(s_mqtt, configs[i], 1);
+        s_sample_requested = true;
         publish_status();
         pool_network_send_telemetry(false, 0, false, false, 0);
         ESP_LOGI(TAG, "MQTT connected");
         break;
     case MQTT_EVENT_DISCONNECTED:
         s_mqtt_connected = false;
+        memset(&s_mqtt_rx, 0, sizeof(s_mqtt_rx));
         if (s_mqtt_phase != MQTT_PHASE_ERROR) s_mqtt_phase = MQTT_PHASE_DISCONNECTED;
         set_pumps(false, false, false, true, 0);
         ESP_LOGW(TAG, "MQTT disconnected; remotely controlled pumps OFF");
@@ -216,40 +257,12 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
                      event->error_handle->connect_return_code);
         }
         break;
-    case MQTT_EVENT_DATA: {
-        if (event->current_data_offset != 0 || event->total_data_len != event->data_len ||
-            event->data_len != 1 ||
-            (event->data[0] != '0' && event->data[0] != '1')) {
-            ESP_LOGW(TAG, "Ignored invalid MQTT command");
-            break;
-        }
-        if (is_topic(event, TOPIC_CMD_TEMPERATURE) || is_topic(event, TOPIC_CMD_WATER)) {
-            pool_network_local_control(is_topic(event, TOPIC_CMD_TEMPERATURE)
-                                       ? "temperature" : "water", event->data[0] == '1');
-            break;
-        }
-        // Retained ON commands must not restart a pump after reconnection.
-        if (event->retain && event->data[0] == '1') {
-            publish_status();
-            break;
-        }
-        bool pump_in = is_topic(event, TOPIC_CMD_IN);
-        bool pump_out = is_topic(event, TOPIC_CMD_OUT);
-        if (!pump_in && !pump_out) {
-            break;
-        }
-        bool on = event->data[0] == '1';
-        if (on && !s_wifi_connected) break;
-        bool desired_in = pump_in ? on : s_pump_in;
-        bool desired_out = pump_out ? on : s_pump_out;
-        esp_err_t err = set_pumps(desired_in, desired_out, false, false, pump_in ? 1 : 2);
-        if (err == ESP_OK) {
-            ESP_LOGI(TAG, "%s %s", pump_in ? "Pump in" : "Pump out", on ? "ON" : "OFF");
-        } else {
-            ESP_LOGE(TAG, "Relay control failed: %s", esp_err_to_name(err));
-        }
+    case MQTT_EVENT_DATA:
+        mqtt_receive(event);
         break;
-    }
+    case MQTT_EVENT_PUBLISHED:
+        if (s_mqtt_published) xQueueSend(s_mqtt_published, &event->msg_id, 0);
+        break;
     default:
         break;
     }
@@ -391,6 +404,8 @@ static esp_err_t load_auto_rules(void)
         if (!automation_available(i, &s_auto_config[i])) s_auto_config[i].enabled = false;
         bool initial_on = !s_auto_config[i].enabled &&
             (i == 0 ? POOL_RELAY_INITIAL_1_ON : POOL_RELAY_INITIAL_2_ON);
+        // A saved interlock takes precedence over the BOTH_ON boot setting.
+        if (s_mqtt_settings.interlock && POOL_RELAY_INITIAL_1_ON && POOL_RELAY_INITIAL_2_ON) initial_on = false;
         err = relay_set(i == 0 ? RELAY_1 : RELAY_2, initial_on);
         if (err != ESP_OK) return err;
         if (i == 0) s_pump_in = initial_on;
@@ -403,7 +418,7 @@ esp_err_t pool_network_init(void)
 {
     s_relay_lock = xSemaphoreCreateMutex();
     if (!s_relay_lock) return ESP_ERR_NO_MEM;
-    s_pending_samples = xQueueCreate(16, sizeof(telemetry_sample_t));
+    s_pending_samples = xQueueCreate(16, sizeof(network_sample_t));
     if (!s_pending_samples) return ESP_ERR_NO_MEM;
     esp_err_t err = nvs_flash_init();
     if (err != ESP_OK) return err;
@@ -413,6 +428,19 @@ esp_err_t pool_network_init(void)
     err = nvs_get_u8(s_network_nvs, "sta_enabled", &station_enabled);
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) return err;
     s_station_enabled = POOL_WIFI_STA_ENABLED && station_enabled;
+    stored_mqtt_settings_t saved_mqtt;
+    size_t mqtt_size = sizeof(saved_mqtt);
+    if (nvs_get_blob(s_network_nvs, "mqtt_settings", &saved_mqtt, &mqtt_size) == ESP_OK &&
+        mqtt_size == sizeof(saved_mqtt) && (saved_mqtt.version == 1 || saved_mqtt.version == 2)) {
+        // v1 ignored interlock; its old padding must never be read as a boolean.
+        if (saved_mqtt.version == 1) {
+            saved_mqtt.settings.interlock = false;
+            // Reaccept the retained threshold group once: v1 never applied its interlock field.
+            saved_mqtt.settings.timestamps[0] = 0;
+        }
+        s_mqtt_settings = saved_mqtt.settings;
+        s_mqtt_wifi_pending = saved_mqtt.wifi_pending;
+    }
     err = load_auto_rules();
     if (err != ESP_OK) return err;
     if (POOL_HTTP_ENABLED) {
@@ -453,6 +481,20 @@ esp_err_t pool_network_init(void)
     err = esp_wifi_set_mode(WIFI_MODE_STA);
     if (err != ESP_OK) return err;
 
+    if (s_mqtt_wifi_pending && POOL_WIFI_STA_ENABLED && s_mqtt_settings.ssid[0]) {
+        wifi_config_t pending_wifi = {0};
+        memcpy(pending_wifi.sta.ssid, s_mqtt_settings.ssid, strlen(s_mqtt_settings.ssid));
+        memcpy(pending_wifi.sta.password, s_mqtt_settings.password, strlen(s_mqtt_settings.password));
+        err = esp_wifi_set_config(WIFI_IF_STA, &pending_wifi);
+        if (err != ESP_OK) return err;
+        err = nvs_set_u8(s_network_nvs, "sta_enabled", 1);
+        if (err == ESP_OK) err = nvs_commit(s_network_nvs);
+        if (err != ESP_OK) return err;
+        s_station_enabled = true;
+        s_mqtt_wifi_pending = false;
+        err = persist_mqtt_settings(&s_mqtt_settings, false);
+        if (err != ESP_OK) return err;
+    }
     wifi_config_t saved_wifi = {0};
     err = esp_wifi_get_config(WIFI_IF_STA, &saved_wifi);
     if (err != ESP_OK) return err;
@@ -466,6 +508,9 @@ esp_err_t pool_network_init(void)
                                                 wifi_event_handler, NULL));
 
     if (POOL_MQTT_ENABLED) {
+        s_mqtt_commands = xQueueCreate(6, sizeof(pool_mqtt_rx_t *));
+        s_mqtt_published = xQueueCreate(16, sizeof(int));
+        if (!s_mqtt_commands || !s_mqtt_published) return ESP_ERR_NO_MEM;
         const esp_mqtt_client_config_t mqtt_config = {
             .broker.address.uri = CONFIG_POOL_MQTT_URI,
             .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
@@ -487,6 +532,9 @@ esp_err_t pool_network_init(void)
     }
     if ((POOL_HTTP_ENABLED || POOL_MQTT_ENABLED) &&
         xTaskCreate(telemetry_task, "telemetry_http", 6144, NULL, 4, NULL) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+    if (POOL_MQTT_ENABLED && xTaskCreate(mqtt_command_task, "mqtt_commands", 8192, NULL, 4, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     if (xTaskCreate(automation_task, "pump_auto", 4096, NULL, 5, NULL) != pdPASS) {
@@ -557,9 +605,14 @@ static bool post_sample(const telemetry_sample_t *sample)
     // The deployed PHP API validates numeric fields and rejects JSON null.
     // Omit unavailable readings; never turn them into a false zero sample.
     sample_to_json(sample, json, sizeof(json), false);
+    char api_url[257];
+    xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+    memcpy(api_url, s_mqtt_settings.api_url, sizeof(api_url));
+    xSemaphoreGive(s_relay_lock);
     esp_http_client_config_t http_config = {
-        .url = CONFIG_POOL_API_URL,
+        .url = api_url,
         .timeout_ms = 3000,
+        .crt_bundle_attach = esp_crt_bundle_attach,
     };
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
     s_http_status.sending = true;
@@ -582,7 +635,7 @@ static bool post_sample(const telemetry_sample_t *sample)
                  sample->id, status);
     } else {
         ESP_LOGW(TAG, "HTTP update failed: %s, status=%d, url=%s", esp_err_to_name(err),
-                 status, CONFIG_POOL_API_URL);
+                 status, api_url);
     }
     esp_http_client_cleanup(http);
     return success;
@@ -635,7 +688,7 @@ void pool_network_update_readings(bool has_temperature, float temperature,
     s_readings.water_raw = water_raw;
     s_last_sample_us = esp_timer_get_time();
     xSemaphoreGive(s_relay_lock);
-    pool_network_send_telemetry(has_temperature, temperature, has_water, water_normal, water_raw);
+    send_sample(has_temperature, temperature, has_water, water_normal, water_raw, true);
 }
 
 void pool_network_get_state(pool_device_state_t *state)
@@ -683,6 +736,7 @@ void pool_network_get_state(pool_device_state_t *state)
         ? (int)((now_us - s_http_status.last_success_us) / 1000000) : -1;
     state->http_queued_samples = POOL_HTTP_ENABLED ? s_http_queued_count +
         (s_pending_samples ? uxQueueMessagesWaiting(s_pending_samples) : 0) : 0;
+    state->interlock = s_mqtt_settings.interlock;
     state->relay_1_on = s_pump_in;
     state->relay_2_on = s_pump_out;
     state->temperature_enabled = s_temperature_enabled;
@@ -726,6 +780,12 @@ esp_err_t pool_network_local_control(const char *target, bool on)
 void pool_network_send_telemetry(bool has_temperature, float temperature,
                                  bool has_water, bool water_normal, int water_raw)
 {
+    send_sample(has_temperature, temperature, has_water, water_normal, water_raw, false);
+}
+
+static void send_sample(bool has_temperature, float temperature, bool has_water,
+                         bool water_normal, int water_raw, bool measurement)
+{
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
     has_temperature = has_temperature && s_temperature_enabled;
     has_water = has_water && s_water_enabled;
@@ -746,7 +806,8 @@ void pool_network_send_telemetry(bool has_temperature, float temperature,
     };
     xSemaphoreGive(s_relay_lock);
     if (!POOL_HTTP_ENABLED && !POOL_MQTT_ENABLED) return;
-    if (xQueueSend(s_pending_samples, &sample, 0) != pdTRUE) {
+    network_sample_t work = {.sample = sample, .measurement = measurement};
+    if (xQueueSend(s_pending_samples, &work, 0) != pdTRUE) {
         ESP_LOGW(TAG, "HTTP worker busy; sample dropped before persistence");
     }
 }
@@ -815,7 +876,8 @@ static void automation_task(void *arg)
                     ? s_readings.has_water : s_readings.has_temperature);
             float value = config->sensor == PUMP_SENSOR_WATER ? s_readings.water_raw : s_readings.temperature;
             bool was_running = runtime->running;
-            pump_auto_step(config, runtime, valid, value, now_us / 1000);
+            bool start_allowed = !s_mqtt_settings.interlock || !(i == 0 ? s_pump_out : s_pump_in);
+            pump_auto_step_allowed(config, runtime, valid, value, now_us / 1000, start_allowed);
             if (runtime->running == was_running) continue;
             esp_err_t err = relay_set(i == 0 ? RELAY_1 : RELAY_2, runtime->running);
             if (err != ESP_OK) {
@@ -838,16 +900,216 @@ static void automation_task(void *arg)
     }
 }
 
+static esp_err_t persist_mqtt_settings(const pool_mqtt_settings_t *settings, bool wifi_pending)
+{
+    stored_mqtt_settings_t stored = {.version = 2, .wifi_pending = wifi_pending, .settings = *settings};
+    esp_err_t err = nvs_set_blob(s_network_nvs, "mqtt_settings", &stored, sizeof(stored));
+    return err == ESP_OK ? nvs_commit(s_network_nvs) : err;
+}
+
+static void mqtt_receive(esp_mqtt_event_handle_t event)
+{
+    int result = pool_mqtt_rx_feed(&s_mqtt_rx, event->topic, event->topic_len, event->data,
+        event->data_len, event->total_data_len, event->current_data_offset, event->retain);
+    if (result < 0) { ESP_LOGW(TAG, "Rejected invalid/oversized MQTT frame"); return; }
+    if (result == 0) return;
+    // Relay and sensor commands stay responsive while a config worker scans Wi-Fi.
+    if (strncmp(s_mqtt_rx.topic, "smartpool/cmd/", 14) == 0 &&
+        strcmp(s_mqtt_rx.topic, "smartpool/cmd/wifi_scan") != 0) {
+        pool_mqtt_command_t command;
+        if (!pool_mqtt_decode(s_mqtt_rx.topic, s_mqtt_rx.payload, s_mqtt_rx.received,
+                              s_mqtt_rx.retained, &s_mqtt_settings, &command)) {
+            publish_status();
+            return;
+        }
+        esp_err_t err = ESP_ERR_INVALID_ARG;
+        if (command.kind == POOL_MQTT_PUMP_IN || command.kind == POOL_MQTT_PUMP_OUT) {
+            bool inlet = command.kind == POOL_MQTT_PUMP_IN;
+            err = set_pumps(inlet && command.on, !inlet && command.on, false, false, inlet ? 1 : 2);
+        } else if (command.kind == POOL_MQTT_TEMPERATURE || command.kind == POOL_MQTT_WATER) {
+            err = pool_network_local_control(command.kind == POOL_MQTT_TEMPERATURE ? "temperature" : "water", command.on);
+        }
+        if (err != ESP_OK) { ESP_LOGW(TAG, "MQTT control rejected: %s", esp_err_to_name(err)); publish_status(); }
+        return;
+    }
+    pool_mqtt_rx_t *message = malloc(sizeof(*message));
+    if (!message) return;
+    *message = s_mqtt_rx;
+    if (xQueueSend(s_mqtt_commands, &message, 0) != pdTRUE) {
+        free(message);
+        ESP_LOGW(TAG, "MQTT config queue full; request not applied");
+    }
+}
+
+static int mqtt_ack(const pool_mqtt_command_t *command, bool success, const char *message)
+{
+    cJSON *ack = cJSON_CreateObject();
+    if (!ack) return -1;
+    cJSON_AddStringToObject(ack, "req_id", command->req_id);
+    cJSON_AddStringToObject(ack, "action", command->action);
+    cJSON_AddStringToObject(ack, "status", success ? "SUCCESS" : "ERROR");
+    cJSON_AddStringToObject(ack, "message", message);
+    cJSON_AddStringToObject(ack, "water_unit", "adc");
+    xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+    cJSON_AddNumberToObject(ack, "interlock", s_mqtt_settings.interlock ? 1 : 0);
+    xSemaphoreGive(s_relay_lock);
+    char *payload = cJSON_PrintUnformatted(ack);
+    int id = payload && s_mqtt_connected ? esp_mqtt_client_enqueue(s_mqtt, "smartpool/ack", payload, 0, 1, 0, true) : -1;
+    free(payload);
+    cJSON_Delete(ack);
+    return id;
+}
+
+static void mqtt_scan(void)
+{
+    esp_err_t err = esp_wifi_scan_start(NULL, true);
+    if (err != ESP_OK) { ESP_LOGW(TAG, "MQTT Wi-Fi scan unavailable: %s", esp_err_to_name(err)); return; }
+    wifi_ap_record_t records[12];
+    uint16_t count = 12;
+    err = esp_wifi_scan_get_ap_records(&count, records);
+    if (err != ESP_OK) { esp_wifi_clear_ap_list(); return; }
+    cJSON *networks = cJSON_CreateArray();
+    for (int i = 0; networks && i < count; i++) {
+        char ssid[33];
+        memcpy(ssid, records[i].ssid, 32); ssid[32] = 0;
+        if (!ssid[0]) continue;
+        bool duplicate = false;
+        for (int j = 0; j < i; j++) if (memcmp(records[j].ssid, records[i].ssid, 32) == 0) duplicate = true;
+        if (duplicate) continue;
+        cJSON *entry = cJSON_CreateObject();
+        if (!entry) continue;
+        cJSON_AddStringToObject(entry, "ssid", ssid);
+        cJSON_AddNumberToObject(entry, "rssi", records[i].rssi);
+        cJSON_AddItemToArray(networks, entry);
+    }
+    char *payload = networks ? cJSON_PrintUnformatted(networks) : NULL;
+    if (payload && s_mqtt_connected) esp_mqtt_client_enqueue(s_mqtt, "smartpool/wifi/scan_result", payload, 0, 1, 0, true);
+    free(payload);
+    cJSON_Delete(networks);
+}
+
+static void mqtt_apply_wifi(void)
+{
+    // Called after the configuration ACK has been sent, outside the MQTT callback.
+    esp_err_t err = pool_network_set_station_enabled(false);
+    wifi_config_t station = {0};
+    memcpy(station.sta.ssid, s_mqtt_settings.ssid, strlen(s_mqtt_settings.ssid));
+    memcpy(station.sta.password, s_mqtt_settings.password, strlen(s_mqtt_settings.password));
+    if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_STA, &station);
+    if (err == ESP_OK) err = credentials_saved();
+    if (err == ESP_OK) {
+        s_mqtt_wifi_pending = false;
+        err = persist_mqtt_settings(&s_mqtt_settings, false);
+    }
+    if (err != ESP_OK) ESP_LOGE(TAG, "Saved MQTT Wi-Fi config pending: %s; local AP remains available", esp_err_to_name(err));
+}
+
+static void mqtt_command_task(void *arg)
+{
+    while (1) {
+        pool_mqtt_rx_t *message;
+        if (xQueueReceive(s_mqtt_commands, &message, portMAX_DELAY) != pdTRUE) continue;
+        pool_mqtt_command_t command;
+        bool valid = pool_mqtt_decode(message->topic, message->payload, message->received,
+                                       message->retained, &s_mqtt_settings, &command);
+        free(message);
+        if (!valid) { mqtt_ack(&command, false, command.error_message ? command.error_message : "Invalid topic, action or configuration values; nothing applied"); continue; }
+        if (command.kind == POOL_MQTT_SCAN) { mqtt_scan(); continue; }
+        if (command.kind != POOL_MQTT_CONFIG) continue;
+        if (pool_mqtt_config_is_stale(&command, &s_mqtt_settings)) { mqtt_ack(&command, false, "Stale configuration; send a newer timestamp; nothing applied"); continue; }
+        if ((command.fields & POOL_CFG_WIFI) && !POOL_WIFI_STA_ENABLED) {
+            mqtt_ack(&command, false, "Router Wi-Fi disabled in menuconfig; nothing applied"); continue;
+        }
+        bool wifi_changed = false;
+        if ((command.fields & POOL_CFG_WIFI) && (command.settings.timestamps[1] > s_mqtt_settings.timestamps[1] ||
+            strcmp(command.settings.ssid, s_mqtt_settings.ssid) || strcmp(command.settings.password, s_mqtt_settings.password))) {
+            wifi_config_t actual = {0}, requested = {0};
+            memcpy(requested.sta.ssid, command.settings.ssid, strlen(command.settings.ssid));
+            memcpy(requested.sta.password, command.settings.password, strlen(command.settings.password));
+            esp_err_t wifi_error = esp_wifi_get_config(WIFI_IF_STA, &actual);
+            if (wifi_error != ESP_OK) { mqtt_ack(&command, false, "Cannot read Wi-Fi settings; nothing applied"); continue; }
+            wifi_changed = memcmp(actual.sta.ssid, requested.sta.ssid, sizeof(actual.sta.ssid)) ||
+                memcmp(actual.sta.password, requested.sta.password, sizeof(actual.sta.password));
+        }
+        bool pending = s_mqtt_wifi_pending || wifi_changed;
+        bool changed = memcmp(&command.settings, &s_mqtt_settings, sizeof(s_mqtt_settings)) != 0;
+        esp_err_t err = changed ? persist_mqtt_settings(&command.settings, pending) : ESP_OK;
+        if (err != ESP_OK) { mqtt_ack(&command, false, "NVS save failed; configuration not activated"); continue; }
+        xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+        s_mqtt_settings = command.settings;
+        s_mqtt_wifi_pending = pending;
+        bool stopped_conflict = s_mqtt_settings.interlock && s_pump_in && s_pump_out;
+        if (stopped_conflict) {
+            // Serialize the mode change with every manual/automatic GPIO update.
+            esp_err_t stop_in = relay_set(RELAY_1, false);
+            esp_err_t stop_out = relay_set(RELAY_2, false);
+            err = stop_in != ESP_OK ? stop_in : stop_out;
+            s_pump_in = false; s_pump_out = false;
+            s_local_pump_in = false; s_local_pump_out = false;
+            for (int i = 0; i < 2; i++) {
+                pump_auto_pause(&s_auto_runtime[i]);
+                if (err != ESP_OK) {
+                    s_auto_runtime[i].reason = PUMP_AUTO_RELAY_ERROR;
+                    s_auto_runtime[i].last_stop = PUMP_AUTO_RELAY_ERROR;
+                }
+            }
+            ESP_LOGW(TAG, "Interlock enabled while both pumps ON; stopped both and paused automation");
+        }
+        xSemaphoreGive(s_relay_lock);
+        // Drain old PUBACK notifications before publishing this configuration ACK.
+        int published;
+        while (xQueueReceive(s_mqtt_published, &published, 0) == pdTRUE) {}
+        int id = mqtt_ack(&command, err == ESP_OK, err != ESP_OK
+            ? "Settings saved; relay stop failed. Check hardware before restarting pumps."
+            : stopped_conflict ? "Saved to NVS. Interlock enabled; both pumps stopped and automation paused."
+            : command.wifi_skipped ? "Saved to NVS. Empty Wi-Fi in Sync All skipped; current Wi-Fi unchanged. Interlock applied. Water thresholds use raw ADC 0-4095."
+            : "Saved to NVS. Interlock applied. Water thresholds use raw ADC 0-4095; app polling/broker settings do not alter firmware sampling or MQTT connection.");
+        if (stopped_conflict) pool_network_send_telemetry(false, 0, false, false, 0);
+        s_sample_requested = true;
+        publish_status();
+        if (pending) {
+            // Give QoS 1 ACK up to 3 s to reach the broker before changing Wi-Fi.
+            TickType_t begin = xTaskGetTickCount();
+            while (id >= 0 && (TickType_t)(xTaskGetTickCount() - begin) < pdMS_TO_TICKS(3000)) {
+                if (xQueueReceive(s_mqtt_published, &published, pdMS_TO_TICKS(100)) == pdTRUE && published == id) break;
+            }
+            mqtt_apply_wifi();
+        }
+    }
+}
+
 static void telemetry_task(void *arg)
 {
     while (1) {
-        telemetry_sample_t sample;
-        if (xQueueReceive(s_pending_samples, &sample, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        network_sample_t work;
+        if (xQueueReceive(s_pending_samples, &work, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            telemetry_sample_t sample = work.sample;
             sample.id = ((uint64_t)s_boot_nonce << 32) | ++s_sample_counter;
             char json[320];
             sample_to_json(&sample, json, sizeof(json), true);
-            if (s_mqtt_connected) {
-                esp_mqtt_client_enqueue(s_mqtt, TOPIC_TELEMETRY, json, 0, 1, 0, true);
+            if (s_mqtt_connected && work.measurement) {
+                // Android replaces both readings on every telemetry frame. State-only events use status.
+                cJSON *telemetry = cJSON_Parse(json);
+                if (telemetry) {
+                    cJSON_AddStringToObject(telemetry, "water_unit", "adc");
+                    if (sample.flags & TELEMETRY_HAS_TEMPERATURE) {
+                        xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+                        int temperature_state = sample.temperature < s_mqtt_settings.temp_min ? 0
+                            : sample.temperature > s_mqtt_settings.temp_max ? 2 : 1;
+                        xSemaphoreGive(s_relay_lock);
+                        cJSON_AddNumberToObject(telemetry, "temperature_state", temperature_state);
+                    }
+                }
+                if (telemetry && (sample.flags & TELEMETRY_HAS_WATER)) {
+                    xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+                    int water_state = pool_mqtt_water_state(sample.water_raw, &s_mqtt_settings);
+                    xSemaphoreGive(s_relay_lock);
+                    cJSON_ReplaceItemInObjectCaseSensitive(telemetry, "muc_nuoc", cJSON_CreateNumber(water_state));
+                }
+                char *payload = telemetry ? cJSON_PrintUnformatted(telemetry) : NULL;
+                if (payload) esp_mqtt_client_enqueue(s_mqtt, TOPIC_TELEMETRY, payload, 0, 1, 0, true);
+                free(payload);
+                cJSON_Delete(telemetry);
             }
             if (!POOL_HTTP_ENABLED) continue;
             if (telemetry_queue_count() == 0 && s_wifi_connected && post_sample(&sample)) {

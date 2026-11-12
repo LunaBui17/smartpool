@@ -170,8 +170,45 @@ static void test_independent_channels_and_manual_pause(void)
     assert(!b.running);
 }
 
+static void test_interlocked_automation(void)
+{
+    pump_auto_config_t inlet = water_rule(), outlet = water_rule();
+    inlet.stop_mode = PUMP_STOP_DURATION;
+    outlet.stop_mode = PUMP_STOP_DURATION;
+    outlet.start_below = false;
+    outlet.start_threshold = 3000;
+    pump_auto_runtime_t a, b;
+    pump_auto_reset(&a);
+    pump_auto_reset(&b);
+    pump_auto_step_allowed(&inlet, &a, true, 1000, 1000, true);
+    pump_auto_step_allowed(&outlet, &b, true, 3500, 1000, !a.running);
+    assert(a.running && !b.running && b.armed && b.reason == PUMP_AUTO_INTERLOCK);
+    pump_auto_step_allowed(&outlet, &b, true, 3500, 10000, !a.running);
+    assert(!b.running && b.armed); // Waiting must not consume its run-time budget or trigger.
+    pump_auto_step_allowed(&inlet, &a, true, 1000, 10000, false);
+    assert(!a.running && a.reason == PUMP_AUTO_DURATION_DONE); // Stop checks always run.
+    pump_auto_step_allowed(&outlet, &b, true, 3500, 10250, !a.running);
+    assert(b.running && b.started_ms == 10250);
+    pump_auto_step_allowed(&outlet, &b, true, 3500, 13249, false);
+    assert(b.running);
+    pump_auto_step_allowed(&outlet, &b, true, 3500, 13250, false);
+    assert(!b.running && b.reason == PUMP_AUTO_DURATION_DONE);
+    pump_auto_step_allowed(&outlet, &b, true, 3500, 13500, true);
+    assert(!b.running && b.reason == PUMP_AUTO_WAIT_RESET);
+    pump_auto_reset(&b);
+    pump_auto_step_allowed(&outlet, &b, true, 3500, 14000, false);
+    pump_auto_step_allowed(&outlet, &b, false, 3500, 14250, false);
+    assert(!b.running && b.reason == PUMP_AUTO_WAIT_SENSOR);
+    pump_auto_step_allowed(&outlet, &b, true, 3500, 14500, true);
+    assert(b.running);
+    pump_auto_step_allowed(&outlet, &b, false, 3500, 14750, false);
+    assert(!b.running && b.reason == PUMP_AUTO_SENSOR_ERROR);
+    assert(pump_auto_reason_name(PUMP_AUTO_INTERLOCK)[0] == 'i');
+}
+
 int main(void)
 {
+    test_interlocked_automation();
     test_validation();
     test_threshold_hysteresis();
     test_timer_and_rearm();

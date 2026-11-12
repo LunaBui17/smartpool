@@ -13,13 +13,10 @@ static gpio_num_t relay_gpio(relay_channel_t channel)
     return channel == RELAY_1 ? CONFIG_RELAY_1_GPIO : CONFIG_RELAY_2_GPIO;
 }
 
-static int relay_level(bool on)
+static int relay_output_level(relay_channel_t channel, bool on)
 {
-#if CONFIG_RELAY_ACTIVE_HIGH
-    return on ? 1 : 0;
-#else
-    return on ? 0 : 1;
-#endif
+    int active = channel == RELAY_1 ? CONFIG_RELAY_1_ACTIVE_LEVEL : CONFIG_RELAY_2_ACTIVE_LEVEL;
+    return on ? active : !active;
 }
 
 esp_err_t relay_init(void)
@@ -38,12 +35,7 @@ esp_err_t relay_init(void)
         if (err != ESP_OK) return err;
     }
 
-    // Set both output latches to the inactive level before enabling the pins.
-    esp_err_t err = gpio_set_level(CONFIG_RELAY_1_GPIO, relay_level(false));
-    if (err != ESP_OK) {
-        return err;
-        return err;
-    }
+    if (!pin_mask) return ESP_OK;
 
     const gpio_config_t config = {
         .pin_bit_mask = pin_mask,
@@ -52,6 +44,7 @@ esp_err_t relay_init(void)
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
+    return gpio_config(&config);
 }
 
 esp_err_t relay_set(relay_channel_t channel, bool on)
@@ -59,5 +52,6 @@ esp_err_t relay_set(relay_channel_t channel, bool on)
     if (channel != RELAY_1 && channel != RELAY_2) {
         return ESP_ERR_INVALID_ARG;
     }
-    return gpio_set_level(relay_gpio(channel), relay_level(on));
+    if (!relay_enabled(channel)) return on ? ESP_ERR_NOT_SUPPORTED : ESP_OK;
+    return gpio_set_level(relay_gpio(channel), relay_output_level(channel, on));
 }

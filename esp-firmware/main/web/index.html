@@ -36,7 +36,7 @@
       <section id="controls"><div class="section-title"><h2>Điều khiển thiết bị</h2><button class="button stop" id="stop" disabled>Dừng tất cả</button></div><div class="pump-grid">
         <article class="card pump" id="relay1-card"><span class="icon" aria-hidden="true">↘</span><div class="details"><h3>Bơm cấp nước</h3><p class="pump-state" id="relay1-label">Đang kiểm tra</p></div><button class="switch" role="switch" aria-label="Bơm cấp nước" aria-checked="false" data-control="relay1" disabled></button></article>
         <article class="card pump" id="relay2-card"><span class="icon" aria-hidden="true">↗</span><div class="details"><h3>Bơm xả nước</h3><p class="pump-state" id="relay2-label">Đang kiểm tra</p></div><button class="switch" role="switch" aria-label="Bơm xả nước" aria-checked="false" data-control="relay2" disabled></button></article>
-      </div><p class="hint">Bơm cấp và bơm xả hoạt động độc lập, có thể bật đồng thời.</p></section>
+      </div><p class="hint" id="interlock-note">Đang đọc chế độ interlock.</p></section>
       <section id="automation"><div class="section-title"><h2>Thiết lập bơm tự động</h2><span class="small">Lưu trên thiết bị</span></div><div class="automation-grid" id="auto-forms"></div><p class="hint">Mực nước dùng giá trị ADC 0–4095, chưa quy đổi sang cm hoặc %. Cần đo và hiệu chuẩn ngưỡng theo cảm biến của bạn. Cấu hình chỉ có hiệu lực sau khi bấm Lưu &amp; áp dụng.</p><p class="hint">Lệnh tay từ web/MQTT tạm dừng tự động của riêng bơm đó đến khi lưu áp dụng lại hoặc khởi động lại. Muốn tắt tự động qua lần khởi động lại, bỏ chọn Tự động và lưu. Bơm tự động dừng nếu mất dữ liệu cảm biến; hai bơm vẫn có thể chạy đồng thời.</p></section>
       <section class="card network" id="network"><div class="card-head"><div><p class="eyebrow">Kết nối của thiết bị</p><h2>Wi-Fi &amp; đồng bộ</h2></div><span class="badge" id="mode">Cục bộ</span></div>
         <div class="row"><div><h3>Kết nối Wi-Fi nhà</h3><p class="small" id="wifi-detail">Đang tải thông tin kết nối</p></div><button class="switch" id="station" role="switch" aria-label="Kết nối Wi-Fi nhà" aria-checked="false" disabled></button></div>
@@ -74,7 +74,9 @@
       }
     }
     function renderAutomation(s){
+      $('interlock-note').textContent=s.interlock?'Interlock đang bật: chỉ một bơm được chạy. Có thể đổi chế độ từ app Android.':'Interlock đang tắt: hai bơm có thể chạy đồng thời.';
       const reasons={disabled:'Đang dùng điều khiển tay.',waiting_sensor:'Chờ số đo cảm biến hợp lệ.',ready:'Đang chờ điều kiện kích hoạt.',waiting_reset:'Chờ điều kiện kích hoạt hết trước khi bơm lại.',duration_done:'Đã đủ thời gian bơm.',target_reached:'Đã đạt ngưỡng dừng.',timeout:'Đã hết thời gian tối đa.',sensor_error:'Đã dừng do mất dữ liệu cảm biến.',manual:'Đã tạm dừng tự động do lệnh tay. Lưu & áp dụng để tiếp tục.',relay_error:'Không điều khiển được relay. Kiểm tra thiết bị trước khi áp dụng lại.'};
+      reasons.interlock='Đang chờ bơm còn lại dừng vì interlock đang bật.';
       for(const i of [1,2]){
         const rule=s.automation?.[i-1];
         if(!rule){serviceBadge('auto'+i+'-status','Chưa có cấu hình');continue;}

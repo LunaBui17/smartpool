@@ -1,0 +1,21 @@
+{
+  "action": "CONFIG_UPDATE_ALL",
+  "req_id": "req_all_1794468306",
+  "timestamp": 1794468306,
+  "device": {"id": "ESP32S3_SMARTPOOL_01", "name": "Hệ thống Bể bơi Thông minh", "location": "Bể bơi sân vườn"},
+  "wifi": {"ssid": "", "password": ""},
+  "thresholds": {"temp_min": 20, "temp_max": 35, "water_min": 20, "water_max": 85, "interlock": 1},
+  "mqtt": {
+    "broker": "ssl://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883",
+    "port": 8883,
+    "topic_config_thresholds": "smartpool/config/thresholds",
+    "topic_config_wifi": "smartpool/config/wifi",
+    "topic_config_device": "smartpool/config/device",
+    "topic_telemetry": "smartpool/telemetry",
+    "topic_status": "smartpool/status",
+    "topic_cmd_pump_in": "smartpool/cmd/bom_vao",
+    "topic_cmd_pump_out": "smartpool/cmd/bom_ra"
+  },
+  "http": {"api_url": "http://192.168.60.112/pool_api.php", "poll_interval_s": 3},
+  "control_mode": "mqtt"
+}

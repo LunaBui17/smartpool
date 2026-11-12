@@ -67,7 +67,7 @@ Publish an exact one-byte payload: `1` means ON/enabled; `0` means OFF/disabled.
 
 Pump commands must use retain=false. Retained ON messages delivered after subscription are ignored, preventing an old command from starting a pump after reconnect. Sensor commands may be retained to reapply the desired measurement settings after reconnect or reboot. Local sensor enable settings are otherwise reset to enabled at boot.
 
-Both pumps may run simultaneously. Each MQTT topic changes only its own relay, preserving the other relay state. Loss of Wi-Fi or MQTT stops remote-owned pumps; a pump explicitly operated from the local dashboard continues independently of the broker. The local dashboard can enable independent sensor-based automation for either pump. Manual relay commands pause that channel's automation for the current boot.
+Both pumps may run simultaneously when interlock is OFF (the firmware default). Android `interlock:1` in thresholds or Sync All persists a mutual-exclusion rule for MQTT, local web, automatic control and boot; `interlock:0` permits concurrent operation. Each MQTT topic changes only its own relay, preserving the other relay state. Loss of Wi-Fi or MQTT stops remote-owned pumps; a pump explicitly operated from the local dashboard continues independently of the broker. The local dashboard can enable independent sensor-based automation for either pump. Manual relay commands pause that channel's automation for the current boot.
 
 Subscribe to `smartpool/status` for retained state (QoS 1):
 
@@ -75,11 +75,11 @@ Subscribe to `smartpool/status` for retained state (QoS 1):
 {"online":1,"bom_vao_control":0,"bom_ra_control":0,"temperature_enabled":1,"water_level_enabled":1}
 ```
 
-The MQTT last will reports only `online:0`. Relay and sensor fields are omitted because they may still be controlled locally after the broker disconnects. `smartpool/telemetry` also publishes sample data without retain; unavailable readings are JSON null on MQTT.
+The MQTT last will reports only `online:0`. Relay and sensor fields are omitted because they may still be controlled locally after the broker disconnects. `smartpool/telemetry` publishes measurement samples without retain; unavailable readings are JSON null on MQTT. State-only changes use MQTT status so Android does not clear its sensor display. MQTT water states are 0/1/2 (below/in range/above the saved raw ADC bounds); HTTP storage retains its existing binary water contract.
 
 ## HTTP storage contract
 
-The external HTTP API is used for storage uploads only; remote commands come from MQTT. The separate on-device web server provides local control regardless of the HTTP storage switch. The previous HTTP command polling mode is removed. Configure the existing backend endpoint with `CONFIG_POOL_API_URL`.
+The external HTTP API is used for storage uploads only; remote commands come from MQTT. The separate on-device web server provides local control regardless of the HTTP storage switch. The previous HTTP command polling mode is removed. Configure the initial backend endpoint with `CONFIG_POOL_API_URL`; Android MQTT `UPDATE_HTTP` can persistently override the upload URL.
 
 The firmware POSTs `application/json` on each measurement interval, including when both sensors are disabled or unavailable. It also creates a state-only sample when a command changes device state or the MQTT connection changes. Example payload:
 
@@ -110,7 +110,7 @@ Feature configuration checks (in an ESP-IDF terminal, after building):
 python tests/check_feature_config.py
 ```
 
-This checks 512 Kconfig combinations and uses the target compiler to check six changed source files under ten mixed configurations, including all four per-channel relay polarity combinations.
+This checks 512 Kconfig combinations and uses the target compiler to check seven changed source files under ten mixed configurations, including all four per-channel relay polarity combinations.
 
 On hardware, verify relays start in the selected initial state (both OFF by default) and follow their MQTT topics, both pumps can run simultaneously and switching either OFF leaves the other running, and disconnecting MQTT/Wi-Fi stops remote-owned pumps. Toggle both sensor topics and check that readings stop/resume while HTTP continues reporting enable and relay state. Disconnect the API, change states, restore the API, and verify queued samples preserve the original states and deduplicate on retry. Test ADC raw values above/below the calibrated threshold and DS18B20 removal/reconnection.
 
@@ -154,7 +154,7 @@ Open **Automatic pump setup** on the local dashboard. Each pump has a separate e
 - Time limits and sensor validity are evaluated every 250 ms in a separate task. Sensor thresholds are evaluated against the existing measurement cadence (60 seconds idle / 5 seconds pumping by default); the timer does not wait for a sensor measurement to stop a pump.
 - **Save and apply** persists both rule configurations atomically to NVS, stops the selected automatic/transitioning channel, requests a fresh sample, and rearms that channel. Enabled rules wait for a fresh reading after boot. Automation takes precedence over an initial-ON boot setting for that channel until a valid reading is available.
 - Manual web/MQTT relay commands pause automation for the target channel, including OFF commands. Stop-all and explicit Wi-Fi mode/credential transitions pause both. Parameters and enable settings remain saved; save/apply to resume, or reboot to resume an enabled saved rule. To keep automation disabled across reboot, uncheck it and save. Manual runs are not subject to the automatic rule's timer/threshold.
-- Automatic runs continue without MQTT or router connectivity. Both pumps may operate simultaneously. A disabled relay or sensor in menuconfig cannot be used to enable a rule; disabling a sensor at runtime stops any automatic run that depends on it.
+- Automatic runs continue without MQTT or router connectivity. Both pumps may operate simultaneously when interlock is OFF; otherwise a blocked automatic pump waits without consuming its trigger or run-time budget. A disabled relay or sensor in menuconfig cannot be used to enable a rule; disabling a sensor at runtime stops any automatic run that depends on it.
 
 Example: inlet starts when water ADC <=1500, stops at >=2500, with a 300-second maximum; outlet may independently use temperature >=30 C and stop at <=28 C, or run for a fixed duration. Defaults are examples only and remain OFF until explicitly enabled.
 
@@ -174,3 +174,21 @@ cc -std=c11 -Wall -Wextra -Werror -Imain main/pump_auto.c tests/test_pump_auto.c
 ```
 
 On Windows the same test can be compiled/run in Ubuntu WSL. The dashboard test covers both forms, unsaved edits across polling, separate sensor choices, invalid hysteresis, timed mode, manual override, stop-all, and rearming. Board tests are still needed for physical relay operation, sensor disconnection, ADC calibration, and NVS persistence across power cycles.
+
+
+## Android MQTT configuration and review
+
+See [the Android compatibility review](docs/MQTT_ANDROID_REVIEW.md) for the actual app payloads, ACK handling, retained replay behavior, raw ADC units, and remaining app-side issues (sensor timeout, HTTP control mode, and ACK subscriptions).
+
+The firmware now accepts `smartpool/config/thresholds`, `/wifi`, `/device`, `/http`, and `smartpool/config` (`CONFIG_UPDATE_ALL`), saves validated settings in NVS, and publishes `smartpool/ack` with the same `req_id`, expected `action`, and explicit `SUCCESS`/`ERROR`. ACKs and scan results are not retained. Wi-Fi scanning runs outside the MQTT callback. HTTP URL changes preserve the configured sampling intervals and storage-only role. Android alert thresholds classify MQTT readings and do not modify per-pump automation rules.
+
+
+## Android interlock switch
+
+`interlock:0/1` is applied from `smartpool/config/thresholds` and the `thresholds` object in Sync All. Omission preserves the current setting. It is stored in NVS; MQTT status/ACK report its actual value, and local `/api/status` returns boolean `interlock`. The dashboard shows the current mode.
+
+When ON, a manual command to start the second pump is rejected and the first pump keeps running. Automatic starts wait for the other channel to stop; existing run timers and sensor-stop checks continue. When both automatic rules trigger together, channel 1 is evaluated first. If interlock is enabled while both pumps are already ON, both are stopped and automation is paused until save/apply or reboot. A saved interlock takes precedence over a BOTH_ON boot setting, keeping both outputs OFF at boot.
+
+Version 1 MQTT settings migrate without losing Wi-Fi, HTTP or device values. Their interlock defaults OFF until a retained/new threshold configuration arrives; that group's old timestamp is reset once because v1 ignored the field. New settings use version 2, in the same blob layout. Live updates in one second are accepted in receipt order; retained replays with the same timestamp and conflicting values remain rejected.
+
+Sync All may include `"wifi":{"ssid":"","password":""}` when Android has no saved router credentials. That exact blank section is skipped without modifying Wi-Fi or its timestamp; device, thresholds and HTTP settings still apply. Standalone `UPDATE_WIFI` with an empty SSID remains invalid. The MQTT regression test includes the reported Android payload in `tests/fixtures/sync_all_empty_wifi.json`.

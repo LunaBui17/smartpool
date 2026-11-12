@@ -8,7 +8,7 @@ typedef enum { PUMP_STOP_DURATION, PUMP_STOP_THRESHOLD } pump_stop_mode_t;
 typedef enum {
     PUMP_AUTO_DISABLED, PUMP_AUTO_WAIT_SENSOR, PUMP_AUTO_READY, PUMP_AUTO_RUNNING,
     PUMP_AUTO_WAIT_RESET, PUMP_AUTO_DURATION_DONE, PUMP_AUTO_TARGET_REACHED,
-    PUMP_AUTO_TIMEOUT, PUMP_AUTO_SENSOR_ERROR, PUMP_AUTO_MANUAL, PUMP_AUTO_RELAY_ERROR,
+    PUMP_AUTO_TIMEOUT, PUMP_AUTO_SENSOR_ERROR, PUMP_AUTO_MANUAL, PUMP_AUTO_RELAY_ERROR, PUMP_AUTO_INTERLOCK,
 } pump_auto_reason_t;
 
 typedef struct {
@@ -36,3 +36,7 @@ void pump_auto_pause(pump_auto_runtime_t *runtime);
 void pump_auto_step(const pump_auto_config_t *config, pump_auto_runtime_t *runtime,
                     bool sensor_valid, float value, uint64_t now_ms);
 const char *pump_auto_reason_name(pump_auto_reason_t reason);
+
+// Block only new starts; running pumps still evaluate sensor validity and stop limits.
+void pump_auto_step_allowed(const pump_auto_config_t *config, pump_auto_runtime_t *runtime,
+                            bool sensor_valid, float value, uint64_t now_ms, bool start_allowed);

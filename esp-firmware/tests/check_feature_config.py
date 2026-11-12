@@ -97,7 +97,7 @@ with tempfile.TemporaryDirectory(prefix="feature-check-", dir=ROOT / "build") as
         for entry in entries:
             source = Path(entry["file"])
             if source.parent != ROOT / "main" or source.name not in {
-                "main.c", "relay.c", "water_level.c", "pool_network.c", "wifi_setup.c", "pump_auto.c"
+                "main.c", "relay.c", "water_level.c", "pool_network.c", "wifi_setup.c", "pump_auto.c", "pool_mqtt_protocol.c"
             }:
                 continue
             count = ctypes.c_int()
@@ -110,4 +110,4 @@ with tempfile.TemporaryDirectory(prefix="feature-check-", dir=ROOT / "build") as
             args.insert(1, "-I" + directory.as_posix())
             args.insert(1, "-fsyntax-only")
             subprocess.run(args, cwd=entry["directory"], check=True)
-print("PASS: target compiler checks for 10 mixed configurations (including all four relay polarities) across 6 source files")
+print("PASS: target compiler checks for 10 mixed configurations (including all four relay polarities) across 7 source files")
