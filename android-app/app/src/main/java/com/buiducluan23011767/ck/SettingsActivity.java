@@ -38,6 +38,8 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -90,6 +92,7 @@ public class SettingsActivity extends AppCompatActivity {
     private EditText edtHttpUrl;
     private EditText edtHttpPoll;
     private Spinner spnControlMode;
+    private Button btnSaveHttpConfig;
 
     // Các nút tổng
     private Button btnSaveAndPublishMqtt;
@@ -166,6 +169,7 @@ public class SettingsActivity extends AppCompatActivity {
         edtHttpUrl = findViewById(R.id.edtHttpUrl);
         edtHttpPoll = findViewById(R.id.edtHttpPoll);
         spnControlMode = findViewById(R.id.spnControlMode);
+        btnSaveHttpConfig = findViewById(R.id.btnSaveHttpConfig);
 
         btnSaveAndPublishMqtt = findViewById(R.id.btnSaveAndPublishMqtt);
         btnPreviewJson = findViewById(R.id.btnPreviewJson);
@@ -298,6 +302,8 @@ public class SettingsActivity extends AppCompatActivity {
 
         // 6. Nút Lưu riêng cho MQTT Broker & Tài khoản
         btnSaveMqttConfig.setOnClickListener(v -> saveMqttBrokerAndCredentials());
+
+        btnSaveHttpConfig.setOnClickListener(v -> saveAndPublishHttp());
 
         // 7. Nút Gửi toàn bộ cấu hình đồng bộ (ALL)
         btnSaveAndPublishMqtt.setOnClickListener(v -> saveAndPublishAll());
@@ -670,6 +676,52 @@ public class SettingsActivity extends AppCompatActivity {
         txtSettingsMqttStatus.setTextColor(android.graphics.Color.rgb(217, 119, 6));
 
         connectHiveMq();
+    }
+
+    private void saveAndPublishHttp() {
+        String httpUrl = edtHttpUrl.getText().toString().trim();
+        try {
+            URI uri = new URI(httpUrl);
+            if ((!"http".equalsIgnoreCase(uri.getScheme())
+                    && !"https".equalsIgnoreCase(uri.getScheme())) || uri.getHost() == null) {
+                edtHttpUrl.setError("Nhập URL HTTP hoặc HTTPS hợp lệ");
+                return;
+            }
+        } catch (URISyntaxException error) {
+            edtHttpUrl.setError("URL HTTP không hợp lệ");
+            return;
+        }
+
+        int interval;
+        try {
+            interval = Integer.parseInt(edtHttpPoll.getText().toString().trim());
+            if (interval <= 0) {
+                edtHttpPoll.setError("Chu kỳ phải lớn hơn 0 giây");
+                return;
+            }
+        } catch (NumberFormatException error) {
+            edtHttpPoll.setError("Nhập chu kỳ bằng số nguyên dương");
+            return;
+        }
+
+        if (mqttClient == null || !mqttClient.isConnected()) {
+            Toast.makeText(this, "Chưa kết nối MQTT. Hãy kết nối rồi gửi lại cấu hình HTTP.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        config.setHttpApiUrl(httpUrl);
+        config.setHttpPollIntervalSec(interval);
+        config.setControlMode(spnControlMode.getSelectedItemPosition() == 1 ? "http" : "mqtt");
+
+        String reqId = "req_http_" + UUID.randomUUID();
+        publishWithAckProgress(
+                "Đang gửi cấu hình HTTP",
+                config.getTopicConfigHttp(),
+                config.buildHttpJson(reqId).toString(),
+                reqId,
+                "Cấu hình HTTP"
+        );
     }
 
     /**

@@ -398,9 +398,16 @@ public class AppConfig {
      * Topic đích: smartpool/config/http
      */
     public JSONObject buildHttpJson() {
+        return buildHttpJson(null);
+    }
+
+    public JSONObject buildHttpJson(String reqId) {
         JSONObject obj = new JSONObject();
         try {
             obj.put("action", "UPDATE_HTTP");
+            if (reqId != null && !reqId.trim().isEmpty()) {
+                obj.put("req_id", reqId);
+            }
             obj.put("timestamp", System.currentTimeMillis() / 1000L);
             obj.put("api_url", getHttpApiUrl());
             obj.put("poll_interval_s", getHttpPollIntervalSec());
