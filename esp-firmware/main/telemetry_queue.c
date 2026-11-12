@@ -4,7 +4,9 @@
 
 #include "nvs.h"
 
-#define QUEUE_VERSION 1
+#define QUEUE_VERSION 2
+
+_Static_assert(sizeof(telemetry_sample_t) == 16, "Keep the persisted v1 sample layout");
 
 typedef struct {
     uint32_t version;
@@ -35,11 +37,22 @@ esp_err_t telemetry_queue_init(void)
         memset(&s_queue, 0, sizeof(s_queue));
         s_queue.version = QUEUE_VERSION;
     } else if (err != ESP_OK || size != sizeof(s_queue) ||
-               s_queue.version != QUEUE_VERSION ||
+               (s_queue.version != 1 && s_queue.version != QUEUE_VERSION) ||
                s_queue.head >= TELEMETRY_QUEUE_CAPACITY ||
                s_queue.count > TELEMETRY_QUEUE_CAPACITY) {
         nvs_close(s_nvs);
         return err == ESP_OK ? ESP_ERR_INVALID_STATE : err;
+    }
+    if (s_queue.version == 1) {
+        for (unsigned int i = 0; i < TELEMETRY_QUEUE_CAPACITY; i++) {
+            s_queue.samples[i].status_valid = 0;
+        }
+        s_queue.version = QUEUE_VERSION;
+        err = save_queue();
+        if (err != ESP_OK) {
+            nvs_close(s_nvs);
+            return err;
+        }
     }
     s_ready = true;
     return ESP_OK;

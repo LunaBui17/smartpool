@@ -1,11 +1,34 @@
+menu "Sensor Sampling"
+
+    config POOL_SENSOR_IDLE_INTERVAL_MS
+        int "Sensor interval when both pumps are OFF (ms)"
+        range 1000 3600000
+        default 60000
+        help
+            Temperature and water level measurement/upload interval while idle.
+
+    config POOL_SENSOR_PUMP_INTERVAL_MS
+        int "Sensor interval when either pump is ON (ms)"
+        range 1000 POOL_SENSOR_IDLE_INTERVAL_MS
+        default 5000
+        help
+            Applies when pump in, pump out, or both pumps are running.
+            Pump commands and state notifications are processed immediately.
+
+endmenu
+
 menu "DS18B20 Configuration"
+
+    config POOL_TEMPERATURE_ENABLED
+        bool "Enable DS18B20 temperature sensors"
+        default y
 
     orsource "$IDF_PATH/examples/common_components/env_caps/$IDF_TARGET/Kconfig.env_caps"
 
     config DS18B20_GPIO
         int "1-Wire data GPIO"
         range ENV_GPIO_RANGE_MIN ENV_GPIO_OUT_RANGE_MAX
-        default 15
+        default 9
         help
             GPIO connected to the DS18B20 DQ pin. Add an external 4.7 kOhm
             pull-up resistor between DQ and 3.3 V.
@@ -17,23 +40,20 @@ menu "DS18B20 Configuration"
         help
             Maximum number of sensors to discover on the shared 1-Wire bus.
 
-    config DS18B20_READ_INTERVAL_MS
-        int "Temperature read interval (ms)"
-        range 1000 3600000
-        default 1000
-        help
-            Delay between temperature readings in milliseconds.
-
 endmenu
 
 menu "Water Level Configuration"
 
+    config POOL_WATER_ENABLED
+        bool "Enable analog water level sensor"
+        default y
+
     config WATER_LEVEL_GPIO
         int "Analog water level GPIO"
         range 1 20
-        default 18
+        default 10
         help
-            Analog output of the water level sensor. GPIO18 is ADC2 channel 7
+            Analog output of the water level sensor. GPIO10 is ADC1 channel 9
             on ESP32-S3. Keep the sensor output at or below 3.3 V.
 
     config WATER_LOW_THRESHOLD
@@ -48,6 +68,25 @@ endmenu
 
 menu "Smart Pool Network"
 
+    config POOL_WIFI_STA_ENABLED
+        bool "Enable router Wi-Fi connection (STA)"
+        default y
+        help
+            Disable to use the local SmartPool access point only.
+            The local web dashboard stays available even when MQTT/HTTP are off.
+
+    config POOL_MQTT_ENABLED
+        bool "Enable MQTT control and status"
+        default y
+
+    config POOL_NTP_SERVER
+        string "Primary NTP server (hostname or LAN IP)"
+        default "pool.ntp.org"
+
+    config POOL_NTP_BACKUP_SERVER
+        string "Backup NTP server"
+        default "time.cloudflare.com"
+
     config POOL_SETUP_AP_SSID
         string "Setup access point SSID"
         default "SmartPool-Setup"
@@ -59,43 +98,82 @@ menu "Smart Pool Network"
             Use 8 to 63 characters. Users connect to this access point and
             open http://192.168.4.1 to enter their home Wi-Fi credentials.
 
+    config POOL_HTTP_ENABLED
+        bool "Enable HTTP telemetry storage"
+        default y
+
     config POOL_API_URL
         string "XAMPP API URL"
-        default "http://192.168.10.214/pool_api/pool_api.php"
+        default "http://192.168.60.112/pool_api.php"
 
     config POOL_MQTT_URI
         string "MQTT broker URI"
         default "mqtts://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883"
 
-    choice POOL_CONTROL_TRANSPORT
-        prompt "Pump control transport"
-        default POOL_CONTROL_MQTT
-        help
-            Select whether pump commands come from HiveMQ Cloud or the
-            XAMPP API. Telemetry continues to use HTTP in either mode.
-
-        config POOL_CONTROL_MQTT
-            bool "MQTT (HiveMQ Cloud)"
-
-        config POOL_CONTROL_HTTP
-            bool "HTTP polling (XAMPP)"
-    endchoice
-
 endmenu
 
 menu "Relay Configuration"
 
+    config POOL_RELAY_1_ENABLED
+        bool "Enable relay 1"
+        default y
+
+    config POOL_RELAY_2_ENABLED
+        bool "Enable relay 2"
+        default y
+
+    config RELAY_1_ACTIVE_LEVEL
+        int "Relay 1 ON GPIO level (0=LOW, 1=HIGH)"
+        range 0 1
+        default 1
+        help
+            Match the relay module input polarity. OFF uses the opposite level.
+            This setting applies to boot state, MQTT and local web commands.
+
+    config RELAY_2_ACTIVE_LEVEL
+        int "Relay 2 ON GPIO level (0=LOW, 1=HIGH)"
+        range 0 1
+        default 1
+        help
+            Match the relay module input polarity. OFF uses the opposite level.
+            This setting applies to boot state, MQTT and local web commands.
+
+    choice POOL_RELAY_INITIAL_STATE
+        prompt "Initial relay state at boot"
+        default POOL_RELAY_INITIAL_OFF
+        help
+            Applied after saved automation settings are loaded, before Wi-Fi/MQTT.
+            Automatic channels stay OFF until a fresh sensor sample is available.
+            Both pumps may run simultaneously. Network disconnection stops
+            remote-controlled channels; local web channels remain independent.
+
+        config POOL_RELAY_INITIAL_OFF
+            bool "Both relays OFF"
+
+        config POOL_RELAY_INITIAL_1_ON
+            bool "Relay 1 ON, relay 2 OFF"
+            depends on POOL_RELAY_1_ENABLED
+
+        config POOL_RELAY_INITIAL_2_ON
+            bool "Relay 1 OFF, relay 2 ON"
+            depends on POOL_RELAY_2_ENABLED
+
+        config POOL_RELAY_INITIAL_BOTH_ON
+            bool "Both relays ON"
+            depends on POOL_RELAY_1_ENABLED && POOL_RELAY_2_ENABLED
+    endchoice
+
     config RELAY_1_GPIO
         int "Relay 1 GPIO"
         range ENV_GPIO_RANGE_MIN ENV_GPIO_OUT_RANGE_MAX
-        default 16
+        default 15
         help
             GPIO connected to relay module input IN1.
 
     config RELAY_2_GPIO
         int "Relay 2 GPIO"
         range ENV_GPIO_RANGE_MIN ENV_GPIO_OUT_RANGE_MAX
-        default 17
+        default 16
         help
             GPIO connected to relay module input IN2.
 

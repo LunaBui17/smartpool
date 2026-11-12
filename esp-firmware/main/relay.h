@@ -8,8 +8,9 @@ typedef enum {
     RELAY_2,
 } relay_channel_t;
 
-// Call once at startup. Both relays are initialized in the OFF state.
+// Configure enabled outputs OFF. Network initialization applies boot states
+// after loading automation settings, before Wi-Fi starts.
 esp_err_t relay_init(void);
 
-// Set one relay ON or OFF. The module inputs are active LOW.
+// Set one relay ON or OFF. Input polarity is selected per channel in menuconfig. Disabled channels reject ON.
 esp_err_t relay_set(relay_channel_t channel, bool on);

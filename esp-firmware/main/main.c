@@ -11,13 +11,12 @@
 #include "ds18b20.h"
 #include "pool_network.h"
 #include "relay.h"
-#include "sdkconfig.h"
+#include "pool_features.h"
 #include "water_level.h"
 #include <stdint.h>
 
 #define MAX_SENSOR_FAILURES 3
 #define MAX_SEARCH_ATTEMPTS 32
-#define SENSOR_RESCAN_INTERVAL_MS 5000
 
 static const char *TAG = "smartpool";
 
@@ -115,8 +114,11 @@ void app_main(void)
     sensor_slot_t sensors[CONFIG_DS18B20_MAX_DEVICES] = {0};
     int active_sensor_count = 0;
     uint8_t conversion_failures = 0;
-    esp_err_t bus_err = onewire_new_bus_rmt(&bus_config, &rmt_config, &bus);
-    if (bus_err != ESP_OK) {
+    esp_err_t bus_err = POOL_TEMPERATURE_ENABLED
+        ? onewire_new_bus_rmt(&bus_config, &rmt_config, &bus) : ESP_ERR_NOT_SUPPORTED;
+    if (!POOL_TEMPERATURE_ENABLED) {
+        ESP_LOGI(TAG, "DS18B20 disabled in menuconfig");
+    } else if (bus_err != ESP_OK) {
         ESP_LOGW(TAG, "1-Wire bus unavailable: %s; continuing without temperature",
                  esp_err_to_name(bus_err));
     } else {
@@ -126,20 +128,32 @@ void app_main(void)
     }
     ESP_LOGI(TAG, "Searching done, %d active DS18B20 device(s)", active_sensor_count);
     if (active_sensor_count == 0 && bus) {
-        ESP_LOGW(TAG, "No DS18B20 found on GPIO%d; retrying every %d seconds",
-                 CONFIG_DS18B20_GPIO, SENSOR_RESCAN_INTERVAL_MS / 1000);
+        ESP_LOGW(TAG, "No DS18B20 found on GPIO%d; retrying at the sensor sampling interval",
+                 CONFIG_DS18B20_GPIO);
     }
-    TickType_t last_search_tick = xTaskGetTickCount();
-    TickType_t last_read_tick = last_search_tick;
+    TickType_t last_read_tick = xTaskGetTickCount();
+    TickType_t loop_wake_tick = last_read_tick;
+    bool first_read = true;
+    ESP_LOGI(TAG, "Sensor sampling: idle %d s, pumping %d s",
+             CONFIG_POOL_SENSOR_IDLE_INTERVAL_MS / 1000,
+             CONFIG_POOL_SENSOR_PUMP_INTERVAL_MS / 1000);
 
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        xTaskDelayUntil(&loop_wake_tick, pdMS_TO_TICKS(1000));
         TickType_t now = xTaskGetTickCount();
 
-        if (bus && active_sensor_count == 0 &&
-            (TickType_t)(now - last_search_tick) >=
-                   pdMS_TO_TICKS(SENSOR_RESCAN_INTERVAL_MS)) {
-            last_search_tick = now;
+        pool_device_state_t state;
+        pool_network_get_state(&state);
+        uint32_t interval_ms = state.relay_1_on || state.relay_2_on
+            ? CONFIG_POOL_SENSOR_PUMP_INTERVAL_MS : CONFIG_POOL_SENSOR_IDLE_INTERVAL_MS;
+        bool requested = pool_network_take_sample_request();
+        if (!first_read && !requested && (TickType_t)(now - last_read_tick) < pdMS_TO_TICKS(interval_ms)) {
+            continue;
+        }
+        first_read = false;
+        last_read_tick = now;
+
+        if (pool_network_temperature_enabled() && bus && active_sensor_count == 0) {
             int previous_active_count = active_sensor_count;
             discover_sensors(bus, sensors, &active_sensor_count);
             if (previous_active_count == 0 && active_sensor_count > 0) {
@@ -147,13 +161,9 @@ void app_main(void)
             }
         }
 
-        if ((TickType_t)(now - last_read_tick) <
-            pdMS_TO_TICKS(CONFIG_DS18B20_READ_INTERVAL_MS)) continue;
-        last_read_tick = now;
-
         bool has_temperature = false;
         float temperature = 0;
-        if (active_sensor_count > 0) {
+        if (pool_network_temperature_enabled() && active_sensor_count > 0) {
             esp_err_t err = ds18b20_trigger_temperature_conversion_for_all(bus);
             if (err == ESP_OK) {
                 conversion_failures = 0;
@@ -204,14 +214,15 @@ void app_main(void)
 
         int water_raw = 0;
         bool water_normal = false;
-        esp_err_t water_err = water_level_read(&water_raw, &water_normal);
+        esp_err_t water_err = pool_network_water_enabled()
+            ? water_level_read(&water_raw, &water_normal) : ESP_ERR_INVALID_STATE;
         bool has_water = water_err == ESP_OK;
         if (has_water) {
             ESP_LOGI(TAG, "Water ADC: %d (%s)", water_raw, water_normal ? "normal" : "low");
-        } else {
+        } else if (pool_network_water_enabled()) {
             ESP_LOGW(TAG, "Water ADC read failed: %s", esp_err_to_name(water_err));
         }
-        pool_network_send_telemetry(has_temperature, temperature,
+        pool_network_update_readings(has_temperature, temperature,
                                     has_water, water_normal, water_raw);
     }
 }

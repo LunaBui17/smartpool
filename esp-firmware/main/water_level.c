@@ -1,16 +1,17 @@
 #include "water_level.h"
 
 #include "esp_adc/adc_oneshot.h"
-#include "sdkconfig.h"
+#include "pool_features.h"
 
 static adc_oneshot_unit_handle_t s_adc;
 static adc_channel_t s_channel;
 
 esp_err_t water_level_init(void)
 {
-    if (CONFIG_WATER_LEVEL_GPIO == CONFIG_DS18B20_GPIO ||
-        CONFIG_WATER_LEVEL_GPIO == CONFIG_RELAY_1_GPIO ||
-        CONFIG_WATER_LEVEL_GPIO == CONFIG_RELAY_2_GPIO) {
+    if (!POOL_WATER_ENABLED) return ESP_OK;
+    if ((POOL_TEMPERATURE_ENABLED && CONFIG_WATER_LEVEL_GPIO == CONFIG_DS18B20_GPIO) ||
+        (POOL_RELAY_1_ENABLED && CONFIG_WATER_LEVEL_GPIO == CONFIG_RELAY_1_GPIO) ||
+        (POOL_RELAY_2_ENABLED && CONFIG_WATER_LEVEL_GPIO == CONFIG_RELAY_2_GPIO)) {
         return ESP_ERR_INVALID_ARG;
     }
 
