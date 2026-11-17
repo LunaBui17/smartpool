@@ -2,8 +2,8 @@
 /* Smart Pool API - đặt file tại thư mục XAMPP/htdocs/pool_api.php */
 header('Content-Type: application/json; charset=utf-8');
 
-mysqli_report(MYSQLI_REPORT_OFF);
-$conn = new mysqli('localhost', 'root', '', 'pool_db');
+require_once __DIR__ . '/database.php';
+$conn = pool_database_connect();
 if ($conn->connect_error) {
     http_response_code(500);
     echo json_encode(array('status' => 'error', 'message' => 'Không kết nối được database pool_db'));

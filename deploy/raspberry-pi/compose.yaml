@@ -1,0 +1,84 @@
+name: smartpool
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Run deploy.sh first}
+      MARIADB_DATABASE: pool_db
+      MARIADB_USER: smartpool
+      MARIADB_PASSWORD: ${DB_PASSWORD:?Run deploy.sh first}
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      - database:/var/lib/mysql
+      - ../../backend/pool_db.sql:/docker-entrypoint-initdb.d/01-pool.sql:ro
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    logging: *logging
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/raspberry-pi/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${PI_BIND_IP:?Run deploy.sh first}:${HTTP_PORT:-80}:80"
+    environment:
+      POOL_DB_HOST: db
+      POOL_DB_NAME: pool_db
+      POOL_DB_USER: smartpool
+      POOL_DB_PASSWORD: ${DB_PASSWORD:?Run deploy.sh first}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, php, -r, "exit(@file_get_contents('http://127.0.0.1/pool_api/pool_api.php?commands=1') === false ? 1 : 0);"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging: *logging
+
+  mqtt-init:
+    image: eclipse-mosquitto:2
+    restart: "no"
+    user: "0:0"
+    environment:
+      MQTT_ESP_PASSWORD: ${MQTT_ESP_PASSWORD:?Run deploy.sh first}
+      MQTT_APP_PASSWORD: ${MQTT_APP_PASSWORD:?Run deploy.sh first}
+    entrypoint: [/bin/sh, /init-mqtt.sh]
+    volumes:
+      - ./init-mqtt.sh:/init-mqtt.sh:ro
+      - mqtt-auth:/auth
+    logging: *logging
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "${PI_BIND_IP:?Run deploy.sh first}:${MQTT_PORT:-1883}:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto.acl:/mosquitto/config/acl:ro
+      - mqtt-auth:/mosquitto/auth:ro
+      - mqtt-data:/mosquitto/data
+    depends_on:
+      mqtt-init:
+        condition: service_completed_successfully
+    logging: *logging
+
+volumes:
+  database:
+  mqtt-auth:
+  mqtt-data:

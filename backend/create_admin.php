@@ -4,8 +4,8 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
-mysqli_report(MYSQLI_REPORT_OFF);
-$conn = new mysqli('localhost', 'root', '', 'pool_db');
+require_once __DIR__ . '/database.php';
+$conn = pool_database_connect();
 if ($conn->connect_error) {
     fwrite(STDERR, "Cannot connect to pool_db: " . $conn->connect_error . PHP_EOL);
     exit(1);

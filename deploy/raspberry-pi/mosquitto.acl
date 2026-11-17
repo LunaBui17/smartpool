@@ -1,0 +1,18 @@
+user esp32
+topic read smartpool/cmd/#
+topic read smartpool/config
+topic read smartpool/config/#
+topic write smartpool/status
+topic write smartpool/telemetry
+topic write smartpool/ack
+topic write smartpool/wifi/scan_result
+
+user android
+topic read smartpool/status
+topic read smartpool/telemetry
+topic read smartpool/ack
+topic read smartpool/wifi/scan_result
+topic write smartpool/cmd/#
+topic write smartpool/config
+topic write smartpool/config/#
+topic readwrite smartpool/diagnostics/probe

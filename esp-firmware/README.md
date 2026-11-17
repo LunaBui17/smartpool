@@ -2,6 +2,19 @@
 
 ESP-IDF firmware with MQTT control, DS18B20 temperature measurement, analog water level measurement, and HTTP storage uploads.
 
+## Final build configuration
+
+`sdkconfig`, `sdkconfig.defaults` and Kconfig defaults now use the verified Cloudflare Quick Tunnel:
+
+- API: `https://division-unlikely-drinking-disks.trycloudflare.com/pool_api/pool_api.php`
+- MQTT: `wss://division-unlikely-drinking-disks.trycloudflare.com/mqtt`
+- MQTT account: `esp32`, with the requested password configured in `main/mqtt_credentials.h`.
+- DS18B20 and water level sensors enabled; pins remain GPIO9 and GPIO10.
+- Both relays enabled on GPIO15/GPIO16, active HIGH, initial state OFF.
+- Sampling remains 60 seconds idle / 5 seconds while a pump runs. HTTPS/WSS and TLS 1.3 support remain enabled.
+
+Build yourself from an ESP-IDF terminal in `esp-firmware` using `idf.py build`, then `idf.py -p COMx flash monitor` with the actual port. No flash erase is needed. Saved MQTT and HTTP settings in NVS override compiled defaults; the board tested at `192.168.60.42` already stores the same Cloudflare URLs. Quick Tunnel URLs may change after the tunnel restarts: check `~/smartpool-endpoints.txt` on Pi and update the local dashboard settings (or all three build-default locations before a fresh build).
+
 ## Wiring
 
 | Function | ESP32-S3 GPIO | Notes |
@@ -203,3 +216,11 @@ The Android pump buttons and live interlock switch require a connected MQTT clie
 ESP32 validates MQTT/Wi-Fi/STA state for both ON and OFF commands and for remote sensor toggles. It ignores incoming/queued MQTT work when disconnected. Internal disconnect cleanup bypasses the remote-command gate so remote-owned pumps can always be stopped. As requested, the local/AP web and automatic operation remain independent of broker availability, subject to the configured interlock and sensor rules.
 
 `python tests/check_mqtt_control.py` generates `build/mqtt-control-test.c` from the actual firmware control functions. Compile it with `main/pump_auto.c` and `-Imain`, then run on a host C compiler (optionally ASan/UBSan). It checks all eight connectivity combinations, remote ON/OFF and sensors, local/AP controls while offline, disconnect cleanup preserving a local-owned pump, reconnect, and interlock. Android gate unit tests are in `../android-app/app/src/test/java/com/buiducluan23011767/ck/MqttControlGateTest.java`. Building Android requires a configured JDK and Android SDK.
+
+## HTTPS / WSS TLS troubleshooting
+
+HTTPS telemetry and secure WebSocket MQTT advertise ALPN `http/1.1`. Raw `mqtts://` connections do not advertise HTTP ALPN. HTTP requests allow 10 seconds for a WAN connection. Cloudflare Quick Tunnel forwards HTTPS and `/mqtt` WebSocket upgrades to the Pi backend. The supplied sdkconfig and defaults enable TLS 1.2 and TLS 1.3 while retaining certificate-bundle validation.
+
+Mbed TLS `-0x7280` is `MBEDTLS_ERR_SSL_CONN_EOF`: the peer or the network closed the connection during TLS. It does not establish that the MQTT password is wrong; MQTT authentication happens after TLS and WebSocket setup. `Certificate validated` confirms the certificate check passed but does not confirm the entire handshake completed. HTTP and MQTT failures now log the underlying Mbed TLS error, verification flags, socket errno and free heap. These compatibility changes do not prove every EOF is resolved; reflash and inspect logs on the target board. If failures persist, compare the home Wi-Fi with a hotspot on another Internet connection and capture the detailed TLS lines. [Espressif error reference](https://docs.espressif.com/projects/esp-techpedia/en/latest/esp-friends/advanced-development/protocol/mbedtls-troubleshooting.html).
+
+Windows monitor `GetOverlappedResult ... Access is denied` is a separate serial/USB error. Close other monitors, reconnect the board, identify its current COM port and reopen `idf.py -p COMx monitor`. Do not erase NVS to troubleshoot TLS; saved Wi-Fi and connection settings can be retained when flashing the updated app.

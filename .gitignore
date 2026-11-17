@@ -1,2 +1,7 @@
 # Generated build outputs (ESP-IDF and Android)
 **/build/
+
+# Raspberry Pi deployment credentials and backups
+deploy/raspberry-pi/.env
+deploy/raspberry-pi/.env*
+deploy/raspberry-pi/backups/

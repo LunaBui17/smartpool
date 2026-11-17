@@ -1,0 +1,11 @@
+.git
+**/build
+**/.gradle
+**/.env
+**/.env*
+**/backups
+**/mqtt.properties
+**/mqtt_credentials.h
+android-app
+esp-firmware
+mqtt-broker

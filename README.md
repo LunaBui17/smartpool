@@ -1,5 +1,7 @@
 # Smart Pool
 
+Triển khai backend, MQTT broker riêng và MariaDB trên Raspberry Pi 4 B: xem [hướng dẫn triển khai Pi](deploy/raspberry-pi/README.md). Khi dùng XAMPP, cần chép cả `backend/database.php` cùng thư mục với `pool_api.php`.
+
 Hệ thống dùng ESP32-S3 để đo nhiệt độ nước bằng DS18B20, đọc cảm biến mực nước dạng analog và điều khiển hai bơm qua relay. Ứng dụng Android điều khiển bơm qua HiveMQ Cloud (MQTT/TLS). App đọc dữ liệu cảm biến và lịch sử qua API PHP trên XAMPP để hiển thị và vẽ biểu đồ.
 
 ## Sơ đồ đấu nối

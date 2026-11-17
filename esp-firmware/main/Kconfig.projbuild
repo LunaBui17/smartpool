@@ -103,12 +103,12 @@ menu "Smart Pool Network"
         default y
 
     config POOL_API_URL
-        string "XAMPP API URL"
-        default "http://192.168.60.112/pool_api.php"
+        string "HTTP(S) API URL"
+        default "https://division-unlikely-drinking-disks.trycloudflare.com/pool_api/pool_api.php"
 
     config POOL_MQTT_URI
         string "MQTT broker URI"
-        default "mqtts://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883"
+        default "wss://division-unlikely-drinking-disks.trycloudflare.com/mqtt"
 
 endmenu
 

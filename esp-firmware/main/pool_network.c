@@ -15,6 +15,7 @@
 #include "esp_event.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
 #include "esp_random.h"
@@ -48,6 +49,8 @@
 #define TOPIC_TELEMETRY "smartpool/telemetry"
 
 static const char *TAG = "pool_network";
+// WSS upgrades use HTTP/1.1; do not advertise HTTP ALPN to raw MQTTS brokers.
+static const char *s_http_alpn[] = {"http/1.1", NULL};
 static esp_mqtt_client_handle_t s_mqtt;
 static _Atomic bool s_mqtt_started;
 static bool s_sntp_ready;
@@ -337,10 +340,13 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
     case MQTT_EVENT_ERROR:
         s_mqtt_phase = MQTT_PHASE_ERROR;
         if (event->error_handle) {
-            ESP_LOGE(TAG, "MQTT error: type=%d, TLS=%s, broker_code=%d",
+            ESP_LOGE(TAG, "MQTT error: type=%d, TLS=%s, mbedtls=%d, verify=0x%x, socket=%d, broker_code=%d, free_heap=%" PRIu32,
                      event->error_handle->error_type,
                      esp_err_to_name(event->error_handle->esp_tls_last_esp_err),
-                     event->error_handle->connect_return_code);
+                     event->error_handle->esp_tls_stack_err,
+                     (unsigned)event->error_handle->esp_tls_cert_verify_flags,
+                     event->error_handle->esp_transport_sock_errno,
+                     event->error_handle->connect_return_code, esp_get_free_heap_size());
         }
         break;
     case MQTT_EVENT_DATA:
@@ -515,6 +521,7 @@ static bool connection_url_valid(const char *url, bool mqtt)
     if (!url || !url[0] || strlen(url) > 256) return false;
     const char *host = NULL;
     if (mqtt && strncmp(url, "mqtts://", 8) == 0) host = url + 8;
+    if (mqtt && strncmp(url, "wss://", 6) == 0) host = url + 6;
     if (!mqtt && strncmp(url, "http://", 7) == 0) host = url + 7;
     if (!mqtt && strncmp(url, "https://", 8) == 0) host = url + 8;
     if (!host || !host[0] || *host == '/' || *host == ':') return false;
@@ -692,6 +699,8 @@ esp_err_t pool_network_init(void)
         const esp_mqtt_client_config_t mqtt_config = {
             .broker.address.uri = s_connection.broker,
             .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
+            .broker.verification.alpn_protos = strncmp(s_connection.broker, "wss://", 6) == 0
+                ? s_http_alpn : NULL,
             .credentials.username = s_connection.username,
             .credentials.authentication.password = s_connection.password,
             .session.last_will.topic = TOPIC_STATUS,
@@ -789,8 +798,9 @@ static bool post_sample(const telemetry_sample_t *sample)
     xSemaphoreGive(s_relay_lock);
     esp_http_client_config_t http_config = {
         .url = api_url,
-        .timeout_ms = 3000,
+        .timeout_ms = 10000,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .alpn_protos = s_http_alpn,
     };
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
     s_http_status.sending = true;
@@ -814,6 +824,11 @@ static bool post_sample(const telemetry_sample_t *sample)
     } else {
         ESP_LOGW(TAG, "HTTP update failed: %s, status=%d, url=%s", esp_err_to_name(err),
                  status, api_url);
+        int tls_code = 0, verify_flags = 0;
+        esp_err_t tls_error = esp_http_client_get_and_clear_last_tls_error(http, &tls_code, &verify_flags);
+        ESP_LOGW(TAG, "HTTP transport: TLS=%s, mbedtls=%d, verify=0x%x, socket=%d, free_heap=%" PRIu32,
+                 esp_err_to_name(tls_error), tls_code, (unsigned)verify_flags,
+                 esp_http_client_get_errno(http), esp_get_free_heap_size());
     }
     esp_http_client_cleanup(http);
     return success;
