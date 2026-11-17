@@ -1,14 +1,16 @@
 # Smart Pool
 
+Deployment đang dùng: [deploy/raspberry-pi-v2](deploy/raspberry-pi-v2/README.md), trên Pi tại ~/smartpool-v2. Stack/thư mục cũ giữ để quay lui. Endpoint mới: ~/smartpool-v2-endpoints.txt.
+
 Hệ thống ESP32-S3, Raspberry Pi 4 B và Android cho giám sát/điều khiển bể bơi. Pi chạy PHP/Apache, MariaDB và Mosquitto bằng Docker Compose; Cloudflare Quick Tunnel cung cấp HTTPS/WSS.
 
-**Database/API hiện là v2 nhiều thiết bị, không tương thích client một thiết bị cũ.** Đã triển khai baseline 004 trên Pi `192.168.60.87` ngày 17/11/2026, xác nhận health LAN/Cloudflare; chưa chạy collection Postman. Android/firmware đang trong repository chưa tích hợp v2, BLE chưa triển khai và MQTT còn topic/account chung.
+**Database/API hiện là v2 nhiều thiết bị, không tương thích client một thiết bị cũ.** Đã triển khai baseline 004 trên Pi `192.168.60.87` ngày 17/11/2026, xác nhận health LAN/Cloudflare; chưa chạy collection Postman. Android/firmware đang trong repository chưa tích hợp v2, BLE chưa triển khai và firmware/app vẫn dùng MQTT cũ; broker đã chuyển policy theo thiết bị.
 
 ## Tài liệu chính
 
 - [Mô hình database, API, reset, Postman và MQTT Web](docs/database-v2.md).
 - [Luồng xử lý và phần tích hợp còn lại](docs/system-flow.md).
-- [Triển khai Pi và quản lý Docker](deploy/raspberry-pi/README.md).
+- [Triển khai Pi và quản lý Docker](deploy/raspberry-pi-v2/README.md).
 - [Collection Postman v2](backend/postman/SmartPool.v2.postman_collection.json).
 - [Firmware hiện tại](esp-firmware/README.md) và [giao thức MQTT hiện tại](README_MQTT_ESP32.md).
 
@@ -20,7 +22,7 @@ Quan hệ nhiều–nhiều nằm ở `device_users`. User có thể có nhiều
 
 Mỗi mẫu có `device_id + sample_id` duy nhất, giờ đo nullable và giờ server nhận riêng. Config có revision và tách khỏi trạng thái ESP đã báo. Audit backend ghi trong cùng giao dịch, phân biệt nhật ký client/device. Wi-Fi password dự kiến truyền trực tiếp BLE, không lưu trong server/log.
 
-API cấu hình/lệnh hiện chỉ lưu dữ liệu: chưa có worker publish MQTT hoặc BLE. MQTT Web connect thành công không chứng minh quyền theo thiết bị đã được thực thi ở broker.
+API cấu hình/lệnh hiện chỉ lưu dữ liệu: chưa có worker publish MQTT hoặc BLE. Broker đã tách account/ACL theo thiết bị; app user không được dùng bridge credential. Xem [broker MQTT v2](docs/mqtt-v2.md).
 
 ## Cài đặt và chuyển đổi
 

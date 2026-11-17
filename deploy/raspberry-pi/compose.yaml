@@ -66,12 +66,10 @@ services:
     image: eclipse-mosquitto:2
     restart: "no"
     user: "0:0"
-    environment:
-      MQTT_ESP_PASSWORD: ${MQTT_ESP_PASSWORD:?Run deploy.sh first}
-      MQTT_APP_PASSWORD: ${MQTT_APP_PASSWORD:?Run deploy.sh first}
     entrypoint: [/bin/sh, /init-mqtt.sh]
     volumes:
       - ./init-mqtt.sh:/init-mqtt.sh:ro
+      - ./mosquitto.acl:/acl.base:ro
       - mqtt-auth:/auth
     logging: *logging
 
@@ -82,7 +80,6 @@ services:
       - "${PI_BIND_IP:?Run deploy.sh first}:${MQTT_PORT:-1883}:1883"
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./mosquitto.acl:/mosquitto/config/acl:ro
       - mqtt-auth:/mosquitto/auth:ro
       - mqtt-data:/mosquitto/data
     depends_on:

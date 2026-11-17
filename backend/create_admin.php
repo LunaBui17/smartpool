@@ -11,13 +11,13 @@ try {
     if(!preg_match('/^[A-Za-z0-9._-]{3,64}$/D',$username))throw new RuntimeException('Invalid username');
     echo 'Full name: ';$fullName=trim((string)fgets(STDIN));
     $fullName=api_text(array('full_name'=>$fullName),'full_name',128);
-    echo 'Admin password (hidden on Pi, 8-72 bytes): ';
+    echo 'Admin password (hidden on Pi, 7-72 bytes): ';
     if(PHP_OS_FAMILY!=='Windows'&&function_exists('stream_isatty')&&stream_isatty(STDIN)) {
         system('stty -echo 2>/dev/null',$result);$hidden=$result===0;
     }
     try {$password=rtrim((string)fgets(STDIN),"\r\n");}
     finally {if($hidden){system('stty echo 2>/dev/null');$hidden=false;}echo "\n";}
-    if(strlen($password)<8||strlen($password)>72||str_contains($password,"\0"))throw new RuntimeException('Invalid password');
+    if(strlen($password)<7||strlen($password)>72||str_contains($password,"\0"))throw new RuntimeException('Invalid password');
     $hash=password_hash($password,PASSWORD_DEFAULT);unset($password);
     api_query($db,"INSERT INTO users(username,password_hash,full_name,role) VALUES (?,?,?,'admin')",'sss',array($username,$hash,$fullName));
     $id=(int)$db->insert_id;

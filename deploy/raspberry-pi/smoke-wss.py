@@ -133,18 +133,20 @@ class Client:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('url', help='wss://your-domain/mqtt')
+    parser.add_argument('--credentials', required=True, help='Private diagnostics credential file')
     args = parser.parse_args()
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    config = json.loads(subprocess.check_output(['docker', 'compose', 'config', '--format', 'json']))
-    credentials = config['services']['mqtt-init']['environment']
+    from pathlib import Path
+    credentials = dict(line.split('=', 1) for line in Path(args.credentials).read_text().splitlines() if '=' in line)
+    if credentials.get('MQTT_USERNAME') != '_smartpool_diag':
+        raise RuntimeError('Use the restricted diagnostics account')
     clients = []
     try:
-        for username, key in [('esp32', 'MQTT_ESP_PASSWORD'), ('android', 'MQTT_APP_PASSWORD')]:
+        for username, key in [('_smartpool_diag', 'MQTT_PASSWORD')]:
             client = Client(args.url)
             clients.append(client)
             client.connect(username, credentials[key])
-            if username == 'android':
-                topic = mqtt_string('smartpool/diagnostics/probe')
+            if username == '_smartpool_diag':
+                topic = mqtt_string('smartpool/diagnostics/_smartpool_diag/probe')
                 client.send(0x82, b'\x00\x01' + topic + b'\x00')
                 if client.receive() != (0x90, b'\x00\x01\x00'):
                     raise RuntimeError('MQTT subscription was denied')

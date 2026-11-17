@@ -186,7 +186,7 @@ function api_admin_action($db,$user,$action,$data) {
         $username=api_text($data,'username',64,'/^[A-Za-z0-9._-]{3,64}$/D');$fullName=api_text($data,'full_name',128);
         $student=isset($data['student_code'])?api_text($data,'student_code',32,'/^[A-Za-z0-9._-]+$/D'):null;
         $role=$data['role']??'user';if(!in_array($role,array('admin','user'),true))api_fail(400,'Role phải là admin hoặc user');
-        $hash=api_password_hash($data);
+        $hash=api_password_hash($data,$role);
         api_query($db,'INSERT INTO users(username,password_hash,full_name,student_code,role) VALUES (?,?,?,?,?)','sssss',array($username,$hash,$fullName,$student,$role));
         $id=(int)$db->insert_id;
         api_log($db,$user,null,'user_created',array('user_id'=>$id,'username'=>$username,'role'=>$role));
@@ -208,15 +208,16 @@ function api_admin_action($db,$user,$action,$data) {
         }
         api_log($db,$user,null,'user_active_changed',array('user_id'=>$target,'is_active'=>(bool)$active));
     } else {
-        $hash=api_password_hash($data);api_query($db,'UPDATE users SET password_hash=? WHERE id=?','si',array($hash,$target));
+        $hash=api_password_hash($data,$rows[0]['role']);api_query($db,'UPDATE users SET password_hash=? WHERE id=?','si',array($hash,$target));
         api_query($db,'DELETE FROM user_sessions WHERE user_id=?','i',array($target));
         api_log($db,$user,null,'user_password_changed',array('user_id'=>$target));
     }
     return array('user_id'=>$target);
 }
-function api_password_hash($data) {
+function api_password_hash($data,$role='user') {
     $password=$data['password']??null;
-    if(!is_string($password)||strlen($password)<8||strlen($password)>72||str_contains($password,"\0"))api_fail(400,'Mật khẩu phải có 8–72 byte');
+    $minimum=$role==='admin'?7:8;
+    if(!is_string($password)||strlen($password)<$minimum||strlen($password)>72||str_contains($password,"\0"))api_fail(400,'Mật khẩu không đủ độ dài theo role');
     return password_hash($password,PASSWORD_DEFAULT);
 }
 

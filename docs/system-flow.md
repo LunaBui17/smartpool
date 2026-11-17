@@ -49,4 +49,4 @@ BLE sau này giúp admin đọc ID khi đăng ký và giúp user có quyền c�
 
 Backend tự ghi audit khi giao dịch quản trị/config/lệnh commit. Nhật ký client luôn source=client/client_reported; báo cáo ESP source=device/reported. Thành viên có view đọc nhật ký của cả thiết bị, gồm tác nhân thực hiện; không đọc nhật ký thiết bị khác. Gỡ user chỉ gỡ dòng device_users.
 
-MQTT vẫn dùng account/topic chung nên revoke membership không tự chặn người giữ credential MQTT. Trước khi tích hợp nhiều ESP, phải đổi namespace topic và ACL/credential hoặc thêm backend kiểm tra quyền trước publish. Không mở rộng nhiều thiết bị trên topic chung hiện tại.
+Broker đã dùng account/ACL theo thiết bị, xem [MQTT v2](mqtt-v2.md). App/firmware cũ chưa được cập nhật; bridge worker chưa triển khai. Gỡ membership chưa tự thu hồi MQTT account ESP; operator quản lý bằng mqtt-admin.py. Không cấp bridge credential cho app user.

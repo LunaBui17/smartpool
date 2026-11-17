@@ -1,0 +1,11 @@
+# Infrastructure only. Never distribute bridge credentials to Android/users.
+user _smartpool_bridge
+topic read smartpool/devices/+/status
+topic read smartpool/devices/+/telemetry
+topic read smartpool/devices/+/ack/command
+topic read smartpool/devices/+/ack/config
+topic write smartpool/devices/+/cmd/pump
+topic write smartpool/devices/+/config/desired
+
+user _smartpool_diag
+topic readwrite smartpool/diagnostics/_smartpool_diag/probe

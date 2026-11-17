@@ -4,7 +4,7 @@
 
 Database/API được tái cấu trúc cho admin quản lý nhiều thiết bị và nhiều user cùng quản lý một thiết bị. Đây là bản không tương thích API một thiết bị trước đây. **Đã reset và triển khai baseline 004 trên Pi `192.168.60.87` ngày 17/11/2026 theo yêu cầu.** Health LAN/Cloudflare trả HTTP 200; DB có 12 bảng, một admin, chưa có thiết bị hoặc mẫu đo. Chưa chạy collection Postman hoặc kiểm thử nghiệp vụ. Các bước bên dưới dành cho lần cài đặt/reset tiếp theo, không cần chạy lại trên Pi vừa triển khai.
 
-Admin mới dùng username `admin`; mật khẩu lưu riêng tại `~/smartpool-v2-admin.txt` trên Pi (quyền 600), không dùng mật khẩu ứng dụng cũ. Backup trước reset và source/image API cũ được giữ tại `/home/qnm/smartpool-rollbacks/v2-20261117-223404/`, cần sudo để đọc. Không đưa nội dung credential hoặc dump vào Git/log.
+Admin mới dùng username `admin`; credential hiện tại lưu riêng tại `~/smartpool-v2-credentials.txt` trên Pi (quyền 600), không dùng mật khẩu ứng dụng cũ. Backup trước reset và source/image API cũ được giữ tại `/home/qnm/smartpool-rollbacks/v2-20261117-223404/`, cần sudo để đọc. Không đưa nội dung credential hoặc dump vào Git/log.
 
 Không nhập/chuyển dữ liệu cũ. Reset là lệnh CLI riêng có cờ rõ ràng; `migrate.php`, `deploy.sh` và `pool.sh up` không tự xóa database. Firmware, app Android và topic/ACL MQTT hiện chưa chuyển sang hợp đồng v2; BLE chưa triển khai. Không đưa bản API này vào hệ thống đang dùng client cũ mà kỳ vọng mọi chức năng tiếp tục hoạt động.
 
@@ -69,7 +69,7 @@ Với DB trống, script triển khai khởi tạo schema và ghi ledger. Với 
 
 **Các lệnh dưới đây xóa toàn bộ dữ liệu Smart Pool trong database được cấu hình.** Không chạy nếu chưa muốn mất tài khoản, thiết bị, mẫu đo, cấu hình và nhật ký. Không xóa volume Docker hoặc database bằng `down -v`. Có thể tự tạo backup trước để quay lui; yêu cầu hiện tại không giữ/chuyển dữ liệu cũ sang mô hình mới.
 
-Sau khi chép source mới lên Pi, tại `~/smartpool/deploy/raspberry-pi`:
+Sau khi chép source mới lên Pi, tại `~/smartpool-v2/deploy/raspberry-pi-v2`:
 
 ```bash
 # Tùy chọn: tạo backup riêng trước khi reset.
@@ -112,7 +112,7 @@ Người dùng gửi `Authorization: Bearer TOKEN`. ESP gửi `X-Pool-Device-Key
 | `login` | Chưa đăng nhập | username/password/remember_me; trả user, token, expires_in, devices và next_after_device_id |
 | `logout` | User | Thu hồi đúng phiên Bearer đang dùng |
 | `list_users` | Admin | limit 1..100, after_id; không trả password hash |
-| `create_user` | Admin | username, full_name, password 8..72 byte, role admin/user, student_code tùy chọn |
+| `create_user` | Admin | username, full_name, password admin 7..72 byte hoặc user 8..72 byte, role admin/user, student_code tùy chọn |
 | `set_user_active` | Admin | user_id, is_active; không tự khóa mình/khóa admin cuối cùng |
 | `set_user_password` | Admin | user_id, password; thu hồi mọi phiên của user đó |
 | `register_device` | Admin | device_id, name, student_full_name, student_code, owner_user_id tùy chọn; thiết bị inactive, config revision=1 |
@@ -174,7 +174,7 @@ Response `delivery=stored_only` nghĩa chỉ lưu cấu hình, chưa có worker 
 
 `request_control` tạo lệnh pending và audit, trả `delivery=not_published_by_api`. **Hiện chưa có MQTT publisher/outbox worker**, không coi response này là bơm đã chạy. Request_id lặp trên cùng device/user/target/enabled trả cùng lệnh; xung đột nội dung hoặc người gọi trả 409. Retry không gia hạn TTL. Gỡ membership, thu hồi control, khóa user hoặc inactive thiết bị sẽ hủy các lệnh pending tương ứng thành cancelled trong cùng giao dịch. ACK do credential của đúng thiết bị gửi, không phải xác nhận của motor vật lý. Lệnh hết hạn hiển thị effective_status=expired, chưa có job tự xóa hoặc tự thu gom pending. Worker tương lai phải kiểm tra lại quyền/active/TTL trước publish, không chỉ đọc một lệnh đã từng được chấp nhận.
 
-Mosquitto vẫn dùng account/topic chung của firmware/app hiện có. Phân quyền API không ngăn người giữ credential MQTT chung điều khiển trực tiếp. Chưa được mở rộng nhiều ESP trên topic chung; giai đoạn tích hợp cần `smartpool/devices/{device_id}/...`, account/ACL riêng hoặc backend kiểm tra quyền trước publish, cùng cơ chế thu hồi quyền.
+Broker đã chuyển account/ACL theo thiết bị; xem [MQTT v2](mqtt-v2.md). ESP chỉ truy cập namespace của mình, app user không đăng nhập bằng tài khoản dùng chung. Worker backend publish lệnh/cấu hình chưa triển khai; membership/key HTTP vẫn chưa tự đồng bộ thu hồi account ESP. Operator dùng mqtt-admin.py để cấp/thu hồi riêng.
 
 ## Nhật ký, truy vấn và index
 
@@ -194,7 +194,7 @@ Các nhóm kiểm tra: login trả thiết bị; quan hệ hai user/hai thiết 
 
 Bước ACK lệnh thử nghiệm có TTL 60 giây, chạy liền mạch; nếu dừng quá hạn, 409 là đúng, hãy tạo lệnh test mới để thử ACK. Collection chưa được chạy trong đợt phát triển này.
 
-MQTT Web chỉ kiểm tra đường mạng hiện tại: đọc `mqtt_wss_uri` từ `~/smartpool-endpoints.txt`, dùng WSS/TLS port 443, path `/mqtt`, user MQTT `android`, password riêng trên Pi, client ID duy nhất. Subscribe `smartpool/diagnostics/probe`, publish chuỗi thử retain OFF vào chính topic đó. Không dùng token/key HTTP v2 làm password MQTT; không publish cmd/config khi chỉ test kết nối. MQTT Web vẫn có thể connect sau khi gỡ membership hoặc reset DB vì ACL chưa liên thông; đó là giới hạn được công bố, không phải API đã bảo vệ mọi đường điều khiển.
+MQTT Web dùng account diagnostics riêng trong ~/smartpool-v2-mqtt-diagnostics.txt, WSS port 443/path /mqtt và topic smartpool/diagnostics/_smartpool_diag/probe. Không dùng android/esp32 hoặc key HTTP. Xem [hướng dẫn broker mới](mqtt-v2.md); MQTT credentials không tự đồng bộ từ membership DB.
 
 ## Backup, phục hồi và phần còn lại
 

@@ -1,0 +1,677 @@
+Postman CLI local run; report events disabled; secrets redacted.
+Exit code: 1
+
+No authorization data found. Please use the `postman login` command.
+Refer:https://learning.postman.com/docs/postman-cli/postman-cli-options/#postman-login
+
+Running your collection...
+postman
+
+Smart Pool API v2 - Multi-device
+
+Root 01 Login admin, returns device list
+
+  POST http://192.168.60.87/pool_api/pool_api.php [200 OK, 506 B, 240 ms]
+  Pass  HTTP 200
+  Pass  Admin and device list
+
+Root 02 Create test user A
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 9 ms]
+  1. HTTP 201
+
+Root 03 Create test user B
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 16 ms]
+  2. HTTP 201
+
+Root 04a Register device a
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 18 ms]
+  3. HTTP 201
+
+Root 05a Activate device a
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 14 ms]
+  4. HTTP 200
+
+Root 04b Register device b
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 10 ms]
+  5. HTTP 201
+
+Root 05b Activate device b
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 9 ms]
+  6. HTTP 200
+
+Root 06 Duplicate registration rejected
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 13 ms]
+  7. HTTP 409
+
+Root 07 Add user A to device A - full rights
+
+  POST http://192.168.60.87/pool_api/pool_api.php [400 Bad Request, 277 B, 13 ms]
+  8. HTTP 200
+
+Root 08 Add user B to device A - full rights
+
+  POST http://192.168.60.87/pool_api/pool_api.php [400 Bad Request, 277 B, 17 ms]
+  9. HTTP 200
+
+Root 09 Add user B to device B - view only
+
+  POST http://192.168.60.87/pool_api/pool_api.php [400 Bad Request, 277 B, 15 ms]
+ 10. HTTP 200
+
+Root 10a Login user a
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 331 B, 17 ms]
+ 11. HTTP 200
+ 12. Ordinary user
+
+Root 10b Login user b
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 330 B, 10 ms]
+ 13. HTTP 200
+ 14. Ordinary user
+
+Root 11 User A cannot read device B
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 10 ms]
+ 15. HTTP 403
+
+Root 12 User B lists both devices
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 8 ms]
+ 16. HTTP 200
+ 17⠄ TypeError in test-script
+
+Root 13 User cannot add member
+
+  POST http://192.168.60.87/pool_api/pool_api.php [400 Bad Request, 277 B, 653 ms]
+ 18. HTTP 403
+
+Root 14 User A loads own config
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 312 B, 17 ms]
+ 19. HTTP 200
+ 20⠄ TypeError in test-script
+
+Root 15 User A updates thresholds, backend audit
+
+  POST http://192.168.60.87/pool_api/pool_api.php [400 Bad Request, 277 B, 11 ms]
+ 21. HTTP 200
+ 22. Stored, not applied
+
+Root 16 Stale revision rejected
+
+  POST http://192.168.60.87/pool_api/pool_api.php [400 Bad Request, 277 B, 25 ms]
+ 23. HTTP 409
+
+Root 17 View-only member cannot configure device B
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 312 B, 14 ms]
+ 24. HTTP 403
+
+Root 18 Issue temporary ESP credential
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 46 ms]
+ 25. HTTP 201
+ 26. Key shape
+
+Root 19 ESP identity
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 324 B, 14 ms]
+ 27. HTTP 200
+
+Root 20 ESP key cannot address device B
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 324 B, 40 ms]
+  Pass  HTTP 401
+
+Root 21 Insert test measurement (synthetic, no real ESP)
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 324 B, 27 ms]
+ 28. HTTP 201
+ 29⠄ TypeError in test-script
+
+Root 22 Exact retry is duplicate, first receive time unchanged
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 324 B, 7 ms]
+ 30. HTTP 200
+ 31. Idempotent
+
+Root 23 Changed payload under same sample ID rejected
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 324 B, 13 ms]
+ 32. HTTP 409
+
+Root 24 Offline unknown-time sample remains unknown
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 324 B, 11 ms]
+ 33. HTTP 201
+ 34. No invented time
+
+Root 25 History received basis with cursor
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 10 ms]
+ 35. HTTP 200
+ 36. Next page available
+
+Root 26 History next page
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 10 ms]
+ 37. HTTP 200
+
+Root 27 Measured-time history excludes unknown sample
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 8 ms]
+ 38. HTTP 200
+ 39. Only actual measured time
+
+Root 28 No session cannot read history
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 8 ms]
+  Pass  HTTP 401
+
+Root 29 Report synthetic OFF state, no pump control
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 324 B, 49 ms]
+ 40. HTTP 200
+
+Root 30 Repeat state report idempotently
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 324 B, 44 ms]
+ 41. HTTP 200
+ 42. Duplicate
+
+Root 31 Read status split from sensor history
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 12 ms]
+ 43. HTTP 200
+ 44. Both sample clocks exposed
+
+Root 32 Request OFF command, API does not publish MQTT
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 13 ms]
+ 45. HTTP 200
+ 46⠄ TypeError in test-script
+
+Root 33 View-only member cannot request control
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 11 ms]
+ 47. HTTP 403
+
+Root 34 Read pending command
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 8 ms]
+ 48. HTTP 200
+
+Root 35 Device rejects synthetic command (no pump action)
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 324 B, 19 ms]
+ 49. HTTP 200
+
+Root 36 Client report, never backend audit
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 11 ms]
+ 50. HTTP 200
+
+Root 37 Both members see device history of actions
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 7 ms]
+ 51. HTTP 200
+ 52. Client and backend sources distinct
+
+Root 38 Admin sees both members
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 13 ms]
+ 53. HTTP 200
+ 54. Two members
+
+Root 39 Remove A only from device A
+
+  POST http://192.168.60.87/pool_api/pool_api.php [400 Bad Request, 277 B, 24 ms]
+ 55. HTTP 200
+
+Root 40 Removed A denied
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 312 B, 21 ms]
+ 56. HTTP 403
+
+Root 41 B still has device A
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 15 ms]
+ 57. HTTP 200
+
+Root 42 B still has device B
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 14 ms]
+ 58. HTTP 200
+
+Root 43 Admin audit cannot be read by user
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 15 ms]
+ 59. HTTP 403
+
+Root 44 Admin reads backend audit
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 10 ms]
+ 60. HTTP 200
+
+Root 45 Revoke temporary ESP key
+
+  POST http://192.168.60.87/pool_api/pool_api.php [400 Bad Request, 277 B, 12 ms]
+ 61. HTTP 200
+
+Root 46 Revoked ESP key rejected
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 325 B, 18 ms]
+  Pass  HTTP 401
+
+Root 47a Deactivate test device a
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 15 ms]
+ 62. HTTP 200
+
+Root 48a Logout user a
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 14 ms]
+ 63. HTTP 200
+
+Root 49a Disable test user a
+
+  POST http://192.168.60.87/pool_api/pool_api.php [400 Bad Request, 277 B, 13 ms]
+ 64. HTTP 200
+
+Root 47b Deactivate test device b
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 312 B, 19 ms]
+ 65. HTTP 200
+
+Root 48b Logout user b
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 311 B, 24 ms]
+ 66. HTTP 200
+
+Root 49b Disable test user b
+
+  POST http://192.168.60.87/pool_api/pool_api.php [400 Bad Request, 277 B, 13 ms]
+ 67. HTTP 200
+
+Root 50 Logout admin
+
+  POST http://192.168.60.87/pool_api/pool_api.php [401 Unauthorized, 312 B, 19 ms]
+ 68. HTTP 200
+
+----------------------------------------------------------------------
+|                         |            executed |             failed |
+--------------------------+---------------------+---------------------
+|              iterations |                   1 |                  0 |
+--------------------------+---------------------+---------------------
+|                requests |                  56 |                  0 |
+--------------------------+---------------------+---------------------
+|            test-scripts |                  56 |                  4 |
+--------------------------+---------------------+---------------------
+|      prerequest-scripts |                   5 |                  0 |
+--------------------------+---------------------+---------------------
+|              assertions |                  69 |                 64 |
+----------------------------------------------------------------------
+| total run duration: 6.7 s                                          |
+----------------------------------------------------------------------
+| total data received: 4 KB (approx)                                 |
+----------------------------------------------------------------------
+| average response time: 31 ms [min: 7 ms, max: 653 ms, s.d.: 89 ms] |
+----------------------------------------------------------------------
+
+   #  failure         detail                                                             
+                                                                                         
+ 01.  AssertionError  HTTP 201                                                           
+                      expected response to have status code 201 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "02 Create test user A"                                     
+                                                                                         
+ 02.  AssertionError  HTTP 201                                                           
+                      expected response to have status code 201 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "03 Create test user B"                                     
+                                                                                         
+ 03.  AssertionError  HTTP 201                                                           
+                      expected response to have status code 201 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "04a Register device a"                                     
+                                                                                         
+ 04.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "05a Activate device a"                                     
+                                                                                         
+ 05.  AssertionError  HTTP 201                                                           
+                      expected response to have status code 201 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "04b Register device b"                                     
+                                                                                         
+ 06.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "05b Activate device b"                                     
+                                                                                         
+ 07.  AssertionError  HTTP 409                                                           
+                      expected response to have status code 409 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "06 Duplicate registration rejected"                        
+                                                                                         
+ 08.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 400              
+                      at assertion:0 in test-script                                      
+                      inside "07 Add user A to device A - full rights"                   
+                                                                                         
+ 09.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 400              
+                      at assertion:0 in test-script                                      
+                      inside "08 Add user B to device A - full rights"                   
+                                                                                         
+ 10.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 400              
+                      at assertion:0 in test-script                                      
+                      inside "09 Add user B to device B - view only"                     
+                                                                                         
+ 11.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "10a Login user a"                                          
+                                                                                         
+ 12.  TypeError       Ordinary user                                                      
+                      Cannot read properties of undefined (reading 'role')               
+                      at assertion:1 in test-script                                      
+                      inside "10a Login user a"                                          
+                                                                                         
+ 13.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "10b Login user b"                                          
+                                                                                         
+ 14.  TypeError       Ordinary user                                                      
+                      Cannot read properties of undefined (reading 'role')               
+                      at assertion:1 in test-script                                      
+                      inside "10b Login user b"                                          
+                                                                                         
+ 15.  AssertionError  HTTP 403                                                           
+                      expected response to have status code 403 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "11 User A cannot read device B"                            
+                                                                                         
+ 16.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "12 User B lists both devices"                              
+                                                                                         
+ 17.  TypeError                                                                          
+                      Cannot read properties of undefined (reading 'map')                
+                      at test-script                                                     
+                      inside "12 User B lists both devices"                              
+                                                                                         
+ 18.  AssertionError  HTTP 403                                                           
+                      expected response to have status code 403 but got 400              
+                      at assertion:0 in test-script                                      
+                      inside "13 User cannot add member"                                 
+                                                                                         
+ 19.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "14 User A loads own config"                                
+                                                                                         
+ 20.  TypeError                                                                          
+                      Cannot read properties of undefined (reading 'revision')           
+                      at test-script                                                     
+                      inside "14 User A loads own config"                                
+                                                                                         
+ 21.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 400              
+                      at assertion:0 in test-script                                      
+                      inside "15 User A updates thresholds, backend audit"               
+                                                                                         
+ 22.  AssertionError  Stored, not applied                                                
+                      expected undefined to deeply equal 'stored_only'                   
+                      at assertion:1 in test-script                                      
+                      inside "15 User A updates thresholds, backend audit"               
+                                                                                         
+ 23.  AssertionError  HTTP 409                                                           
+                      expected response to have status code 409 but got 400              
+                      at assertion:0 in test-script                                      
+                      inside "16 Stale revision rejected"                                
+                                                                                         
+ 24.  AssertionError  HTTP 403                                                           
+                      expected response to have status code 403 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "17 View-only member cannot configure device B"             
+                                                                                         
+ 25.  AssertionError  HTTP 201                                                           
+                      expected response to have status code 201 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "18 Issue temporary ESP credential"                         
+                                                                                         
+ 26.  AssertionError  Key shape                                                          
+                      expected false to deeply equal true                                
+                      at assertion:1 in test-script                                      
+                      inside "18 Issue temporary ESP credential"                         
+                                                                                         
+ 27.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "19 ESP identity"                                           
+                                                                                         
+ 28.  AssertionError  HTTP 201                                                           
+                      expected response to have status code 201 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "21 Insert test measurement (synthetic, no real ESP)"       
+                                                                                         
+ 29.  TypeError                                                                          
+                      Cannot read properties of undefined (reading 'received_at')        
+                      at test-script                                                     
+                      inside "21 Insert test measurement (synthetic, no real ESP)"       
+                                                                                         
+ 30.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "22 Exact retry is duplicate, first receive time unchanged" 
+                                                                                         
+ 31.  AssertionError  Idempotent                                                         
+                      expected undefined to deeply equal true                            
+                      at assertion:1 in test-script                                      
+                      inside "22 Exact retry is duplicate, first receive time unchanged" 
+                                                                                         
+ 32.  AssertionError  HTTP 409                                                           
+                      expected response to have status code 409 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "23 Changed payload under same sample ID rejected"          
+                                                                                         
+ 33.  AssertionError  HTTP 201                                                           
+                      expected response to have status code 201 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "24 Offline unknown-time sample remains unknown"            
+                                                                                         
+ 34.  TypeError       No invented time                                                   
+                      Cannot read properties of undefined (reading 'measured_at_ms')     
+                      at assertion:1 in test-script                                      
+                      inside "24 Offline unknown-time sample remains unknown"            
+                                                                                         
+ 35.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "25 History received basis with cursor"                     
+                                                                                         
+ 36.  AssertionError  Next page available                                                
+                      expected undefined to be a string                                  
+                      at assertion:1 in test-script                                      
+                      inside "25 History received basis with cursor"                     
+                                                                                         
+ 37.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "26 History next page"                                      
+                                                                                         
+ 38.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "27 Measured-time history excludes unknown sample"          
+                                                                                         
+ 39.  TypeError       Only actual measured time                                          
+                      Cannot read properties of undefined (reading 'length')             
+                      at assertion:1 in test-script                                      
+                      inside "27 Measured-time history excludes unknown sample"          
+                                                                                         
+ 40.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "29 Report synthetic OFF state, no pump control"            
+                                                                                         
+ 41.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "30 Repeat state report idempotently"                       
+                                                                                         
+ 42.  AssertionError  Duplicate                                                          
+                      expected undefined to deeply equal true                            
+                      at assertion:1 in test-script                                      
+                      inside "30 Repeat state report idempotently"                       
+                                                                                         
+ 43.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "31 Read status split from sensor history"                  
+                                                                                         
+ 44.  TypeError       Both sample clocks exposed                                         
+                      Cannot read properties of undefined (reading 'measured_at_ms')     
+                      at assertion:1 in test-script                                      
+                      inside "31 Read status split from sensor history"                  
+                                                                                         
+ 45.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "32 Request OFF command, API does not publish MQTT"         
+                                                                                         
+ 46.  TypeError                                                                          
+                      Cannot read properties of undefined (reading 'command_id')         
+                      at test-script                                                     
+                      inside "32 Request OFF command, API does not publish MQTT"         
+                                                                                         
+ 47.  AssertionError  HTTP 403                                                           
+                      expected response to have status code 403 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "33 View-only member cannot request control"                
+                                                                                         
+ 48.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "34 Read pending command"                                   
+                                                                                         
+ 49.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "35 Device rejects synthetic command (no pump action)"      
+                                                                                         
+ 50.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "36 Client report, never backend audit"                     
+                                                                                         
+ 51.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "37 Both members see device history of actions"             
+                                                                                         
+ 52.  TypeError       Client and backend sources distinct                                
+                      Cannot read properties of undefined (reading 'some')               
+                      at assertion:1 in test-script                                      
+                      inside "37 Both members see device history of actions"             
+                                                                                         
+ 53.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "38 Admin sees both members"                                
+                                                                                         
+ 54.  TypeError       Two members                                                        
+                      Cannot read properties of undefined (reading 'length')             
+                      at assertion:1 in test-script                                      
+                      inside "38 Admin sees both members"                                
+                                                                                         
+ 55.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 400              
+                      at assertion:0 in test-script                                      
+                      inside "39 Remove A only from device A"                            
+                                                                                         
+ 56.  AssertionError  HTTP 403                                                           
+                      expected response to have status code 403 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "40 Removed A denied"                                       
+                                                                                         
+ 57.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "41 B still has device A"                                   
+                                                                                         
+ 58.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "42 B still has device B"                                   
+                                                                                         
+ 59.  AssertionError  HTTP 403                                                           
+                      expected response to have status code 403 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "43 Admin audit cannot be read by user"                     
+                                                                                         
+ 60.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "44 Admin reads backend audit"                              
+                                                                                         
+ 61.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 400              
+                      at assertion:0 in test-script                                      
+                      inside "45 Revoke temporary ESP key"                               
+                                                                                         
+ 62.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "47a Deactivate test device a"                              
+                                                                                         
+ 63.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "48a Logout user a"                                         
+                                                                                         
+ 64.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 400              
+                      at assertion:0 in test-script                                      
+                      inside "49a Disable test user a"                                   
+                                                                                         
+ 65.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "47b Deactivate test device b"                              
+                                                                                         
+ 66.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "48b Logout user b"                                         
+                                                                                         
+ 67.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 400              
+                      at assertion:0 in test-script                                      
+                      inside "49b Disable test user b"                                   
+                                                                                         
+ 68.  AssertionError  HTTP 200                                                           
+                      expected response to have status code 200 but got 401              
+                      at assertion:0 in test-script                                      
+                      inside "50 Logout admin"                                           
+Postman credentials are required for publishing run details to Postman cloud.
+Please specify it by using the `postman login` command
+
+A new version of Postman CLI is available (v1.91.0). Refer https://go.pstmn.io/cli-release-notes for changelogs.
+To update your Postman CLI, run:
+
+postman update
+

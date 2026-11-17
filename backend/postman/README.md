@@ -3,7 +3,7 @@
 Import [SmartPool.v2.postman_collection.json](SmartPool.v2.postman_collection.json). Các collection v1 đã bỏ vì schema và API không còn tương thích.
 
 1. Người vận hành áp dụng database v2, tạo admin mới theo [hướng dẫn đầy đủ](../../docs/database-v2.md).
-2. Điền local api_url, admin_username, admin_password và test_user_password (8–72 byte). Ngoài LAN dùng HTTPS URL trong ~/smartpool-endpoints.txt, thêm đường dẫn /pool_api/pool_api.php.
+2. Điền local api_url, admin_username, admin_password và test_user_password (8–72 byte). Ngoài LAN dùng HTTPS URL trong ~/smartpool-v2-endpoints.txt, thêm đường dẫn /pool_api/pool_api.php.
 3. Dùng Collection Runner, 1 iteration, đúng thứ tự và không song song. Có 56 request, gồm các bước hậu tố a/b.
 4. Collection tạo hai user và hai thiết bị thử nghiệm, mẫu cảm biến giả, status OFF giả và lệnh OFF chỉ lưu DB. Không publish MQTT hoặc bật bơm.
 5. Kết thúc sẽ revoke key, khóa user test và inactive thiết bị; dữ liệu/audit thử vẫn còn. Không export token/key hoặc response chứa secret.

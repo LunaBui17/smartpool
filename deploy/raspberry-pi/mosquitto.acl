@@ -1,18 +1,11 @@
-user esp32
-topic read smartpool/cmd/#
-topic read smartpool/config
-topic read smartpool/config/#
-topic write smartpool/status
-topic write smartpool/telemetry
-topic write smartpool/ack
-topic write smartpool/wifi/scan_result
+# Infrastructure only. Never distribute bridge credentials to Android/users.
+user _smartpool_bridge
+topic read smartpool/devices/+/status
+topic read smartpool/devices/+/telemetry
+topic read smartpool/devices/+/ack/command
+topic read smartpool/devices/+/ack/config
+topic write smartpool/devices/+/cmd/pump
+topic write smartpool/devices/+/config/desired
 
-user android
-topic read smartpool/status
-topic read smartpool/telemetry
-topic read smartpool/ack
-topic read smartpool/wifi/scan_result
-topic write smartpool/cmd/#
-topic write smartpool/config
-topic write smartpool/config/#
-topic readwrite smartpool/diagnostics/probe
+user _smartpool_diag
+topic readwrite smartpool/diagnostics/_smartpool_diag/probe

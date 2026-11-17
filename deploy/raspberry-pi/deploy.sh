@@ -20,8 +20,6 @@ if [[ ! -f .env ]]; then
         printf 'PI_BIND_IP=%s\nHTTP_PORT=80\nMQTT_PORT=1883\nADMINER_PORT=8080\n' "$pi_ip"
         printf 'DB_ROOT_PASSWORD=%s\n' "$(random_password)"
         printf 'DB_PASSWORD=%s\n' "$(random_password)"
-        printf 'MQTT_ESP_PASSWORD=%s\n' "$(random_password)"
-        printf 'MQTT_APP_PASSWORD=%s\n' "$(random_password)"
     } > .env
 fi
 chmod 600 .env
@@ -34,4 +32,4 @@ pool_compose up -d --no-deps --wait --wait-timeout 600 api
 bash smoke-test.sh
 echo 'Ready. Create the first API admin:'
 echo '  docker compose exec api php /opt/smartpool/create_admin.php'
-echo 'MQTT users: esp32 (firmware), android (app). Passwords are in .env.'
+echo 'MQTT uses per-device accounts. Manage them with: sudo python3 mqtt-admin.py status'

@@ -72,13 +72,13 @@ cat ~/smartpool-endpoints.txt
 
 Không cần tài khoản/token. HTTPS API và WSS /mqtt đi chung domain ngẫu nhiên; Apache proxy WebSocket vào mqtt:9001. File endpoint cập nhật mỗi 10 giây, có api_url, http_api_url/android_http_api_url và mqtt_wss_uri. URL có thể đổi sau restart; file không tự sửa app/ESP/Postman.
 
-API v2 dùng HTTP token user hoặc key ESP theo thiết bị. MQTT vẫn dùng tài khoản cũ esp32/android và topic chung; HTTP key không đăng nhập được MQTT. Không tuyên bố revoke membership/inactive DB đã chặn MQTT. Không mở rộng nhiều ESP lên topic chung trước khi sửa ACL/topic/firmware.
+API v2 dùng HTTP token user hoặc key ESP theo thiết bị. Broker đã chuyển account/ACL theo thiết bị; tài khoản chung esp32/android không còn dùng. Xem [broker MQTT v2](../../docs/mqtt-v2.md) và mqtt-admin.py để cấp account cho registry active. HTTP key không đăng nhập được MQTT; membership/inactive DB chưa tự thu hồi account ESP. Firmware phải cập nhật namespace mới trước khi kết nối.
 
 ## Kiểm tra do người vận hành thực hiện
 
 - [Collection Postman v2](../../backend/postman/SmartPool.v2.postman_collection.json): hai user/hai thiết bị và số đo giả, không gửi lệnh MQTT.
-- MQTT Web: dùng mqtt_wss_uri, WSS port 443, path /mqtt, user android và password MQTT; subscribe/publish smartpool/diagnostics/probe với retain OFF.
-- smoke-test.sh hiện chỉ kiểm tra API v2 health và diagnostics MQTT, không kiểm tra toàn bộ quyền hay dữ liệu theo thiết bị.
+- MQTT Web: dùng mqtt_wss_uri, WSS port 443, path /mqtt, credential từ ~/smartpool-mqtt-diagnostics.txt; subscribe/publish smartpool/diagnostics/_smartpool_diag/probe với retain OFF.
+- smoke-test.sh hiện chỉ kiểm tra API v2 health; script smoke-wss.py dùng diagnostics và chỉ chạy khi người vận hành chủ động gọi.
 - Firmware/app cũ chưa tích hợp payload v2, revision, danh sách/chọn thiết bị hoặc BLE. Xem danh sách công việc tiếp theo trong tài liệu v2.
 
 ## Sao lưu và quay lui

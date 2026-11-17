@@ -5,3 +5,6 @@
 deploy/raspberry-pi/.env
 deploy/raspberry-pi/.env*
 deploy/raspberry-pi/backups/
+deploy/raspberry-pi-v2/.env*
+deploy/raspberry-pi-v2/backups/
+deploy/raspberry-pi-v2/.mqtt-admin.lock
