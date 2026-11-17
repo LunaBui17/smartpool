@@ -1,5 +1,7 @@
 # Giao thức MQTT Smart Pool: Android ↔ Mosquitto trên Pi ↔ ESP32-S3
 
+**Giới hạn với backend v2:** tài liệu này mô tả MQTT topic chung của client hiện tại. Database/API đã chuyển sang nhiều thiết bị nhưng chưa có MQTT publisher hoặc ACL theo membership. Chưa nối luồng lệnh/config mới vào broker; xem [database/API v2](docs/database-v2.md).
+
 Tài liệu mô tả giao thức giữa firmware ESP-IDF, Mosquitto trên Raspberry Pi và ứng dụng Android; xem [luồng toàn hệ thống](docs/system-flow.md) để phân biệt MQTT điều khiển với HTTP lưu/đọc dữ liệu.
 
 ## Kết nối

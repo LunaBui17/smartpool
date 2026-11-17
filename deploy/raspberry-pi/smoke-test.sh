@@ -4,11 +4,10 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 source ./compose-common.sh
 # Probe reads API data without inserting samples or sending pump commands.
 pool_compose exec -T api php -r '
-foreach (["commands=1", "history=1&limit=1"] as $query) {
-    $data = file_get_contents("http://127.0.0.1/pool_api/pool_api.php?" . $query);
-    if ($data === false || !is_array(json_decode($data, true))) exit(1);
-}
-echo "API and MariaDB OK\n";
+$raw = file_get_contents("http://127.0.0.1/pool_api/pool_api.php?action=health");
+$data = $raw === false ? null : json_decode($raw, true);
+if (!is_array($data) || ($data["api_version"] ?? null) !== 2 || ($data["status"] ?? "") !== "success") exit(1);
+echo "API v2 and MariaDB health OK (not a permission/integration test)\n";
 '
 pool_compose run --rm --no-deps -T --entrypoint /bin/sh mqtt-init -ec '
 trap "rm -f /tmp/probe" EXIT

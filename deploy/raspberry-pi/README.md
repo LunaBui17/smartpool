@@ -1,196 +1,88 @@
 # Backend Smart Pool trên Raspberry Pi 4 B
 
-[Luồng toàn hệ thống ESP → Pi → Android](../../docs/system-flow.md) · [README tổng thể](../../README.md)
+Stack Docker Compose: PHP 8.3/Apache, MariaDB 11.4, Mosquitto, Adminer và Cloudflare Quick Tunnel. **Database/API v2 baseline 004 đã triển khai trên Pi ngày 17/11/2026**, health LAN/Cloudflare thành công; chưa chạy collection Postman. Android và firmware hiện tại chưa tương thích v2; chưa có BLE hoặc worker MQTT theo thiết bị. Admin mới lấy credential từ `~/smartpool-v2-admin.txt`, không dùng APP_PASSWORD cũ.
 
-Bộ triển khai chạy API PHP/Apache, MariaDB 11.4, Mosquitto 2 và Adminer 5 bằng Docker Compose trên **hệ điều hành 64-bit**. Dữ liệu database và MQTT dùng volume bền vững; các dịch vụ tự chạy lại khi Pi khởi động. API, database và broker MQTT đều chạy trên Pi; Adminer cung cấp giao diện web quản trị database trong LAN.
+Tài liệu chính: [database/API v2, reset, Postman và MQTT Web](../../docs/database-v2.md). Không dùng hướng dẫn migration/collection giai đoạn 1 cho bản này.
 
-**Tunnel mặc định hiện là Cloudflare Quick Tunnel**, miễn phí cho thử nghiệm và không cần tài khoản/token. Trên ESP thực tế, HTTPS và MQTT WSS đã kết nối thành công qua Cloudflare. URL ngẫu nhiên tự ghi vào **`~/smartpool-endpoints.txt`**, cập nhật mỗi 10 giây và sau khi tunnel khởi động lại. Xem phần Cloudflare bên dưới.
+## Chép source
 
-## Script quản lý chung
-
-Sau khi chép mã lên Pi bằng `send-to-pi.ps1`, dùng một script để quản lý backend, MariaDB, MQTT, tunnel và service ghi địa chỉ:
-
-```bash
-cd ~/smartpool/deploy/raspberry-pi
-sudo bash pool.sh up 192.168.60.87   # lần đầu; Cloudflare không cần token
-sudo bash pool.sh admin             # tạo admin API lần đầu
-
-sudo bash pool.sh up                # bật lại hoặc triển khai mã mới
-sudo bash pool.sh stop              # dừng toàn bộ, giữ dữ liệu và mật khẩu
-sudo bash pool.sh restart           # dừng rồi build/khởi động lại toàn bộ
-sudo bash pool.sh status            # trạng thái container và URL Cloudflare
-sudo bash pool.sh logs              # theo dõi log tất cả container
-sudo bash pool.sh logs mqtt         # có thể chọn api, db, cloudflare
-sudo bash pool.sh endpoints         # đọc file địa chỉ của tunnel đang dùng
-sudo bash pool.sh tunnel            # bật/kiểm tra Cloudflare Quick Tunnel
-sudo bash pool.sh backup            # sao lưu MariaDB
-```
-
-`Ctrl+C` thoát xem log, dịch vụ tiếp tục chạy. `up` gồm kiểm tra/cài Docker, build/chạy backend, smoke test rồi bật tunnel và exporter. Cloudflare Quick Tunnel là tunnel duy nhất của bộ triển khai. Các script riêng bên dưới vẫn dùng được.
-
-`stop` giữ container, volume và mật khẩu; có thể gọi nhiều lần, kể cả khi chưa bật tunnel. Lệnh này cũng tắt tự khởi động exporter; `up` bật lại. `restart` làm ngắt kết nối thiết bị trong lúc dịch vụ khởi động lại, và URL Cloudflare có thể đổi.
-
-## 1. Chép mã từ Windows lên Pi
-
-Trong PowerShell tại `D:\esp\smartpool`:
+Tại PowerShell trong D:\esp\smartpool:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\deploy\raspberry-pi\send-to-pi.ps1
 ```
 
-Script chỉ đóng gói backend và cấu hình triển khai, không chép các file `.env*`, bản sao lưu hoặc thông tin MQTT cục bộ. Nhập mật khẩu SSH trực tiếp khi `scp` / `ssh` hỏi. Script mở phiên SSH tại thư mục triển khai; không dùng terminal này để gửi mật khẩu vào chat.
+Script chép backend/deploy và mở SSH; không chép .env hoặc backup. Nếu thư mục trên Pi thuộc root khiến tar báo Cannot utime/change mode, kiểm tra chủ sở hữu thư mục source và sửa đúng phạm vi; không đổi quyền đệ quy volume/database hoặc .env.
 
-## 2. Cài và chạy trên Pi
+## Cài mới
 
-```bash
-cd ~/smartpool/deploy/raspberry-pi
-uname -m                         # cần aarch64
-sudo bash install-docker.sh
-sudo bash deploy.sh 192.168.60.87
-sudo bash cloudflare.sh start
-sudo docker compose exec api php /opt/smartpool/create_admin.php
-```
-
-Script cài Docker dùng repository có chữ ký của Docker cho Debian/Raspberry Pi OS hoặc Ubuntu 64-bit. Nếu máy đã có Docker Engine và Compose thì giữ nguyên. Nếu apt báo xung đột Docker cũ, kiểm tra gói hiện có trước khi thay đổi; script không tự gỡ gói.
-
-`deploy.sh` tự tạo mật khẩu ngẫu nhiên trong `.env` (quyền `600`), tạo database/tables ở lần chạy đầu, khởi động dịch vụ và kiểm tra API cùng MQTT publish/subscribe. Admin API được tạo tương tác, độc lập với tài khoản MQTT. Không dùng `docker compose config` không có `--quiet` khi chia sẻ log vì kết quả có thể chứa mật khẩu.
-
-Cổng HTTP `80`, MQTT `1883` và Adminer `8080` được mở trên IP LAN đã chỉ định. MariaDB không mở cổng ra mạng. Nếu cổng đã bị dịch vụ khác chiếm, sửa `HTTP_PORT`, `MQTT_PORT` hoặc `ADMINER_PORT` trong `.env`, rồi chạy lại. Cấu hình cũ chưa có `ADMINER_PORT` vẫn dùng mặc định `8080`. Nếu IP Pi thay đổi, cập nhật `PI_BIND_IP` và địa chỉ trong app/ESP; nên đặt DHCP reservation trên router.
-
-## 3. Chuyển Android và ESP sang Pi
-
-Đọc mật khẩu ngay trên terminal Pi bằng `sudo cat .env`; không đưa `.env` lên Git hoặc gửi vào chat.
-
-| Thiết bị | Cấu hình | Giá trị |
-| --- | --- | --- |
-| Android, Settings → HTTP | API URL | `http://192.168.60.87/pool_api/pool_api.php` |
-| Android, Settings → MQTT | Broker URI | `tcp://192.168.60.87:1883` |
-| Android | MQTT username/password | `android` / `MQTT_APP_PASSWORD` trong `.env` |
-| ESP, `idf.py menuconfig` → Smart Pool Network | API URL (`POOL_API_URL`) | `http://192.168.60.87/pool_api/pool_api.php` |
-| ESP, cùng menu | Broker URI (`POOL_MQTT_URI`) | `mqtt://192.168.60.87:1883` |
-| ESP, `main/mqtt_credentials.h` | `SMARTPOOL_MQTT_USERNAME` / `SMARTPOOL_MQTT_PASSWORD` | `esp32` / `MQTT_ESP_PASSWORD` trong `.env` |
-
-Bật HTTP telemetry, MQTT và Wi-Fi trong menuconfig; nếu chọn transport điều khiển thì chọn MQTT. Tạo `mqtt_credentials.h` từ file `.example` nếu chưa có, sau đó build/flash lại ESP. Đổi broker trong Settings Android không đổi broker của ESP. URL HTTP từng lưu trong NVS cũng có thể ghi đè menuconfig: sau khi ESP kết nối broker mới, lưu/đồng bộ URL HTTP từ app và kiểm tra URL ESP báo trong status. Giữ tên topic `smartpool/...` mặc định để khớp ACL.
-
-ACL cho ESP đọc lệnh/cấu hình và ghi telemetry/status/ack; Android đọc trạng thái và ghi lệnh/cấu hình. Tài khoản `android` có quyền điều khiển và cấu hình thiết bị, nên chỉ cấp cho người được phép. Role guest trong API không tự giới hạn quyền tài khoản MQTT này.
-
-HTTP và MQTT TCP trong cấu hình LAN này không mã hóa. Cloudflare bên dưới cung cấp HTTPS API và MQTT WSS để truy cập từ ngoài mạng.
-
-## 4. Kiểm tra và vận hành
-
-```bash
-sudo docker compose ps
-sudo docker compose logs --tail=100 api db mqtt
-sudo bash smoke-test.sh
-curl -f 'http://192.168.60.87/pool_api/pool_api.php?commands=1'
-sudo bash backup.sh
-```
-
-Bài kiểm tra không gửi lệnh bơm hoặc chèn mẫu đo giả; MQTT dùng topic chẩn đoán riêng. Khi kiểm tra tích hợp, chờ ESP online, xem telemetry/lịch sử trong app rồi thử bơm bằng thao tác chủ động.
-
-Cập nhật mã bằng `send-to-pi.ps1` rồi chạy lại `sudo bash deploy.sh`; `.env` và volume được giữ lại. Không dùng `docker compose down -v` vì tùy chọn `-v` xóa volume dữ liệu. Không đổi mật khẩu DB trong `.env` sau khi đã khởi tạo database mà chưa đổi mật khẩu tài khoản tương ứng trong MariaDB.
-
-Sao lưu bằng `backup.sh` tạo `backups/pool_db-*.sql.gz`; giữ thêm bản sao `.env` ở nơi an toàn ngoài Pi. Phục hồi vào stack đã chạy (thay tên file đúng):
-
-```bash
-gzip -dc backups/pool_db-YYYYMMDD-HHMMSS.sql.gz | sudo docker compose exec -T db sh -ec 'MYSQL_PWD="$MARIADB_PASSWORD" exec mariadb -u "$MARIADB_USER" "$MARIADB_DATABASE"'
-```
-
-Schema ban đầu chỉ tự nhập khi volume database trống. Riêng migration nhật ký `backend/migrations/001_activity_log.sql` được `deploy.sh` áp dụng cả khi volume đã có dữ liệu, bằng `CREATE TABLE IF NOT EXISTS`, không xóa bảng cũ. Khi khôi phục từ bản sao lưu, dữ liệu phục hồi sẽ thay thế các bảng cùng tên. Không cần một dịch vụ nhận MQTT để ghi database vì firmware gửi mẫu đo vào API qua HTTP.
-
-### Cập nhật nhật ký thao tác và quản lý admin
-
-Sau khi chép backend và cấu hình triển khai mới lên Pi, chạy:
+Cần hệ điều hành 64-bit trên Pi, IP LAN ổn định. Trên DB trống:
 
 ```bash
 cd ~/smartpool/deploy/raspberry-pi
-sudo bash deploy.sh
+sudo bash pool.sh up 192.168.60.87
+sudo bash pool.sh admin
 ```
 
-Lệnh này build lại API và tạo bảng `pool_activity_log` trên database hiện có; giữ `.env` và volume. API mới cung cấp nhật ký có xác thực, timestamp biểu đồ dạng epoch mili giây và quyền tạo thêm admin từ tài khoản admin đang đăng nhập. Không cần tạo lại admin đầu tiên, không dùng `down -v`.
+pool.sh tạo/giữ .env, cài Docker nếu cần, tạo schema mới, chạy migration, khởi động API/broker/Adminer, chạy smoke test có sẵn và bật tunnel/exporter. Mật khẩu DB/MQTT lấy từ .env, không đưa vào Git hoặc log. Admin được tạo tương tác, không seed mật khẩu vào source. Chưa có thiết bị/user sau cài mới; dùng API admin đăng ký và cấp thành viên.
 
-Nếu chỉ cập nhật API thủ công, cần thực hiện cả hai bước:
+**DB cũ có bảng pool_*:** migrate.php sẽ dừng, không tự reset. Thực hiện quy trình reset riêng trong tài liệu v2; lệnh đó xóa toàn bộ dữ liệu Smart Pool đã biết, không giữ/chuyển tài khoản, thiết bị, số đo hoặc nhật ký. Không dùng down -v. Dừng API cũ trước reset và tạo admin mới sau reset. Credential MQTT và mật khẩu tài khoản MariaDB không đổi khi reset bảng ứng dụng.
 
-```bash
-sudo docker compose up -d --build api
-sudo docker compose exec -T db sh -ec 'MYSQL_PWD="$MARIADB_PASSWORD" exec mariadb -u "$MARIADB_USER" "$MARIADB_DATABASE"' < ../../backend/migrations/001_activity_log.sql
-```
+## Cập nhật API v2 thông thường
 
-Backend chưa có bảng nhật ký sẽ trả lỗi rõ ràng; app vẫn giữ hàng đợi cục bộ để gửi lại sau khi cập nhật.
-
-### Xem MariaDB qua trình duyệt bằng Adminer
-
-Adminer được khởi động cùng các dịch vụ khi chạy `sudo bash pool.sh up` hoặc `sudo bash deploy.sh`. Sau khi chép cấu hình mới lên Pi, có thể chỉ bật Adminer mà không khởi động lại toàn hệ thống:
+Sau khi đã chuyển sang schema v2, cập nhật mã mà không restart DB/MQTT/tunnel:
 
 ```bash
 cd ~/smartpool/deploy/raspberry-pi
-sudo docker compose config --quiet
-sudo docker compose up -d adminer
-sudo docker compose ps adminer
+sudo docker compose -f compose.yaml -f compose.cloudflare.yaml build api
+sudo docker compose -f compose.yaml -f compose.cloudflare.yaml run --rm --no-deps -T api php /opt/smartpool/migrate.php
+sudo docker compose -f compose.yaml -f compose.cloudflare.yaml up -d --no-deps --no-build api
 ```
 
-Từ máy tính hoặc điện thoại cùng mạng LAN, mở `http://192.168.60.87:8080` (thay IP và cổng nếu đã đổi), rồi đăng nhập:
+Runner chỉ chạy migration số 004 trở đi, kiểm tra checksum và không nhập dữ liệu legacy. Cài mới dùng pool_db.sql, cùng baseline 004. Không sửa migration đã áp dụng; thêm file phiên bản mới. DDL có implicit commit, xem hướng dẫn xử lý lỗi/rollback trong tài liệu v2.
 
-| Trường | Giá trị |
-| --- | --- |
-| System | MySQL |
-| Server | `db` |
-| Username | `smartpool` |
-| Password | Giá trị `DB_PASSWORD` trong `.env` trên Pi |
-| Database | `pool_db` |
-
-Đây là tài khoản MariaDB, không phải tài khoản ứng dụng hoặc MQTT. Adminer không được truyền sẵn mật khẩu database; nhập mật khẩu trực tiếp trên trang và không chia sẻ mật khẩu.
-
-Chọn bảng `pool_status` → **Select data** để xem trạng thái gần nhất. Với `pool_history`, sắp xếp `received_at` giảm dần để xem mẫu mới nhất; với `pool_activity_log`, xem `occurred_at_ms`, `username`, `action` và `result` để theo dõi thao tác từ app. Tải lại trang khi cần cập nhật. Adminer cho phép sửa/xóa dữ liệu và chạy SQL, không chỉ xem. Hạn chế truy cập cho người quản trị, chỉ dùng trên LAN tin cậy; kết nối HTTP này không mã hóa mật khẩu. Không mở cổng quản trị trên router hoặc thêm đường dẫn proxy Adminer vào Apache/Cloudflare. Quick Tunnel hiện chỉ chuyển tiếp tới API, không chuyển tiếp tới Adminer.
-
-Khi không dùng, chạy `sudo docker compose stop adminer`. Lệnh `pool.sh up` sẽ bật lại Adminer cùng hệ thống.
-
-## 5. Cloudflare Quick Tunnel: miễn phí, URL ngẫu nhiên vào file text
+## Script quản lý
 
 ```bash
-cd ~/smartpool/deploy/raspberry-pi
+sudo bash pool.sh up
+sudo bash pool.sh stop
+sudo bash pool.sh restart
+sudo bash pool.sh status
+sudo bash pool.sh logs api
+sudo bash pool.sh logs mqtt
+sudo bash pool.sh logs cloudflare
+sudo bash pool.sh endpoints
+sudo bash pool.sh backup
+```
+
+Ctrl+C chỉ thoát xem logs. stop giữ volume và .env nhưng dừng exporter; up bật lại. Container dùng restart: unless-stopped; Docker và exporter được cài để chạy sau reboot nếu chưa bị dừng chủ động.
+
+## API và Adminer trong LAN
+
+API v2: http://192.168.60.87/pool_api/pool_api.php. Kiểm tra read-only health bằng GET ?action=health; endpoint dữ liệu dùng POST JSON và xác thực. Health chỉ xác nhận DB/API cơ bản, không thay thế kiểm tra quyền/integration.
+
+Adminer: http://192.168.60.87:8080, hệ thống MySQL, server db, database pool_db, user smartpool, password DB_PASSWORD trong .env. Adminer vào DB trực tiếp nên không có audit ứng dụng cho thay đổi SQL thủ công. MariaDB không publish cổng 3306 ra host.
+
+## Cloudflare Quick Tunnel
+
+```bash
 sudo bash pool.sh tunnel
 cat ~/smartpool-endpoints.txt
 ```
 
-Không cần authtoken, thẻ hoặc domain riêng. Cloudflare chuyển tiếp HTTPS API và MQTT WSS trên cùng URL vào Apache; broker Mosquitto vẫn chạy trên Pi. File có dạng:
+Không cần tài khoản/token. HTTPS API và WSS /mqtt đi chung domain ngẫu nhiên; Apache proxy WebSocket vào mqtt:9001. File endpoint cập nhật mỗi 10 giây, có api_url, http_api_url/android_http_api_url và mqtt_wss_uri. URL có thể đổi sau restart; file không tự sửa app/ESP/Postman.
 
-```text
-updated_at=...
-status=online
-provider=cloudflare
-api_url=https://random-name.trycloudflare.com
-http_api_url=https://random-name.trycloudflare.com/pool_api/pool_api.php
-android_http_api_url=https://random-name.trycloudflare.com/pool_api/pool_api.php
-mqtt_wss_uri=wss://random-name.trycloudflare.com/mqtt
-```
+API v2 dùng HTTP token user hoặc key ESP theo thiết bị. MQTT vẫn dùng tài khoản cũ esp32/android và topic chung; HTTP key không đăng nhập được MQTT. Không tuyên bố revoke membership/inactive DB đã chặn MQTT. Không mở rộng nhiều ESP lên topic chung trước khi sửa ACL/topic/firmware.
 
-Nhập `http_api_url` cho ESP/Android/Postman; dùng `mqtt_wss_uri` cho ESP/Android/MQTTX. Username MQTT vẫn là `esp32` / `android`; mật khẩu không đổi khi chuyển tunnel. MariaDB chỉ mở trong mạng Docker, không publish cổng ra LAN hoặc Quick Tunnel; dùng API hoặc công cụ bên trong container để truy cập.
+## Kiểm tra do người vận hành thực hiện
 
-`pool.sh up` giữ container đang chạy nếu cấu hình không đổi; không tạo thêm một tunnel mỗi lần gọi. Nếu tiến trình Cloudflare khởi động lại, domain có thể đổi. Service `smartpool-cloudflare-endpoints.service` tự phát hiện thế hệ container mới và cập nhật file mỗi 10 giây; khi dừng/ngắt kết nối, file ghi offline và bỏ URL cũ. File thuộc tài khoản gọi `sudo` (ví dụ `qnm`), quyền `600`, không chứa mật khẩu.
+- [Collection Postman v2](../../backend/postman/SmartPool.v2.postman_collection.json): hai user/hai thiết bị và số đo giả, không gửi lệnh MQTT.
+- MQTT Web: dùng mqtt_wss_uri, WSS port 443, path /mqtt, user android và password MQTT; subscribe/publish smartpool/diagnostics/probe với retain OFF.
+- smoke-test.sh hiện chỉ kiểm tra API v2 health và diagnostics MQTT, không kiểm tra toàn bộ quyền hay dữ liệu theo thiết bị.
+- Firmware/app cũ chưa tích hợp payload v2, revision, danh sách/chọn thiết bị hoặc BLE. Xem danh sách công việc tiếp theo trong tài liệu v2.
 
-**Khi domain đổi, cần cập nhật cấu hình URL của ESP, Android, MQTTX và Postman.** File text không tự gửi cấu hình tới thiết bị ở mạng khác. Docker và exporter tự chạy sau reboot nếu trước đó chưa bị dừng chủ động bằng `pool.sh stop`.
+## Sao lưu và quay lui
 
-```bash
-sudo bash pool.sh status
-sudo bash pool.sh logs cloudflare
-sudo python3 smoke-wss.py wss://DOMAIN_TRONG_FILE/mqtt
-sudo bash pool.sh stop
-sudo bash pool.sh up
-```
+backup.sh tạo backups/pool_db-*.sql.gz với single-transaction; giữ bản sao bảo vệ ngoài Pi cùng .env và image/API tương ứng. Chưa có lịch tự xóa/archive. Không chỉ sửa DB_PASSWORD trong .env khi tài khoản MariaDB chưa đổi.
 
-Cloudflare Quick Tunnels dành cho thử nghiệm/phát triển, không có cam kết uptime. Tên miền ổn định cho triển khai lâu dài cần một named tunnel và domain phù hợp. [Tài liệu Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/).
-
-## 6. Cấu hình ESP và Android từ ngoài mạng
-
-Dùng `http_api_url` và `mqtt_wss_uri` trong `~/smartpool-endpoints.txt`. MQTT user `esp32` dành cho ESP, `android` dành cho app/MQTTX; mật khẩu lấy từ `.env` hoặc `~/smartpool-credentials.txt` nếu đã reset trên Pi. Giữ topic `smartpool/...` mặc định. Postman dùng URL HTTP API đầy đủ có `/pool_api/pool_api.php`.
-
-Firmware cần hỗ trợ lưu URI `wss://`. Mở trang local của ESP, lưu URL HTTP API, rồi lưu broker WSS cùng username/password; lưu MQTT sẽ khởi động lại ESP. ESP cần Internet qua cổng `443` và đồng bộ NTP để xác minh chứng chỉ. HTTPS và WSS dùng chung backend Apache/Mosquitto trên Pi, không cần VPN trên ESP.
-
-Kiểm tra từ Pi qua domain đang có trong file, không gửi lệnh bơm:
-
-```bash
-sudo python3 smoke-wss.py wss://DOMAIN_TRONG_FILE/mqtt
-```
-
-Script đăng nhập cả hai tài khoản và thử publish/subscribe topic `smartpool/diagnostics/probe`. Nếu URL Quick Tunnel đổi sau reboot, cập nhật lại URI trên ESP, Android, MQTTX và Postman; file text không tự sửa các client. Compose hiện không publish cổng MariaDB ra host.
+Sau reset, image/API cũ không thể khôi phục dữ liệu cũ; phải phục hồi backup tương ứng vào DB phù hợp. Tự tạo backup dữ liệu v2 phát sinh trước khi phục hồi. Không tự import đè database đang hoạt động hoặc xóa audit để dọn test.

@@ -1,0 +1,2155 @@
+{
+    "variable":  [
+                     {
+                         "key":  "api_url",
+                         "value":  "http://192.168.60.87/pool_api/pool_api.php"
+                     },
+                     {
+                         "key":  "admin_username",
+                         "value":  "admin"
+                     },
+                     {
+                         "key":  "admin_password",
+                         "value":  ""
+                     },
+                     {
+                         "key":  "test_user_password",
+                         "value":  ""
+                     }
+                 ],
+    "info":  {
+                 "description":  "Run manually in Collection Runner, one iteration, no parallelism. Creates two test users/devices and SYNTHETIC sensor samples/OFF status. No MQTT command is published. Cleanup deactivates test records and revokes a key; data/audit remain. Runtime secrets are not written into collection variables. Do not export response history.",
+                 "name":  "Smart Pool API v2 - Multi-device",
+                 "schema":  "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+             },
+    "item":  [
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"login\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "01 Login admin, returns device list",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "const d=pm.response.json();pm.test(\"Admin and device list\",()=\u003e{pm.expect(d.user.role).to.eql(\"admin\");pm.expect(d.devices).to.be.an(\"array\");});pm.variables.set(\"admin_token\",d.token);pm.variables.set(\"owner_id\",d.user.id);"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   },
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "for(const k of [\"admin_password\",\"test_user_password\"]) if(!pm.variables.get(k)) throw new Error(\"Set local \"+k);",
+                                                                   "const run=Date.now()+\"_\"+Math.floor(Math.random()*100000);pm.variables.set(\"device_a\",\"postman_a_\"+run);pm.variables.set(\"device_b\",\"postman_b_\"+run);pm.variables.set(\"user_a_name\",\"pm_a_\"+run);pm.variables.set(\"user_b_name\",\"pm_b_\"+run);pm.variables.set(\"command_request_id\",pm.variables.replaceIn(\"{{$guid}}\"));pm.variables.set(\"event_id\",pm.variables.replaceIn(\"{{$guid}}\"));pm.variables.set(\"request_id\",pm.variables.replaceIn(\"{{$guid}}\"));pm.variables.set(\"measured_ms\",Date.now());pm.variables.set(\"boot_id\",\"0123456789abcdef0123456789abcdef\");",
+                                                                   "pm.request.body.update(JSON.stringify({action:\"login\",username:pm.variables.get(\"admin_username\"),password:pm.variables.get(\"admin_password\"),remember_me:false}));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "prerequest"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"create_user\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "02 Create test user A",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 201\u0027,()=\u003epm.response.to.have.status(201));",
+                                                                   "pm.variables.set(\"user_a_id\",pm.response.json().user_id);"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   },
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.request.body.update(JSON.stringify({action:\"create_user\",username:pm.variables.get(\"user_a_name\"),full_name:\"Postman User A\",password:pm.variables.get(\"test_user_password\"),role:\"user\"}));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "prerequest"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"create_user\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "03 Create test user B",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 201\u0027,()=\u003epm.response.to.have.status(201));",
+                                                                   "pm.variables.set(\"user_b_id\",pm.response.json().user_id);"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   },
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.request.body.update(JSON.stringify({action:\"create_user\",username:pm.variables.get(\"user_b_name\"),full_name:\"Postman User B\",password:pm.variables.get(\"test_user_password\"),role:\"user\"}));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "prerequest"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"register_device\",\"device_id\":\"{{device_a}}\",\"name\":\"Postman a\",\"student_full_name\":\"Sinh vien thu nghiem\",\"student_code\":\"TEST\",\"owner_user_id\":{{owner_id}}}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "04a Register device a",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 201\u0027,()=\u003epm.response.to.have.status(201));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"set_device_active\",\"device_id\":\"{{device_a}}\",\"is_active\":true}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "05a Activate device a",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"register_device\",\"device_id\":\"{{device_b}}\",\"name\":\"Postman b\",\"student_full_name\":\"Sinh vien thu nghiem\",\"student_code\":\"TEST\",\"owner_user_id\":{{owner_id}}}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "04b Register device b",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 201\u0027,()=\u003epm.response.to.have.status(201));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"set_device_active\",\"device_id\":\"{{device_b}}\",\"is_active\":true}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "05b Activate device b",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"register_device\",\"device_id\":\"{{device_a}}\",\"name\":\"Duplicate\",\"student_full_name\":\"Test\",\"student_code\":\"TEST\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "06 Duplicate registration rejected",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 409\u0027,()=\u003epm.response.to.have.status(409));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"set_device_member\",\"device_id\":\"{{device_a}}\",\"user_id\":{{user_a_id}},\"can_view\":true,\"can_control\":true,\"can_configure\":true}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "07 Add user A to device A - full rights",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"set_device_member\",\"device_id\":\"{{device_a}}\",\"user_id\":{{user_b_id}},\"can_view\":true,\"can_control\":true,\"can_configure\":true}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "08 Add user B to device A - full rights",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"set_device_member\",\"device_id\":\"{{device_b}}\",\"user_id\":{{user_b_id}},\"can_view\":true,\"can_control\":false,\"can_configure\":false}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "09 Add user B to device B - view only",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"login\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "10a Login user a",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "pm.variables.set(\u0027user_a_token\u0027,pm.response.json().token);",
+                                                                   "pm.test(\"Ordinary user\",()=\u003epm.expect(pm.response.json().user.role).to.eql(\"user\"));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   },
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.request.body.update(JSON.stringify({action:\u0027login\u0027,username:pm.variables.get(\u0027user_a_name\u0027),password:pm.variables.get(\u0027test_user_password\u0027),remember_me:false}));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "prerequest"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"login\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "10b Login user b",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "pm.variables.set(\u0027user_b_token\u0027,pm.response.json().token);",
+                                                                   "pm.test(\"Ordinary user\",()=\u003epm.expect(pm.response.json().user.role).to.eql(\"user\"));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   },
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.request.body.update(JSON.stringify({action:\u0027login\u0027,username:pm.variables.get(\u0027user_b_name\u0027),password:pm.variables.get(\u0027test_user_password\u0027),remember_me:false}));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "prerequest"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"get_device\",\"device_id\":\"{{device_b}}\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_a_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "11 User A cannot read device B",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 403\u0027,()=\u003epm.response.to.have.status(403));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"list_devices\",\"limit\":100}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_b_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "12 User B lists both devices",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "const ds=pm.response.json().devices.map(x=\u003ex.device_id);pm.test(\"Many-to-many\",()=\u003e{pm.expect(ds).to.include(pm.variables.get(\"device_a\"));pm.expect(ds).to.include(pm.variables.get(\"device_b\"));});"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"set_device_member\",\"device_id\":\"{{device_a}}\",\"user_id\":{{user_a_id}},\"can_view\":true,\"can_control\":true,\"can_configure\":true}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_b_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "13 User cannot add member",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 403\u0027,()=\u003epm.response.to.have.status(403));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"get_config\",\"device_id\":\"{{device_a}}\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_a_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "14 User A loads own config",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "pm.variables.set(\"config_revision\",pm.response.json().config.revision);"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"update_config\",\"device_id\":\"{{device_a}}\",\"expected_revision\":{{config_revision}},\"settings\":{\"temperature_min\":21,\"temperature_max\":34,\"interlock\":true}}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_a_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "15 User A updates thresholds, backend audit",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "pm.test(\"Stored, not applied\",()=\u003epm.expect(pm.response.json().delivery).to.eql(\"stored_only\"));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"update_config\",\"device_id\":\"{{device_a}}\",\"expected_revision\":{{config_revision}},\"settings\":{\"temperature_min\":22}}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_a_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "16 Stale revision rejected",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 409\u0027,()=\u003epm.response.to.have.status(409));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"update_config\",\"device_id\":\"{{device_b}}\",\"expected_revision\":1,\"settings\":{\"temperature_min\":22}}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_b_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "17 View-only member cannot configure device B",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 403\u0027,()=\u003epm.response.to.have.status(403));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"create_device_credential\",\"device_id\":\"{{device_a}}\",\"label\":\"Postman revoke in this run\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "18 Issue temporary ESP credential",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 201\u0027,()=\u003epm.response.to.have.status(201));",
+                                                                   "const d=pm.response.json();pm.variables.set(\"device_key\",d.device_key);pm.variables.set(\"credential_id\",d.credential_id);pm.test(\"Key shape\",()=\u003epm.expect(/^[a-f0-9]{64}$/.test(d.device_key)).to.eql(true));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"device_identity\",\"device_id\":\"{{device_a}}\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "X-Pool-Device-Key",
+                                                        "value":  "{{device_key}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "19 ESP identity",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"device_identity\",\"device_id\":\"{{device_b}}\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "X-Pool-Device-Key",
+                                                        "value":  "{{device_key}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "20 ESP key cannot address device B",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 401\u0027,()=\u003epm.response.to.have.status(401));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"upload_sample\",\"device_id\":\"{{device_a}}\",\"sample_id\":\"0000000000000001\",\"measured_at_ms\":{{measured_ms}},\"time_quality\":\"synced\",\"temperature\":27.5,\"water_adc\":2200,\"is_backfill\":false}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "X-Pool-Device-Key",
+                                                        "value":  "{{device_key}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "21 Insert test measurement (synthetic, no real ESP)",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 201\u0027,()=\u003epm.response.to.have.status(201));",
+                                                                   "pm.variables.set(\"first_received_at\",pm.response.json().sample.received_at);"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"upload_sample\",\"device_id\":\"{{device_a}}\",\"sample_id\":\"0000000000000001\",\"measured_at_ms\":{{measured_ms}},\"time_quality\":\"synced\",\"temperature\":27.5,\"water_adc\":2200,\"is_backfill\":false}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "X-Pool-Device-Key",
+                                                        "value":  "{{device_key}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "22 Exact retry is duplicate, first receive time unchanged",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "pm.test(\"Idempotent\",()=\u003e{pm.expect(pm.response.json().duplicate).to.eql(true);pm.expect(pm.response.json().sample.received_at).to.eql(pm.variables.get(\"first_received_at\"));});"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"upload_sample\",\"device_id\":\"{{device_a}}\",\"sample_id\":\"0000000000000001\",\"measured_at_ms\":{{measured_ms}},\"time_quality\":\"synced\",\"temperature\":28.5,\"water_adc\":2200,\"is_backfill\":false}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "X-Pool-Device-Key",
+                                                        "value":  "{{device_key}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "23 Changed payload under same sample ID rejected",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 409\u0027,()=\u003epm.response.to.have.status(409));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"upload_sample\",\"device_id\":\"{{device_a}}\",\"sample_id\":\"0000000000000002\",\"measured_at_ms\":null,\"time_quality\":\"unknown\",\"temperature\":26,\"water_adc\":2000,\"is_backfill\":true}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "X-Pool-Device-Key",
+                                                        "value":  "{{device_key}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "24 Offline unknown-time sample remains unknown",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 201\u0027,()=\u003epm.response.to.have.status(201));",
+                                                                   "pm.test(\"No invented time\",()=\u003epm.expect(pm.response.json().sample.measured_at_ms).to.eql(null));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"get_history\",\"device_id\":\"{{device_a}}\",\"time_basis\":\"received\",\"from_ms\":0,\"to_ms\":4102444799999,\"limit\":1}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_a_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "25 History received basis with cursor",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "pm.variables.set(\"history_cursor\",pm.response.json().next_cursor);pm.test(\"Next page available\",()=\u003epm.expect(pm.response.json().next_cursor).to.be.a(\"string\"));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"get_history\",\"device_id\":\"{{device_a}}\",\"time_basis\":\"received\",\"from_ms\":0,\"to_ms\":4102444799999,\"limit\":1,\"cursor\":\"{{history_cursor}}\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_a_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "26 History next page",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"get_history\",\"device_id\":\"{{device_a}}\",\"time_basis\":\"measured\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_b_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "27 Measured-time history excludes unknown sample",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "pm.test(\"Only actual measured time\",()=\u003e{const s=pm.response.json().samples;pm.expect(s.length).to.eql(1);pm.expect(s[0].sample_id).to.eql(\"0000000000000001\");});"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"get_history\",\"device_id\":\"{{device_a}}\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "28 No session cannot read history",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 401\u0027,()=\u003epm.response.to.have.status(401));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"report_status\",\"device_id\":\"{{device_a}}\",\"boot_id\":\"{{boot_id}}\",\"state_sequence\":1,\"pump_in\":false,\"pump_out\":false,\"temperature_enabled\":true,\"water_enabled\":true,\"reported_at_ms\":{{measured_ms}},\"reported_config_revision\":1}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "X-Pool-Device-Key",
+                                                        "value":  "{{device_key}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "29 Report synthetic OFF state, no pump control",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"report_status\",\"device_id\":\"{{device_a}}\",\"boot_id\":\"{{boot_id}}\",\"state_sequence\":1,\"pump_in\":false,\"pump_out\":false,\"temperature_enabled\":true,\"water_enabled\":true,\"reported_at_ms\":{{measured_ms}},\"reported_config_revision\":1}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "X-Pool-Device-Key",
+                                                        "value":  "{{device_key}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "30 Repeat state report idempotently",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "pm.test(\"Duplicate\",()=\u003epm.expect(pm.response.json().duplicate).to.eql(true));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"get_status\",\"device_id\":\"{{device_a}}\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_a_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "31 Read status split from sensor history",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "pm.test(\"Both sample clocks exposed\",()=\u003e{pm.expect(pm.response.json().latest_measured_sample.measured_at_ms).to.be.a(\"number\");pm.expect(pm.response.json().last_received_sample.measured_at_ms).to.eql(null);});"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"request_control\",\"device_id\":\"{{device_a}}\",\"request_id\":\"{{command_request_id}}\",\"target\":\"pump_in\",\"enabled\":false,\"ttl_seconds\":60}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_a_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "32 Request OFF command, API does not publish MQTT",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "pm.variables.set(\"command_id\",pm.response.json().command.command_id);pm.test(\"No implied execution\",()=\u003epm.expect(pm.response.json().delivery).to.eql(\"not_published_by_api\"));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"request_control\",\"device_id\":\"{{device_b}}\",\"request_id\":\"{{command_request_id}}\",\"target\":\"pump_in\",\"enabled\":false}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_b_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "33 View-only member cannot request control",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 403\u0027,()=\u003epm.response.to.have.status(403));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"get_command\",\"device_id\":\"{{device_a}}\",\"command_id\":\"{{command_id}}\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_b_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "34 Read pending command",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"acknowledge_command\",\"device_id\":\"{{device_a}}\",\"command_id\":\"{{command_id}}\",\"result\":\"rejected\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "X-Pool-Device-Key",
+                                                        "value":  "{{device_key}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "35 Device rejects synthetic command (no pump action)",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"record_activity\",\"device_id\":\"{{device_a}}\",\"event_id\":\"{{event_id}}\",\"request_id\":\"{{request_id}}\",\"event_action\":\"pump_failed\",\"occurred_at_ms\":{{measured_ms}}}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_a_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "36 Client report, never backend audit",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"list_activity\",\"device_id\":\"{{device_a}}\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_b_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "37 Both members see device history of actions",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "pm.test(\"Client and backend sources distinct\",()=\u003e{const e=pm.response.json().events;pm.expect(e.some(x=\u003ex.source===\"client\"\u0026\u0026x.result===\"client_reported\")).to.eql(true);pm.expect(e.some(x=\u003ex.source===\"backend\"\u0026\u0026x.action===\"config_updated\")).to.eql(true);});"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"list_device_members\",\"device_id\":\"{{device_a}}\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "38 Admin sees both members",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "pm.test(\"Two members\",()=\u003epm.expect(pm.response.json().members.length).to.eql(2));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"remove_device_member\",\"device_id\":\"{{device_a}}\",\"user_id\":{{user_a_id}}}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "39 Remove A only from device A",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"get_config\",\"device_id\":\"{{device_a}}\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_a_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "40 Removed A denied",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 403\u0027,()=\u003epm.response.to.have.status(403));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"get_config\",\"device_id\":\"{{device_a}}\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_b_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "41 B still has device A",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"get_config\",\"device_id\":\"{{device_b}}\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_b_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "42 B still has device B",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"list_admin_audit\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_b_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "43 Admin audit cannot be read by user",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 403\u0027,()=\u003epm.response.to.have.status(403));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"list_admin_audit\",\"limit\":100}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "44 Admin reads backend audit",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"revoke_device_credential\",\"device_id\":\"{{device_a}}\",\"credential_id\":{{credential_id}}}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "45 Revoke temporary ESP key",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"device_identity\",\"device_id\":\"{{device_a}}\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "X-Pool-Device-Key",
+                                                        "value":  "{{device_key}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "46 Revoked ESP key rejected",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 401\u0027,()=\u003epm.response.to.have.status(401));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"set_device_active\",\"device_id\":\"{{device_a}}\",\"is_active\":false}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "47a Deactivate test device a",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"logout\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_a_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "48a Logout user a",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"set_user_active\",\"user_id\":{{user_a_id}},\"is_active\":false}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "49a Disable test user a",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"set_device_active\",\"device_id\":\"{{device_b}}\",\"is_active\":false}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "47b Deactivate test device b",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"logout\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{user_b_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "48b Logout user b",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"set_user_active\",\"user_id\":{{user_b_id}},\"is_active\":false}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "49b Disable test user b",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 },
+                 {
+                     "request":  {
+                                     "body":  {
+                                                  "raw":  "{\"action\":\"logout\"}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              },
+                                     "method":  "POST",
+                                     "url":  "{{api_url}}",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    },
+                                                    {
+                                                        "key":  "Authorization",
+                                                        "value":  "Bearer {{admin_token}}"
+                                                    }
+                                                ]
+                                 },
+                     "name":  "50 Logout admin",
+                     "event":  [
+                                   {
+                                       "script":  {
+                                                      "exec":  [
+                                                                   "pm.test(\u0027HTTP 200\u0027,()=\u003epm.response.to.have.status(200));",
+                                                                   "for(const k of [\"admin_token\",\"user_a_token\",\"user_b_token\",\"device_key\"])pm.variables.unset(k);"
+                                                               ],
+                                                      "type":  "text/javascript"
+                                                  },
+                                       "listen":  "test"
+                                   }
+                               ]
+                 }
+             ],
+    "auth":  {
+                 "type":  "noauth"
+             }
+}

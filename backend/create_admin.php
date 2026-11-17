@@ -1,63 +1,31 @@
 <?php
-if (PHP_SAPI !== 'cli') {
-    http_response_code(404);
-    exit;
+if(PHP_SAPI!=='cli'){http_response_code(404);exit;}
+require_once __DIR__.'/migration_lib.php';
+require_once __DIR__.'/api_core.php';
+$db=null;$hidden=false;
+try {
+    $db=pool_v2_connect();pool_v2_lock($db);$db->begin_transaction();
+    if((int)$db->query("SELECT COUNT(*) FROM users WHERE role='admin'")->fetch_row()[0]>0)throw new RuntimeException('Admin already exists');
+    echo 'Admin username (3-64 ASCII characters): ';
+    $username=trim((string)fgets(STDIN));
+    if(!preg_match('/^[A-Za-z0-9._-]{3,64}$/D',$username))throw new RuntimeException('Invalid username');
+    echo 'Full name: ';$fullName=trim((string)fgets(STDIN));
+    $fullName=api_text(array('full_name'=>$fullName),'full_name',128);
+    echo 'Admin password (hidden on Pi, 8-72 bytes): ';
+    if(PHP_OS_FAMILY!=='Windows'&&function_exists('stream_isatty')&&stream_isatty(STDIN)) {
+        system('stty -echo 2>/dev/null',$result);$hidden=$result===0;
+    }
+    try {$password=rtrim((string)fgets(STDIN),"\r\n");}
+    finally {if($hidden){system('stty echo 2>/dev/null');$hidden=false;}echo "\n";}
+    if(strlen($password)<8||strlen($password)>72||str_contains($password,"\0"))throw new RuntimeException('Invalid password');
+    $hash=password_hash($password,PASSWORD_DEFAULT);unset($password);
+    api_query($db,"INSERT INTO users(username,password_hash,full_name,role) VALUES (?,?,?,'admin')",'sss',array($username,$hash,$fullName));
+    $id=(int)$db->insert_id;
+    api_log($db,array('id'=>$id,'username'=>$username),null,'bootstrap_admin',array('user_id'=>$id));
+    $db->commit();echo "Admin created.\n";
+} catch(Throwable $error) {
+    if($hidden)system('stty echo 2>/dev/null');
+    if($db){try{$db->rollback();}catch(Throwable $ignored){}$db->close();}
+    fwrite(STDERR,"Admin creation stopped. Check input, apply the v2 schema first, and ensure no admin exists.\n");exit(1);
 }
-
-require_once __DIR__ . '/database.php';
-$conn = pool_database_connect();
-if ($conn->connect_error) {
-    fwrite(STDERR, "Cannot connect to pool_db: " . $conn->connect_error . PHP_EOL);
-    exit(1);
-}
-$conn->set_charset('utf8mb4');
-
-$result = $conn->query("SELECT COUNT(*) AS total FROM pool_users WHERE role = 'admin'");
-if (!$result) {
-    fwrite(STDERR, "Cannot read pool_users; import pool_db.sql first." . PHP_EOL);
-    $conn->close();
-    exit(1);
-}
-$row = $result->fetch_assoc();
-$result->free();
-if ((int)$row['total'] > 0) {
-    fwrite(STDERR, "An admin account already exists; create additional accounts from the app." . PHP_EOL);
-    $conn->close();
-    exit(1);
-}
-
-echo 'Admin username (3-64 characters): ';
-$username = trim((string)fgets(STDIN));
-if (!preg_match('/^[A-Za-z0-9._-]{3,64}$/', $username)) {
-    fwrite(STDERR, "Username may contain letters, numbers, dot, underscore and hyphen only." . PHP_EOL);
-    $conn->close();
-    exit(1);
-}
-echo 'Admin password (8-72 bytes): ';
-$password = rtrim((string)fgets(STDIN), "\r\n");
-if (strlen($password) < 8 || strlen($password) > 72) {
-    fwrite(STDERR, "Password must be 8-72 bytes." . PHP_EOL);
-    $conn->close();
-    exit(1);
-}
-
-$passwordHash = password_hash($password, PASSWORD_DEFAULT);
-$stmt = $conn->prepare("INSERT INTO pool_users (username, password_hash, role) VALUES (?, ?, 'admin')");
-if (!$passwordHash || !$stmt) {
-    fwrite(STDERR, "Could not prepare admin account creation." . PHP_EOL);
-    if ($stmt) $stmt->close();
-    $conn->close();
-    exit(1);
-}
-$stmt->bind_param('ss', $username, $passwordHash);
-if (!$stmt->execute()) {
-    fwrite(STDERR, "Could not create admin: " . $stmt->error . PHP_EOL);
-    $stmt->close();
-    $conn->close();
-    exit(1);
-}
-
-echo "Admin account created." . PHP_EOL;
-$stmt->close();
-$conn->close();
-?>
+$db->query("SELECT RELEASE_LOCK('smartpool_schema_migrate')");$db->close();

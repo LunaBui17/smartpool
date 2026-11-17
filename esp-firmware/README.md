@@ -1,5 +1,7 @@
 # Firmware ESP32-S3 Smart Pool
 
+**Tương thích backend:** firmware trong thư mục này chưa tích hợp database/API v2 nhiều thiết bị. Payload HTTP, credential theo thiết bị, giờ đo NVS, status boot/sequence và config revision cần cập nhật trước khi dùng với backend mới. Xem [hợp đồng v2](../docs/database-v2.md). BLE chưa triển khai.
+
 [Hướng dẫn tổng thể](../README.md) · [Luồng toàn hệ thống](../docs/system-flow.md) · [Giao thức MQTT](../README_MQTT_ESP32.md) · [Triển khai Raspberry Pi](../deploy/raspberry-pi/README.md)
 
 Firmware đọc cảm biến, điều khiển hai relay, tự động hóa bơm ngay trên ESP32-S3 và kết nối với backend Smart Pool:

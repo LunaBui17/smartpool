@@ -26,9 +26,11 @@ if [[ ! -f .env ]]; then
 fi
 chmod 600 .env
 pool_compose config --quiet
-pool_compose up -d --build --wait --wait-timeout 600 db api mqtt-init mqtt adminer
-pool_compose exec -T db sh -ec 'MYSQL_PWD="$MARIADB_PASSWORD" exec mariadb -u "$MARIADB_USER" "$MARIADB_DATABASE"' \
-    < ../../backend/migrations/001_activity_log.sql
+pool_compose up -d --wait --wait-timeout 600 db mqtt-init mqtt adminer
+pool_compose build api
+# Never reset data implicitly. A legacy schema stops here with reset instructions.
+pool_compose run --rm --no-deps -T api php /opt/smartpool/migrate.php
+pool_compose up -d --no-deps --wait --wait-timeout 600 api
 bash smoke-test.sh
 echo 'Ready. Create the first API admin:'
 echo '  docker compose exec api php /opt/smartpool/create_admin.php'

@@ -1,5 +1,7 @@
 # Ứng dụng Android Smart Pool
 
+**Tương thích backend:** app hiện tại chưa tích hợp API v2, role user, danh sách/chọn thiết bị và context device_id. Các hành vi admin/guest bên dưới mô tả client cũ; không dùng làm bằng chứng tương thích backend mới. Xem [hợp đồng v2](../docs/database-v2.md). BLE chưa triển khai.
+
 [Hướng dẫn tổng thể](../README.md) · [Giao thức MQTT](../README_MQTT_ESP32.md) · [Luồng toàn hệ thống](../docs/system-flow.md) · [Triển khai Raspberry Pi](../deploy/raspberry-pi/README.md)
 
 Ứng dụng đăng nhập và đọc số đo/lịch sử qua HTTPS API; điều khiển bơm, nhận trạng thái ESP32 và cấu hình thiết bị qua MQTT. Dịch vụ nền nhận telemetry để phát cảnh báo. Admin có thể tạo tài khoản admin/guest và quản lý guest; người dùng có thể xem biểu đồ và nhật ký thao tác.
