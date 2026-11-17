@@ -6,6 +6,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.android.volley.DefaultRetryPolicy;
@@ -23,7 +24,7 @@ import java.util.Locale;
 public class LoginActivity extends AppCompatActivity {
     private EditText username;
     private EditText password;
-    private EditText apiUrl;
+    private TextView configureApiUrl;
     private Button login;
     private TextView status;
     private androidx.appcompat.widget.SwitchCompat rememberLogin;
@@ -36,14 +37,42 @@ public class LoginActivity extends AppCompatActivity {
 
         username = findViewById(R.id.edtLoginUsername);
         password = findViewById(R.id.edtLoginPassword);
-        apiUrl = findViewById(R.id.edtLoginApiUrl);
-        apiUrl.setText(AppConfig.getInstance(this).getHttpApiUrl());
+        configureApiUrl = findViewById(R.id.txtConfigureApiUrl);
         login = findViewById(R.id.btnLogin);
         status = findViewById(R.id.txtLoginStatus);
         rememberLogin = findViewById(R.id.switchRememberLogin);
         rememberLogin.setChecked(UserSession.isRememberEnabled(this));
         requestQueue = Volley.newRequestQueue(getApplicationContext());
+        configureApiUrl.setOnClickListener(v -> showApiUrlDialog());
         login.setOnClickListener(v -> submitLogin());
+    }
+
+    private void showApiUrlDialog() {
+        EditText input = new EditText(this);
+        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        input.setSingleLine(true);
+        input.setText(AppConfig.getInstance(this).getHttpApiUrl());
+        input.setSelection(input.length());
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Cập nhật URL máy chủ API")
+                .setView(input)
+                .setNegativeButton("Hủy", null)
+                .setPositiveButton("Cập nhật", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    try {
+                        String url = normalizeApiUrl(input.getText().toString().trim());
+                        AppConfig.getInstance(this).setHttpApiUrl(url);
+                        status.setText("");
+                        dialog.dismiss();
+                    } catch (URISyntaxException e) {
+                        input.setError("Nhập URL API HTTP hoặc HTTPS hợp lệ");
+                    }
+                }));
+        dialog.show();
     }
 
     private void submitLogin() {
@@ -54,26 +83,14 @@ public class LoginActivity extends AppCompatActivity {
             return;
         }
 
-        String url = apiUrl.getText().toString().trim();
+        String url;
         try {
-            URI uri = new URI(url);
-            if ((!"https".equalsIgnoreCase(uri.getScheme())
-                    && !"http".equalsIgnoreCase(uri.getScheme()))
-                    || uri.getHost() == null || uri.getUserInfo() != null
-                    || uri.getFragment() != null) {
-                throw new URISyntaxException(url, "Invalid API URL");
-            }
-            if (uri.getRawPath() == null || uri.getRawPath().isEmpty()
-                    || "/".equals(uri.getRawPath())) {
-                url = new URI(uri.getScheme(), uri.getRawAuthority(),
-                        "/pool_api/pool_api.php", null, null).toString();
-            }
+            url = normalizeApiUrl(AppConfig.getInstance(this).getHttpApiUrl().trim());
         } catch (URISyntaxException e) {
-            apiUrl.setError("Nhập URL API HTTP hoặc HTTPS hợp lệ");
+            status.setText("URL API không hợp lệ. Nhấn vào dòng URL để cập nhật.");
             return;
         }
         AppConfig.getInstance(this).setHttpApiUrl(url);
-        apiUrl.setText(url);
 
         login.setEnabled(false);
         status.setText("Đang xác thực tài khoản...");
@@ -132,6 +149,22 @@ public class LoginActivity extends AppCompatActivity {
         request.setRetryPolicy(new DefaultRetryPolicy(8000, 0, 1.0f));
         request.setTag(this);
         requestQueue.add(request);
+    }
+
+    private String normalizeApiUrl(String url) throws URISyntaxException {
+        URI uri = new URI(url);
+        if ((!"https".equalsIgnoreCase(uri.getScheme())
+                && !"http".equalsIgnoreCase(uri.getScheme()))
+                || uri.getHost() == null || uri.getUserInfo() != null
+                || uri.getFragment() != null) {
+            throw new URISyntaxException(url, "Invalid API URL");
+        }
+        if (uri.getRawPath() == null || uri.getRawPath().isEmpty()
+                || "/".equals(uri.getRawPath())) {
+            return new URI(uri.getScheme(), uri.getRawAuthority(),
+                    "/pool_api/pool_api.php", null, null).toString();
+        }
+        return uri.toString();
     }
 
     @Override
