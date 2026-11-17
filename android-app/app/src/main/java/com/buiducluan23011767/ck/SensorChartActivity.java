@@ -23,8 +23,11 @@ import com.android.volley.toolbox.Volley;
 import org.json.JSONArray;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.text.SimpleDateFormat;
 
 public class SensorChartActivity extends AppCompatActivity {
     public static final String EXTRA_SENSOR = "sensor";
@@ -34,8 +37,11 @@ public class SensorChartActivity extends AppCompatActivity {
     private static final String TAG = "SensorChartActivity";
     private static final int HISTORY_LIMIT = 100;
 
-    private final List<Double> temperatures = new ArrayList<>();
-    private final List<Double> adcValues = new ArrayList<>();
+    private final List<HistoryPoint> temperatures = new ArrayList<>();
+    private final List<HistoryPoint> adcValues = new ArrayList<>();
+    private long startMs;
+    private long endMs;
+    private int missingTimestamps;
     private TextView title;
     private TextView status;
     private Button temperatureTab;
@@ -63,8 +69,11 @@ public class SensorChartActivity extends AppCompatActivity {
         adcTab = findViewById(R.id.btnAdcTab);
         chartContainer = findViewById(R.id.chartContainer);
 
-        String requestedSensor = getIntent().getStringExtra(EXTRA_SENSOR);
-        if (SENSOR_ADC.equals(requestedSensor)) selectedSensor = SENSOR_ADC;
+        String requestedSensor = savedInstanceState != null
+                ? savedInstanceState.getString(EXTRA_SENSOR)
+                : getIntent().getStringExtra(EXTRA_SENSOR);
+        if (requestedSensor == null) requestedSensor = AppConfig.getInstance(this).getChartSensor();
+        selectedSensor = SENSOR_ADC.equals(requestedSensor) ? SENSOR_ADC : SENSOR_TEMPERATURE;
 
         findViewById(R.id.btnChartBack).setOnClickListener(v -> finish());
         temperatureTab.setOnClickListener(v -> selectSensor(SENSOR_TEMPERATURE));
@@ -77,6 +86,7 @@ public class SensorChartActivity extends AppCompatActivity {
 
     private void selectSensor(String sensor) {
         selectedSensor = sensor;
+        AppConfig.getInstance(this).setChartSensor(sensor);
         boolean temperatureSelected = SENSOR_TEMPERATURE.equals(sensor);
         title.setText(temperatureSelected ? "Biểu đồ nhiệt độ nước"
                 : "Biểu đồ mực nước (cm)");
@@ -128,19 +138,32 @@ public class SensorChartActivity extends AppCompatActivity {
         AppConfig config = AppConfig.getInstance(this);
         temperatures.clear();
         adcValues.clear();
+        startMs = Long.MAX_VALUE;
+        endMs = 0;
+        missingTimestamps = 0;
         for (int i = 0; i < rows.length(); i++) {
             org.json.JSONObject row = rows.optJSONObject(i);
             if (row == null) continue;
+            long timeMs = row.optLong("received_at_ms", 0);
+            if (timeMs <= 0) {
+                missingTimestamps++;
+                continue;
+            }
+            startMs = Math.min(startMs, timeMs);
+            endMs = Math.max(endMs, timeMs);
 
             if (!row.isNull("nhiet_do")) {
                 double value = row.optDouble("nhiet_do", Double.NaN);
-                if (Double.isFinite(value)) temperatures.add(value);
+                if (Double.isFinite(value)) temperatures.add(new HistoryPoint(timeMs, value));
             }
             if (!row.isNull("muc_nuoc_raw")) {
                 double value = row.optDouble("muc_nuoc_raw", Double.NaN);
                 if (config.isWaterAdcWithinCalibration(value)) {
-                    adcValues.add((double) config.waterAdcToCm(value));
+                    adcValues.add(new HistoryPoint(timeMs, config.waterAdcToCm(value)));
                 }
+                temperatures.sort(Comparator.comparingLong(point -> point.timeMs));
+                adcValues.sort(Comparator.comparingLong(point -> point.timeMs));
+                if (missingTimestamps > 0) Log.w(TAG, "Mẫu thiếu timestamp: " + missingTimestamps);
             }
         }
 
@@ -158,25 +181,31 @@ public class SensorChartActivity extends AppCompatActivity {
         } else {
             int selectedCount = SENSOR_TEMPERATURE.equals(selectedSensor)
                     ? temperatures.size() : adcValues.size();
-            status.setText(UserSession.isAdmin()
-                    ? String.format(Locale.getDefault(),
-                    "Đã tải %d mẫu từ HTTP (tối đa %d).", selectedCount, HISTORY_LIMIT)
-                    : String.format(Locale.getDefault(),
-                    "Đã tải %d mẫu lịch sử.", selectedCount));
+            status.setText(String.format(Locale.getDefault(),
+                    "Đã tải %d mẫu. Trục X: thời điểm máy chủ nhận dữ liệu, giờ điện thoại (%s).",
+                    selectedCount, java.util.TimeZone.getDefault().getID())
+                    + (missingTimestamps == 0 ? "" : "\nBỏ qua " + missingTimestamps
+                    + " mẫu thiếu thời gian. Cần cập nhật API hỗ trợ received_at_ms."));
         }
     }
 
     private void showChart() {
-        List<Double> values = SENSOR_TEMPERATURE.equals(selectedSensor) ? temperatures : adcValues;
+        List<HistoryPoint> values = SENSOR_TEMPERATURE.equals(selectedSensor) ? temperatures : adcValues;
         String unit = SENSOR_TEMPERATURE.equals(selectedSensor) ? "°C"
                 : "cm";
         int color = SENSOR_TEMPERATURE.equals(selectedSensor)
                 ? Color.rgb(14, 165, 233) : Color.rgb(16, 185, 129);
         chartContainer.removeAllViews();
-        chartContainer.addView(new SensorLineChartView(this, values, unit, color),
+        chartContainer.addView(new SensorLineChartView(this, values, unit, color, startMs, endMs),
                 new FrameLayout.LayoutParams(
                         FrameLayout.LayoutParams.MATCH_PARENT,
                         FrameLayout.LayoutParams.MATCH_PARENT));
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        outState.putString(EXTRA_SENSOR, selectedSensor);
+        super.onSaveInstanceState(outState);
     }
 
     @Override
@@ -186,17 +215,21 @@ public class SensorChartActivity extends AppCompatActivity {
     }
 
     private static final class SensorLineChartView extends View {
-        private final List<Double> values;
+        private final List<HistoryPoint> values;
+        private final long startMs;
+        private final long endMs;
         private final String unit;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final int lineColor;
 
-        SensorLineChartView(android.content.Context context, List<Double> values,
-                            String unit, int lineColor) {
+        SensorLineChartView(android.content.Context context, List<HistoryPoint> values,
+                            String unit, int lineColor, long startMs, long endMs) {
             super(context);
             this.values = values;
             this.unit = unit;
             this.lineColor = lineColor;
+            this.startMs = startMs;
+            this.endMs = endMs;
         }
 
         @Override
@@ -205,7 +238,7 @@ public class SensorChartActivity extends AppCompatActivity {
             float left = dp(52);
             float right = getWidth() - dp(14);
             float top = dp(20);
-            float bottom = getHeight() - dp(46);
+            float bottom = getHeight() - dp(80);
 
             if (right <= left || bottom <= top) return;
             paint.setStrokeWidth(dp(1));
@@ -222,8 +255,8 @@ public class SensorChartActivity extends AppCompatActivity {
                 return;
             }
 
-            double min = values.stream().mapToDouble(Double::doubleValue).min().orElse(0);
-            double max = values.stream().mapToDouble(Double::doubleValue).max().orElse(0);
+            double min = values.stream().mapToDouble(point -> point.value).min().getAsDouble();
+            double max = values.stream().mapToDouble(point -> point.value).max().getAsDouble();
             double padding = max == min ? Math.max(Math.abs(max) * 0.05, 1) : (max - min) * 0.12;
             min -= padding;
             max += padding;
@@ -242,9 +275,9 @@ public class SensorChartActivity extends AppCompatActivity {
             float height = bottom - top;
             Path path = new Path();
             for (int i = 0; i < values.size(); i++) {
-                float x = values.size() == 1 ? (left + right) / 2f
-                        : left + width * i / (values.size() - 1f);
-                float y = bottom - (float) ((values.get(i) - min) / (max - min)) * height;
+                HistoryPoint point = values.get(i);
+                float x = left + width * (float) HistoryPoint.timeFraction(point.timeMs, startMs, endMs);
+                float y = bottom - (float) ((point.value - min) / (max - min)) * height;
                 if (i == 0) path.moveTo(x, y);
                 else path.lineTo(x, y);
             }
@@ -253,17 +286,32 @@ public class SensorChartActivity extends AppCompatActivity {
             paint.setStrokeWidth(dp(2.5f));
             canvas.drawPath(path, paint);
             paint.setStyle(Paint.Style.FILL);
+            for (HistoryPoint point : values) {
+                float x = left + width * (float) HistoryPoint.timeFraction(point.timeMs, startMs, endMs);
+                float y = bottom - (float) ((point.value - min) / (max - min)) * height;
+                canvas.drawCircle(x, y, dp(2.5f), paint);
+            }
 
-            double latest = values.get(values.size() - 1);
+            double latest = values.get(values.size() - 1).value;
             paint.setColor(Color.rgb(15, 23, 42));
             paint.setTextSize(dp(13));
             canvas.drawText(String.format(Locale.getDefault(), "Mới nhất: %.2f %s", latest, unit),
-                    left, getHeight() - dp(22), paint);
+                    left, getHeight() - dp(10), paint);
             paint.setColor(Color.rgb(100, 116, 139));
             paint.setTextSize(dp(10));
-            canvas.drawText("Cũ nhất", left, getHeight() - dp(6), paint);
-            String newest = "Mới nhất";
-            canvas.drawText(newest, right - paint.measureText(newest), getHeight() - dp(6), paint);
+            SimpleDateFormat time = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
+            SimpleDateFormat date = new SimpleDateFormat("dd/MM/yyyy", Locale.getDefault());
+            int tickCount = startMs == endMs ? 1 : 3;
+            for (int i = 0; i < tickCount; i++) {
+                double fraction = tickCount == 1 ? 0.5 : i / 2.0;
+                long timestamp = startMs + Math.round((endMs - startMs) * fraction);
+                float x = left + width * (float) fraction;
+                paint.setTextAlign(tickCount == 1 || i == 1 ? Paint.Align.CENTER
+                        : i == 0 ? Paint.Align.LEFT : Paint.Align.RIGHT);
+                canvas.drawText(time.format(new Date(timestamp)), x, bottom + dp(18), paint);
+                canvas.drawText(date.format(new Date(timestamp)), x, bottom + dp(32), paint);
+            }
+            paint.setTextAlign(Paint.Align.LEFT);
         }
 
         private float dp(float value) {

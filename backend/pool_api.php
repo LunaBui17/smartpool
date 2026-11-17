@@ -38,7 +38,7 @@ function find_session_user($conn)
     if ($token === '') return null;
     $tokenHash = hash('sha256', $token);
     $stmt = $conn->prepare(
-        'SELECT u.id, u.role FROM pool_user_sessions s '
+        'SELECT u.id, u.role, u.username FROM pool_user_sessions s '
         . 'JOIN pool_users u ON u.id = s.user_id '
         . 'WHERE s.token_hash = ? AND s.expires_at > NOW() AND u.is_active = 1 LIMIT 1'
     );
@@ -48,8 +48,9 @@ function find_session_user($conn)
         $stmt->close();
         return null;
     }
-    $stmt->bind_result($userId, $role);
-    $user = $stmt->fetch() ? array('id' => (int)$userId, 'role' => $role) : null;
+    $stmt->bind_result($userId, $role, $username);
+    $user = $stmt->fetch()
+        ? array('id' => (int)$userId, 'role' => $role, 'username' => $username) : null;
     $stmt->close();
     return $user;
 }
@@ -63,7 +64,8 @@ if ($method === 'GET') {
             $conn->close();
             exit;
         }
-        $result = $conn->query('SELECT sample_id, nhiet_do, muc_nuoc_raw, received_at FROM '
+        $result = $conn->query('SELECT sample_id, nhiet_do, muc_nuoc_raw, received_at, '
+            . 'CAST(UNIX_TIMESTAMP(received_at) * 1000 AS UNSIGNED) AS received_at_ms FROM '
             . '(SELECT sample_id, nhiet_do, muc_nuoc_raw, received_at FROM pool_history '
             . 'WHERE nhiet_do IS NOT NULL OR muc_nuoc_raw IS NOT NULL '
             . 'ORDER BY received_at DESC, sample_id DESC LIMIT ' . (int)$limit . ') recent '
@@ -76,6 +78,7 @@ if ($method === 'GET') {
             while ($row = $result->fetch_assoc()) {
                 $row['nhiet_do'] = $row['nhiet_do'] === null ? null : (float)$row['nhiet_do'];
                 $row['muc_nuoc_raw'] = $row['muc_nuoc_raw'] === null ? null : (int)$row['muc_nuoc_raw'];
+                $row['received_at_ms'] = (int)$row['received_at_ms'];
                 $rows[] = $row;
             }
             echo json_encode($rows, JSON_UNESCAPED_UNICODE);
@@ -156,6 +159,92 @@ if ($method === 'POST') {
 
     if (isset($data['action'])) {
         $action = (string)$data['action'];
+        if ($action === 'record_activity' || $action === 'list_activity') {
+            $user = find_session_user($conn);
+            if (!$user) {
+                http_response_code(403);
+                echo json_encode(array('status' => 'error', 'message' => 'Cần phiên đăng nhập hợp lệ'));
+                $conn->close();
+                exit;
+            }
+            if ($action === 'list_activity') {
+                $where = $user['role'] === 'admin' ? '' : ' WHERE user_id = ' . (int)$user['id'];
+                $result = $conn->query('SELECT event_id, request_id, username, device_id, action, '
+                    . 'result, detail, occurred_at_ms FROM pool_activity_log' . $where
+                    . ' ORDER BY occurred_at_ms DESC, event_id DESC LIMIT 100');
+                if (!$result) {
+                    http_response_code(500);
+                    echo json_encode(array('status' => 'error', 'message' =>
+                        'Không đọc được nhật ký; cần cập nhật migration database'));
+                } else {
+                    $events = array();
+                    while ($row = $result->fetch_assoc()) {
+                        $row['occurred_at_ms'] = (int)$row['occurred_at_ms'];
+                        $events[] = $row;
+                    }
+                    $result->free();
+                    echo json_encode(array('status' => 'success', 'events' => $events),
+                        JSON_UNESCAPED_UNICODE);
+                }
+                $conn->close();
+                exit;
+            }
+            $events = isset($data['events']) ? $data['events'] : null;
+            $uuidPattern = '/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/';
+            $valid = is_array($events) && count($events) >= 1 && count($events) <= 20;
+            if ($valid) {
+                foreach ($events as $event) {
+                    if (!is_array($event)) { $valid = false; break; }
+                    foreach (array('event_id' => 36, 'request_id' => 36, 'device_id' => 64,
+                                   'action' => 120, 'result' => 16, 'detail' => 256) as $key => $max) {
+                        if (!isset($event[$key]) || !is_string($event[$key])
+                            || strlen($event[$key]) > $max * 4
+                            || preg_match('/^.{0,' . $max . '}$/us', $event[$key]) !== 1) {
+                            $valid = false;
+                            break;
+                        }
+                    }
+                    if (!$valid || !preg_match($uuidPattern, $event['event_id'])
+                        || !preg_match($uuidPattern, $event['request_id'])
+                        || trim($event['action']) === '' || trim($event['device_id']) === ''
+                        || !in_array($event['result'], array('requested', 'confirmed', 'failed',
+                            'timeout', 'interrupted', 'saved', 'published'), true)
+                        || !isset($event['occurred_at_ms']) || !is_int($event['occurred_at_ms'])
+                        || $event['occurred_at_ms'] < 1 || $event['occurred_at_ms'] > 4102444799999) {
+                        $valid = false;
+                        break;
+                    }
+                }
+            }
+            if (!$valid) {
+                http_response_code(400);
+                echo json_encode(array('status' => 'error', 'message' => 'Dữ liệu nhật ký không hợp lệ'));
+                $conn->close();
+                exit;
+            }
+            $stmt = $conn->prepare('INSERT INTO pool_activity_log '
+                . '(event_id, request_id, user_id, username, device_id, action, result, detail, occurred_at_ms) '
+                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE event_id = event_id');
+            $saved = $stmt && $conn->begin_transaction();
+            if ($saved) {
+                foreach ($events as $event) {
+                    $occurredAt = (string)$event['occurred_at_ms'];
+                    $stmt->bind_param('ssissssss', $event['event_id'], $event['request_id'], $user['id'],
+                        $user['username'], $event['device_id'], $event['action'], $event['result'],
+                        $event['detail'], $occurredAt);
+                    if (!$stmt->execute()) { $saved = false; break; }
+                }
+                if ($saved) $saved = $conn->commit();
+                if (!$saved) $conn->rollback();
+            }
+            if ($stmt) $stmt->close();
+            if (!$saved) http_response_code(500);
+            echo json_encode(array('status' => $saved ? 'success' : 'error', 'message' =>
+                $saved ? 'Đã lưu nhật ký' : 'Không lưu được nhật ký; kiểm tra migration database'),
+                JSON_UNESCAPED_UNICODE);
+            $conn->close();
+            exit;
+        }
         if ($action === 'login') {
             $conn->query('DELETE FROM pool_user_sessions WHERE expires_at <= NOW()');
             $username = isset($data['username']) ? trim((string)$data['username']) : '';
@@ -301,7 +390,8 @@ if ($method === 'POST') {
             }
             $result = $conn->query(
                 "SELECT id, username, role, is_active, created_at FROM pool_users "
-                . "WHERE role = 'guest' ORDER BY id ASC"
+                . ((!empty($data['include_admins']) && $data['include_admins'] === true)
+                    ? 'ORDER BY id ASC' : "WHERE role = 'guest' ORDER BY id ASC")
             );
             if (!$result) {
                 http_response_code(500);
@@ -336,7 +426,8 @@ if ($method === 'POST') {
             $active = isset($data['is_active']) ? (bool)$data['is_active'] : true;
             if ($userId === false || $userId < 0
                 || !preg_match('/^[A-Za-z0-9._-]{3,64}$/', $username)
-                || $role !== 'guest'
+                || !in_array($role, array('admin', 'guest'), true)
+                || ($userId > 0 && $role !== 'guest')
                 || ($password !== '' && (strlen($password) < 8 || strlen($password) > 72))
                 || ($userId === 0 && $password === '')) {
                 http_response_code(400);

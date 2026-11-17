@@ -121,6 +121,7 @@ public class SettingsActivity extends AppCompatActivity {
     private TextView txtSettingsFeedback;
     private EditText edtUserUsername;
     private EditText edtUserPassword;
+    private Spinner spnUserRole;
     private androidx.appcompat.widget.SwitchCompat switchUserActive;
     private Button btnSaveUser;
     private Button btnCancelUserEdit;
@@ -148,6 +149,8 @@ public class SettingsActivity extends AppCompatActivity {
 
     // Mechanism 2: Double check cấu hình qua ACK & Request ID
     private String pendingAckReqId = null;
+    private String pendingAckAction;
+    private String pendingConfigLog;
     private static final long ACK_TIMEOUT_MS = 10000L;
     private final Runnable ackTimeoutRunnable = this::handleAckTimeout;
 
@@ -193,6 +196,7 @@ public class SettingsActivity extends AppCompatActivity {
 
         refreshMqttActions();
         connectMqtt();
+        showSettingsTab(config.getSettingsTab());
     }
 
     private void initViews() {
@@ -248,6 +252,9 @@ public class SettingsActivity extends AppCompatActivity {
         txtSettingsFeedback = findViewById(R.id.txtSettingsFeedback);
         edtUserUsername = findViewById(R.id.edtUserUsername);
         edtUserPassword = findViewById(R.id.edtUserPassword);
+        spnUserRole = findViewById(R.id.spnUserRole);
+        spnUserRole.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, new String[]{"Guest", "Admin"}));
         switchUserActive = findViewById(R.id.switchUserActive);
         btnSaveUser = findViewById(R.id.btnSaveUser);
         btnCancelUserEdit = findViewById(R.id.btnCancelUserEdit);
@@ -284,6 +291,7 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     private void showSettingsTab(int selected) {
+        config.setSettingsTab(selected);
         settingsContent.setVisibility(selected == 0 ? View.VISIBLE : View.GONE);
         automationContent.setVisibility(selected == 1 ? View.VISIBLE : View.GONE);
         usersContent.setVisibility(selected == 2 ? View.VISIBLE : View.GONE);
@@ -925,6 +933,8 @@ public class SettingsActivity extends AppCompatActivity {
         handler.removeCallbacks(resetConfirmationExpiry);
         resetConfirmationPending = false;
         btnResetDefaults.setText("Khôi phục mặc định");
+        OperationLog.get(this).record("Khôi phục cài đặt mặc định", "saved",
+                "Đặt lại cấu hình app, không đặt lại ESP32");
         config.resetToDefaults();
         loadValuesToViews();
         showSettingsFeedback("Đã khôi phục cài đặt mặc định.", false);
@@ -977,7 +987,7 @@ public class SettingsActivity extends AppCompatActivity {
             if (editingUserId != 0) body.put("user_id", editingUserId);
             body.put("username", username);
             if (!password.isEmpty()) body.put("password", password);
-            body.put("role", "guest");
+            body.put("role", editing || spnUserRole.getSelectedItemPosition() == 0 ? "guest" : "admin");
             body.put("is_active", switchUserActive.isChecked());
         } catch (org.json.JSONException e) {
             showSettingsFeedback("Không thể tạo yêu cầu lưu tài khoản.", true);
@@ -991,17 +1001,21 @@ public class SettingsActivity extends AppCompatActivity {
             showSettingsFeedback("Hãy cấu hình HTTP API trước khi lưu tài khoản.", true);
             return;
         }
+        final String operation = OperationLog.get(this).begin(
+                (editing ? "Sửa tài khoản " : "Tạo tài khoản ") + username);
         JsonObjectRequest request = new JsonObjectRequest(
                 Request.Method.POST,
                 apiUrl,
                 body,
                 response -> {
+                    OperationLog.get(this).finish(operation, "confirmed", "API đã lưu tài khoản");
                     resetUserForm();
                     showSettingsFeedback(editing
                             ? "Đã cập nhật tài khoản: " + username : "Đã tạo tài khoản: " + username, false);
                     requestUsers();
                 },
                 error -> {
+                    OperationLog.get(this).finish(operation, "failed", "API không xác nhận lưu tài khoản");
                     showAccountApiError(error, "Không lưu được tài khoản.");
                 }
         ) {
@@ -1025,6 +1039,7 @@ public class SettingsActivity extends AppCompatActivity {
         JSONObject body = new JSONObject();
         try {
             body.put("action", "list_users");
+            body.put("include_admins", true);
         } catch (org.json.JSONException e) {
             showSettingsFeedback("Không thể tạo yêu cầu tải danh sách.", true);
             return;
@@ -1079,9 +1094,11 @@ public class SettingsActivity extends AppCompatActivity {
             cardParams.bottomMargin = dp(8);
             layoutUserList.addView(card, cardParams);
 
-            TextView detail = automationLabel(username + " • GUEST"
+            boolean admin = "admin".equals(user.optString("role"));
+            TextView detail = automationLabel(username + (admin ? " • ADMIN" : " • GUEST")
                     + (active ? " • Hoạt động" : " • Đã khóa"), 13, true);
             card.addView(detail);
+            if (admin) continue;
             LinearLayout actions = new LinearLayout(this);
             actions.setOrientation(LinearLayout.HORIZONTAL);
             card.addView(actions);
@@ -1105,6 +1122,8 @@ public class SettingsActivity extends AppCompatActivity {
         editingUserId = user.optInt("id", 0);
         edtUserUsername.setText(user.optString("username", ""));
         edtUserPassword.setText("");
+        spnUserRole.setSelection(0);
+        spnUserRole.setEnabled(false);
         switchUserActive.setChecked(user.optInt("is_active", 0) == 1);
         btnSaveUser.setText("LƯU THAY ĐỔI");
         btnCancelUserEdit.setVisibility(View.VISIBLE);
@@ -1115,6 +1134,8 @@ public class SettingsActivity extends AppCompatActivity {
         editingUserId = 0;
         edtUserUsername.setText("");
         edtUserPassword.setText("");
+        spnUserRole.setSelection(0);
+        spnUserRole.setEnabled(true);
         switchUserActive.setChecked(true);
         btnSaveUser.setText("TẠO TÀI KHOẢN");
         btnCancelUserEdit.setVisibility(View.GONE);
@@ -1137,14 +1158,19 @@ public class SettingsActivity extends AppCompatActivity {
             showSettingsFeedback("Không thể tạo yêu cầu xóa tài khoản.", true);
             return;
         }
+        final String operation = OperationLog.get(this).begin("Xóa tài khoản " + username);
         JsonObjectRequest request = new JsonObjectRequest(
                 Request.Method.POST, apiUrl, body,
                 response -> {
+                    OperationLog.get(this).finish(operation, "confirmed", "API đã xóa tài khoản");
                     showSettingsFeedback("Đã xóa tài khoản: " + username, false);
                     if (editingUserId == userId) resetUserForm();
                     requestUsers();
                 },
-                error -> showAccountApiError(error, "Không xóa được tài khoản.")
+                error -> {
+                    OperationLog.get(this).finish(operation, "failed", "API không xác nhận xóa tài khoản");
+                    showAccountApiError(error, "Không xóa được tài khoản.");
+                }
         ) {
             @Override
             public java.util.Map<String, String> getHeaders() {
@@ -1508,6 +1534,7 @@ public class SettingsActivity extends AppCompatActivity {
 
         config.setWaterLevelCalibration(adcStart, cmStart, adcEnd, cmEnd);
         config.setWaterThresholdsFromCm(Math.min(cmStart, cmEnd), Math.max(cmStart, cmEnd));
+        OperationLog.get(this).record("Lưu hiệu chuẩn mực nước", "saved", "");
         txtWaterCalibrationInfo.setText(String.format(Locale.getDefault(),
                 "Khoảng đo: %.2f–%.2f cm. Ánh xạ cảm biến được dùng nội bộ.",
                 Math.min(cmStart, cmEnd), Math.max(cmStart, cmEnd)));
@@ -1611,6 +1638,8 @@ public class SettingsActivity extends AppCompatActivity {
         config.setMqttBroker(broker);
         config.setMqttUsername(user);
         config.setMqttPassword(pass);
+        OperationLog.get(this).record("Lưu kết nối MQTT", "saved",
+                "Đã lưu kết nối, không ghi thông tin xác thực vào nhật ký");
 
         showSettingsFeedback("Đã lưu Broker và tài khoản MQTT. Đang kết nối lại...", false);
 
@@ -1661,6 +1690,7 @@ public class SettingsActivity extends AppCompatActivity {
         config.setControlMode("mqtt");
 
         if (mqttClient == null || !mqttClient.isConnected()) {
+            OperationLog.get(this).record("Lưu cấu hình HTTP", "saved", "Chưa đồng bộ với ESP32");
             showSettingsFeedback("Đã lưu HTTP trong app. Kết nối MQTT để đồng bộ URL với ESP32.", false);
             return;
         }
@@ -1725,10 +1755,15 @@ public class SettingsActivity extends AppCompatActivity {
                 JSONObject json = new JSONObject(payload);
                 String reqId = json.optString("req_id", "");
                 String action = json.optString("action", "");
-                String status = json.optString("status", "SUCCESS");
+                String status = json.optString("status", "");
                 String message = json.optString("message", "Đã lưu vào bộ nhớ Flash ESP32");
 
-                if (pendingAckReqId != null && pendingAckReqId.equals(reqId)) {
+                if (pendingAckReqId != null && pendingAckReqId.equals(reqId)
+                        && action.equals(pendingAckAction)) {
+                    OperationLog.get(this).finish(pendingConfigLog,
+                            "SUCCESS".equalsIgnoreCase(status) || "OK".equalsIgnoreCase(status)
+                                    ? "confirmed" : "failed", "Đã nhận ACK cấu hình từ ESP32");
+                    pendingConfigLog = null;
                     int completedAutomationChannel = pendingAutomationChannel;
                     if ("UPDATE_AUTOMATION".equals(action)) {
                         pendingAutomationChannel = -1;
@@ -1761,6 +1796,8 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     private void handleAckTimeout() {
+        OperationLog.get(this).finish(pendingConfigLog, "timeout", "Chưa nhận ACK khớp từ ESP32");
+        pendingConfigLog = null;
         pendingAckReqId = null;
         if (pendingAutomationChannel > 0) {
             pendingAutomationChannel = -1;
@@ -1780,6 +1817,15 @@ public class SettingsActivity extends AppCompatActivity {
             showSettingsFeedback("Chưa kết nối MQTT. Hãy kết nối rồi gửi lại.", true);
             return;
         }
+        try {
+            pendingAckAction = new JSONObject(payload).getString("action");
+        } catch (org.json.JSONException e) {
+            Log.e(TAG, "Cấu hình thiếu action", e);
+            showSettingsFeedback("Không gửi được cấu hình: dữ liệu không hợp lệ.", true);
+            return;
+        }
+        OperationLog.get(this).finish(pendingConfigLog, "interrupted", "Gửi cấu hình mới thay thế");
+        pendingConfigLog = OperationLog.get(this).begin(successTitle);
         pendingAckReqId = reqId;
         showSettingsFeedback(title + ": đang gửi và chờ ESP32 xác nhận...", false);
 
@@ -1794,6 +1840,9 @@ public class SettingsActivity extends AppCompatActivity {
                     Log.i(TAG, "Đã gửi lên MQTT Cloud với req_id=" + reqId + ", đang chờ ACK...");
                 },
                 error -> {
+                    if (!reqId.equals(pendingAckReqId)) return;
+                    OperationLog.get(this).finish(pendingConfigLog, "failed", "Không gửi được MQTT");
+                    pendingConfigLog = null;
                     handler.removeCallbacks(ackTimeoutRunnable);
                     pendingAckReqId = null;
                     if (pendingAutomationChannel > 0) {
@@ -1832,6 +1881,12 @@ public class SettingsActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacks(resetConfirmationExpiry);
+        handler.removeCallbacks(ackTimeoutRunnable);
+        if (pendingConfigLog != null) {
+            OperationLog.get(this).finish(pendingConfigLog, "interrupted", "Đóng màn hình cấu hình");
+        }
+        pendingConfigLog = null;
+        pendingAckReqId = null;
         if (accountRequestQueue != null) accountRequestQueue.cancelAll(this);
         if (mqttClient != null) {
             try {

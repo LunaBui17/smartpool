@@ -19,7 +19,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="QUẢN LÝ TÀI KHOẢN GUEST"
+            android:text="QUẢN LÝ TÀI KHOẢN"
             android:textColor="@color/text_primary"
             android:textSize="14sp"
             android:textStyle="bold" />
@@ -51,13 +51,33 @@
                 android:layout_height="46dp"
                 android:layout_marginTop="8dp"
                 android:background="@drawable/bg_input_field"
-                android:hint="Mật khẩu guest (ít nhất 8 ký tự; để trống khi sửa nếu giữ nguyên)"
+                android:hint="Mật khẩu (ít nhất 8 ký tự; để trống khi sửa nếu giữ nguyên)"
                 android:inputType="textPassword"
                 android:paddingStart="10dp"
                 android:paddingEnd="10dp"
                 android:singleLine="true"
                 android:textColor="@color/text_primary"
                 android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:labelFor="@id/spnUserRole"
+                android:text="Vai trò tài khoản mới"
+                android:textColor="@color/text_secondary" />
+
+            <Spinner
+                android:id="@+id/spnUserRole"
+                android:layout_width="match_parent"
+                android:layout_height="48dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Admin được tạo admin khác. Tài khoản admin hiện có chỉ hiển thị, không sửa/xóa tại đây."
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
 
             <androidx.appcompat.widget.SwitchCompat
                 android:id="@+id/switchUserActive"
@@ -94,7 +114,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
-            android:text="DANH SÁCH GUEST"
+            android:text="DANH SÁCH TÀI KHOẢN"
             android:textColor="@color/text_primary"
             android:textSize="14sp"
             android:textStyle="bold" />

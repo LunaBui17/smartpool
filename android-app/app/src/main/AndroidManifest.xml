@@ -59,6 +59,11 @@
             android:exported="false"
             android:screenOrientation="portrait" />
 
+        <activity
+            android:name=".OperationLogActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
         <!-- Dịch vụ giám sát MQTT -->
         <service
             android:name=".PoolMonitorService"

@@ -96,7 +96,27 @@ Sao lưu bằng `backup.sh` tạo `backups/pool_db-*.sql.gz`; giữ thêm bản 
 gzip -dc backups/pool_db-YYYYMMDD-HHMMSS.sql.gz | sudo docker compose exec -T db sh -ec 'MYSQL_PWD="$MARIADB_PASSWORD" exec mariadb -u "$MARIADB_USER" "$MARIADB_DATABASE"'
 ```
 
-SQL chỉ tự nhập khi volume database trống. Khi khôi phục từ bản sao lưu, dữ liệu phục hồi sẽ thay thế các bảng cùng tên. Không cần một dịch vụ nhận MQTT để ghi database vì firmware gửi mẫu đo vào API qua HTTP.
+Schema ban đầu chỉ tự nhập khi volume database trống. Riêng migration nhật ký `backend/migrations/001_activity_log.sql` được `deploy.sh` áp dụng cả khi volume đã có dữ liệu, bằng `CREATE TABLE IF NOT EXISTS`, không xóa bảng cũ. Khi khôi phục từ bản sao lưu, dữ liệu phục hồi sẽ thay thế các bảng cùng tên. Không cần một dịch vụ nhận MQTT để ghi database vì firmware gửi mẫu đo vào API qua HTTP.
+
+### Cập nhật nhật ký thao tác và quản lý admin
+
+Sau khi chép backend và cấu hình triển khai mới lên Pi, chạy:
+
+```bash
+cd ~/smartpool/deploy/raspberry-pi
+sudo bash deploy.sh
+```
+
+Lệnh này build lại API và tạo bảng `pool_activity_log` trên database hiện có; giữ `.env` và volume. API mới cung cấp nhật ký có xác thực, timestamp biểu đồ dạng epoch mili giây và quyền tạo thêm admin từ tài khoản admin đang đăng nhập. Không cần tạo lại admin đầu tiên, không dùng `down -v`.
+
+Nếu chỉ cập nhật API thủ công, cần thực hiện cả hai bước:
+
+```bash
+sudo docker compose up -d --build api
+sudo docker compose exec -T db sh -ec 'MYSQL_PWD="$MARIADB_PASSWORD" exec mariadb -u "$MARIADB_USER" "$MARIADB_DATABASE"' < ../../backend/migrations/001_activity_log.sql
+```
+
+Backend chưa có bảng nhật ký sẽ trả lỗi rõ ràng; app vẫn giữ hàng đợi cục bộ để gửi lại sau khi cập nhật.
 
 ### Xem MariaDB qua trình duyệt bằng Adminer
 
@@ -121,7 +141,7 @@ Từ máy tính hoặc điện thoại cùng mạng LAN, mở `http://192.168.60
 
 Đây là tài khoản MariaDB, không phải tài khoản ứng dụng hoặc MQTT. Adminer không được truyền sẵn mật khẩu database; nhập mật khẩu trực tiếp trên trang và không chia sẻ mật khẩu.
 
-Chọn bảng `pool_status` → **Select data** để xem trạng thái gần nhất. Với `pool_history`, sắp xếp `received_at` giảm dần để xem mẫu mới nhất; tải lại trang khi cần cập nhật. Adminer cho phép sửa/xóa dữ liệu và chạy SQL, không chỉ xem. Hạn chế truy cập cho người quản trị, chỉ dùng trên LAN tin cậy; kết nối HTTP này không mã hóa mật khẩu. Không mở cổng quản trị trên router hoặc thêm đường dẫn proxy Adminer vào Apache/Cloudflare. Quick Tunnel hiện chỉ chuyển tiếp tới API, không chuyển tiếp tới Adminer.
+Chọn bảng `pool_status` → **Select data** để xem trạng thái gần nhất. Với `pool_history`, sắp xếp `received_at` giảm dần để xem mẫu mới nhất; với `pool_activity_log`, xem `occurred_at_ms`, `username`, `action` và `result` để theo dõi thao tác từ app. Tải lại trang khi cần cập nhật. Adminer cho phép sửa/xóa dữ liệu và chạy SQL, không chỉ xem. Hạn chế truy cập cho người quản trị, chỉ dùng trên LAN tin cậy; kết nối HTTP này không mã hóa mật khẩu. Không mở cổng quản trị trên router hoặc thêm đường dẫn proxy Adminer vào Apache/Cloudflare. Quick Tunnel hiện chỉ chuyển tiếp tới API, không chuyển tiếp tới Adminer.
 
 Khi không dùng, chạy `sudo docker compose stop adminer`. Lệnh `pool.sh up` sẽ bật lại Adminer cùng hệ thống.
 

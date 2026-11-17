@@ -19,6 +19,7 @@ services:
     volumes:
       - database:/var/lib/mysql
       - ../../backend/pool_db.sql:/docker-entrypoint-initdb.d/01-pool.sql:ro
+      - ../../backend/migrations/001_activity_log.sql:/docker-entrypoint-initdb.d/02-activity.sql:ro
     healthcheck:
       test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
       interval: 10s

@@ -20,3 +20,18 @@ Collection kiểm tra MariaDB qua API PHP; không kết nối trực tiếp cổ
 Kiểm tra kết quả tại **Test Results** / kết quả Collection Runner. HTML hoặc lỗi tunnel cho biết cần kiểm tra tunnel/URL trước; HTTP 500 JSON cần xem log API và database. HTTP 401 ở bước login thường do sai mật khẩu ứng dụng. Nếu dừng sau bước 4 hoặc 5, chạy bước 6 để đăng xuất phiên thử nghiệm (phiên cũng tự hết hạn sau 12 giờ).
 
 Collection kiểm tra các thao tác đọc, tạo và xóa phiên qua ứng dụng, không thay thế kiểm tra toàn vẹn mọi bảng trong MariaDB.
+
+## API nhật ký và quản lý admin
+
+Các request dưới đây không nằm trong collection 7 bước hiện có. Dùng POST JSON tới cùng `api_url`, kèm `Authorization: Bearer TOKEN` từ đăng nhập; không chia sẻ token.
+
+| Action | Quyền | Nội dung |
+| --- | --- | --- |
+| `list_activity` | Người dùng đăng nhập | Trả `events` tối đa 100 sự kiện mới nhất; guest chỉ thấy sự kiện của mình, admin thấy mọi tài khoản |
+| `record_activity` | Người dùng đăng nhập | Nhận `events` gồm 1–20 sự kiện; người thực hiện lấy từ phiên, gửi lại cùng `event_id` không tạo bản sao |
+| `list_users` với `include_admins: true` | Admin | Trả cả admin và guest; mặc định vẫn chỉ trả guest để tương thích collection hiện có |
+| `save_user` với `role: "admin"` | Admin | Chỉ dùng để tạo tài khoản mới; không cho sửa/xóa admin hiện có hoặc nâng quyền guest qua cập nhật |
+
+Mỗi sự kiện gồm `event_id` và `request_id` dạng UUID, `device_id`, `action`, `result`, `detail`, `occurred_at_ms` dạng số nguyên mili giây. `result` nhận `requested`, `confirmed`, `failed`, `timeout`, `interrupted`, `saved`, `published`. Không gửi mật khẩu, token hoặc payload cấu hình trong sự kiện. Cần áp dụng migration `backend/migrations/001_activity_log.sql` trước khi sử dụng.
+
+GET lịch sử giữ các trường cũ và bổ sung `received_at_ms` dạng số nguyên để vẽ trục thời gian. Đây là thời điểm MariaDB nhận mẫu, không phải thời điểm đo khi ESP gửi bù.

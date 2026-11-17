@@ -68,6 +68,8 @@ public class AppConfig {
     private static final String KEY_CONTROL_MODE = "control_mode";
     private static final String KEY_INTERLOCK_ENABLED = "interlock_enabled";
     private static final String KEY_ESP_LOCAL_IP_ADDRESS = "esp_local_ip_address";
+    private static final String KEY_CHART_SENSOR = "chart_sensor";
+    private static final String KEY_SETTINGS_TAB = "settings_tab";
 
     // Default values
     public static final boolean DEFAULT_INTERLOCK_ENABLED = true;
@@ -142,6 +144,26 @@ public class AppConfig {
             instance = new AppConfig(context);
         }
         return instance;
+    }
+
+    public String getChartSensor() {
+        return prefs.getString(KEY_CHART_SENSOR, "temperature");
+    }
+
+    public void setChartSensor(String sensor) {
+        if (!"temperature".equals(sensor) && !"adc".equals(sensor)) {
+            throw new IllegalArgumentException("Invalid chart sensor");
+        }
+        prefs.edit().putString(KEY_CHART_SENSOR, sensor).apply();
+    }
+
+    public int getSettingsTab() {
+        return prefs.getInt(KEY_SETTINGS_TAB, 0);
+    }
+
+    public void setSettingsTab(int tab) {
+        if (tab < 0 || tab > 2) throw new IllegalArgumentException("Invalid settings tab");
+        prefs.edit().putInt(KEY_SETTINGS_TAB, tab).apply();
     }
 
     // ================= DEVICE INFO =================

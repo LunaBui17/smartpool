@@ -10,6 +10,15 @@ Truy cập ngoài mạng dùng **Cloudflare Quick Tunnel**: HTTPS cho API và MQ
 - [Firmware ESP32-S3](esp-firmware/README.md).
 - [Giao thức MQTT](README_MQTT_ESP32.md).
 - [Kiểm tra API bằng Postman](backend/postman/README.md).
+- [Ứng dụng Android](android-app/README_MQTT_ESP32.md): nhật ký thao tác, biểu đồ theo thời gian, lưu cấu hình và quản lý admin/guest.
+
+## Theo dõi và quản trị trên app
+
+- Tab **Trạng thái hệ thống** hiển thị lưu đồ Android/API/MariaDB, MQTT/ESP32 và các cảm biến, bơm, Wi-Fi, khóa liên động, tự động hóa. Cập nhật theo API/MQTT, phân biệt bật/tắt, đang chờ và chưa rõ khi mất liên lạc.
+- Nhật ký thao tác lưu cục bộ, đồng bộ về MariaDB qua API có xác thực. Guest xem nhật ký của mình, admin xem các tài khoản. Kết quả phân biệt yêu cầu, xác nhận, lỗi và hết thời gian chờ.
+- Biểu đồ dùng ngày/giờ máy chủ nhận mẫu, giữ đúng khoảng thời gian giữa các điểm. App khôi phục cấu hình đã lưu và lựa chọn tab, không tự bật lại bơm.
+- Admin có thể tạo admin khác hoặc guest. Tài khoản admin hiện có được bảo vệ khỏi sửa/xóa trong giao diện quản lý.
+- [Lưu đồ trạng thái ứng dụng điện thoại](docs/system-flow.md#10-trạng-thái-ứng-dụng-điện-thoại) mô tả đăng nhập, màn hình và vòng chờ xác nhận lệnh.
 
 ## Kiến trúc tổng thể
 

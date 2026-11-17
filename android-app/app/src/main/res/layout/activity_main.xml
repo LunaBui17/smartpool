@@ -138,6 +138,79 @@
 
         </LinearLayout>
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="16dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/tabDashboard"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minHeight="48dp"
+                android:text="Giám sát"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/tabSystemStatus"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:minHeight="48dp"
+                android:text="Trạng thái hệ thống"
+                android:textAllCaps="false" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/systemStatusContent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="TRẠNG THÁI HỆ THỐNG"
+                android:textColor="@color/text_primary"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/txtSystemStatusUpdated"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+
+            <com.buiducluan23011767.ck.SystemStatusView
+                android:id="@+id/systemStatusDiagram"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:importantForAccessibility="yes" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Xanh: đang bật/kết nối • Xám: đã tắt • Cam: đang chờ • Đỏ: lỗi kết nối.&#10;Chưa rõ: chưa nhận đủ dữ liệu hoặc đã mất liên lạc.&#10;API và MQTT được theo dõi độc lập. API phản hồi không chứng minh ESP32 online. Trạng thái thiết bị lấy từ bản tin MQTT gần nhất, có thể là retained. Bơm bật là trạng thái relay do ESP32 báo, không phải phản hồi cơ khí. Không kiểm tra trực tiếp tiến trình Docker hoặc Cloudflare."
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/dashboardContent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
         <!-- BANNER CẢNH BÁO NGUY HIỂM / VƯỢT NGƯỠNG -->
         <LinearLayout
             android:id="@+id/alertBannerContainer"
@@ -185,6 +258,18 @@
             android:padding="10dp"
             android:textSize="12sp"
             android:visibility="gone" />
+
+        <Button
+            android:id="@+id/btnOpenOperationLog"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="16dp"
+            android:background="@drawable/bg_button_secondary"
+            android:text="Nhật ký thao tác"
+            android:textAllCaps="false"
+            android:textColor="@color/blue" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -652,5 +737,6 @@
             android:textSize="11sp"
             android:textStyle="bold" />
 
+        </LinearLayout>
     </LinearLayout>
 </ScrollView>

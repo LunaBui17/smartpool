@@ -87,6 +87,10 @@ final class UserSession {
         return token;
     }
 
+    static synchronized String getUsername() {
+        return username;
+    }
+
     private static SharedPreferences preferences(Context context) {
         return context.getApplicationContext().getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
     }

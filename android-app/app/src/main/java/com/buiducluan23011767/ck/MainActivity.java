@@ -44,6 +44,8 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -56,6 +58,17 @@ public class MainActivity extends AppCompatActivity {
     private View protocolSectionTitle;
     private View protocolDetailsSection;
     private View interlockControlSection;
+    private View dashboardContent;
+    private View systemStatusContent;
+    private Button tabDashboard;
+    private Button tabSystemStatus;
+    private SystemStatusView systemStatusDiagram;
+    private TextView txtSystemStatusUpdated;
+    private boolean showingSystemStatus;
+    private JSONObject reportedSystemStatus;
+    private Boolean apiDatabaseOk;
+    private long lastSystemStatusMs;
+    private long lastApiCheckMs;
 
     private TextView txtHeaderSubtitle;
     private TextView btnLogout;
@@ -125,6 +138,8 @@ public class MainActivity extends AppCompatActivity {
     private boolean pumpOutPending;
     private boolean desiredPumpInOn;
     private boolean desiredPumpOutOn;
+    private String pumpInLog;
+    private String pumpOutLog;
 
     private static final long PUMP_ACK_TIMEOUT_MS = 7000L;
     private final Runnable pumpInTimeoutRunnable = () -> handlePumpTimeout(true);
@@ -188,6 +203,8 @@ public class MainActivity extends AppCompatActivity {
         requestQueue = Volley.newRequestQueue(getApplicationContext());
 
         renderPumpStates();
+        selectMainTab(savedInstanceState != null
+                && savedInstanceState.getBoolean("system_status_tab", false));
         requestNotificationPermissionAndStartService();
     }
 
@@ -196,6 +213,14 @@ public class MainActivity extends AppCompatActivity {
         headerContainer = findViewById(R.id.headerContainer);
         alertBannerContainer = findViewById(R.id.alertBannerContainer);
         txtActionFeedback = findViewById(R.id.txtActionFeedback);
+        dashboardContent = findViewById(R.id.dashboardContent);
+        systemStatusContent = findViewById(R.id.systemStatusContent);
+        tabDashboard = findViewById(R.id.tabDashboard);
+        tabSystemStatus = findViewById(R.id.tabSystemStatus);
+        systemStatusDiagram = findViewById(R.id.systemStatusDiagram);
+        txtSystemStatusUpdated = findViewById(R.id.txtSystemStatusUpdated);
+        tabDashboard.setOnClickListener(v -> selectMainTab(false));
+        tabSystemStatus.setOnClickListener(v -> selectMainTab(true));
 
         txtHeaderSubtitle = findViewById(R.id.txtHeaderSubtitle);
         btnLogout = findViewById(R.id.btnLogout);
@@ -261,6 +286,8 @@ public class MainActivity extends AppCompatActivity {
         btnGoToSettings.setOnClickListener(openSettingsAction);
         btnLogout.setOnClickListener(v -> logout());
         btnOpenLocalWeb.setOnClickListener(v -> openLocalWeb());
+        findViewById(R.id.btnOpenOperationLog).setOnClickListener(v ->
+                startActivity(new Intent(this, OperationLogActivity.class)));
         txtTemp.setOnClickListener(v -> openSensorChart(SensorChartActivity.SENSOR_TEMPERATURE));
         txtWater.setOnClickListener(v -> openSensorChart(SensorChartActivity.SENSOR_ADC));
 
@@ -273,6 +300,7 @@ public class MainActivity extends AppCompatActivity {
             boolean targetState = !pumpInOn;
             desiredPumpInOn = targetState;
             pumpInPending = true;
+            pumpInLog = OperationLog.get(this).begin((targetState ? "Bật" : "Tắt") + " bơm cấp");
             showActionFeedback("Đang gửi lệnh cho bơm cấp...", false);
             renderPumpStates();
 
@@ -291,6 +319,7 @@ public class MainActivity extends AppCompatActivity {
             boolean targetState = !pumpOutOn;
             desiredPumpOutOn = targetState;
             pumpOutPending = true;
+            pumpOutLog = OperationLog.get(this).begin((targetState ? "Bật" : "Tắt") + " bơm thoát");
             showActionFeedback("Đang gửi lệnh cho bơm thoát...", false);
             renderPumpStates();
 
@@ -314,11 +343,32 @@ public class MainActivity extends AppCompatActivity {
 
             // Nếu đang kết nối MQTT, gửi cập nhật cấu hình interlock lên topic thresholds
             if (mqttClient != null && mqttClient.isConnected()) {
+                final String operation = OperationLog.get(this).begin(
+                        (isChecked ? "Bật" : "Tắt") + " khóa liên động");
                 try {
                     byte[] payload = config.buildThresholdsJson().toString().getBytes(StandardCharsets.UTF_8);
-                    mqttClient.publish(config.getTopicConfigThresholds(), payload, 1, true);
-                } catch (Exception e) {
+                    mqttClient.publish(config.getTopicConfigThresholds(), payload, 1, true,
+                            null, new IMqttActionListener() {
+                                @Override
+                                public void onSuccess(IMqttToken token) {
+                                    handler.post(() -> OperationLog.get(MainActivity.this)
+                                            .finish(operation, "published", ""));
+                                }
+
+                                @Override
+                                public void onFailure(IMqttToken token, Throwable error) {
+                                    Log.e(TAG, "Không gửi được khóa liên động", error);
+                                    handler.post(() -> {
+                                        OperationLog.get(MainActivity.this).finish(operation,
+                                                "failed", "Không gửi được cấu hình MQTT");
+                                        showActionFeedback("Không gửi được khóa liên động.", true);
+                                    });
+                                }
+                            });
+                } catch (MqttException e) {
+                    OperationLog.get(this).finish(operation, "failed", "Lỗi gửi MQTT");
                     Log.e(TAG, "Lỗi sync interlock sang MQTT", e);
+                    showActionFeedback("Không gửi được khóa liên động.", true);
                 }
             }
         });
@@ -427,6 +477,7 @@ public class MainActivity extends AppCompatActivity {
             txtGeneralStatus.setText(statusBuilder.toString().trim());
             txtGeneralStatus.setTextColor(Color.rgb(254, 202, 202)); // Đỏ nhạt cảnh báo
         }
+        renderSystemStatus();
     }
 
     private void requestNotificationPermissionAndStartService() {
@@ -492,6 +543,11 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         activityVisible = true;
+        reportedSystemStatus = null;
+        lastSystemStatusMs = 0;
+        apiDatabaseOk = null;
+        lastApiCheckMs = 0;
+        OperationLog.get(this).sync();
         espOnline = false;
         resetSensorControls();
         renderPumpStates();
@@ -510,6 +566,12 @@ public class MainActivity extends AppCompatActivity {
         getSensorData();
         long intervalMs = Math.max(1000L, config.getHttpPollIntervalSec() * 1000L);
         handler.postDelayed(pollRunnable, intervalMs);
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        outState.putBoolean("system_status_tab", showingSystemStatus);
+        super.onSaveInstanceState(outState);
     }
 
     @Override
@@ -705,6 +767,8 @@ public class MainActivity extends AppCompatActivity {
 
                 handler.post(() -> {
                     if (statusSession != mqttSession.get() || !mqttConnected) return;
+                    reportedSystemStatus = json;
+                    lastSystemStatusMs = System.currentTimeMillis();
                     espOnline = online;
                     espIpAddress = online ? ipAddress : "";
                     espHttpApiUrl = online ? httpApiUrl : "";
@@ -724,6 +788,7 @@ public class MainActivity extends AppCompatActivity {
                         if (in == desiredPumpInOn) {
                             handler.removeCallbacks(pumpInTimeoutRunnable);
                             pumpInPending = false;
+                            finishPumpLog(true, "confirmed", "ESP32 báo trạng thái khớp yêu cầu");
                             pumpInOn = in;
                             showActionFeedback("ESP32 đã xác nhận bơm cấp "
                                     + (in ? "đang bật." : "đã tắt."), false);
@@ -737,6 +802,7 @@ public class MainActivity extends AppCompatActivity {
                         if (out == desiredPumpOutOn) {
                             handler.removeCallbacks(pumpOutTimeoutRunnable);
                             pumpOutPending = false;
+                            finishPumpLog(false, "confirmed", "ESP32 báo trạng thái khớp yêu cầu");
                             pumpOutOn = out;
                             showActionFeedback("ESP32 đã xác nhận bơm thoát "
                                     + (out ? "đang bật." : "đã tắt."), false);
@@ -780,7 +846,8 @@ public class MainActivity extends AppCompatActivity {
         private boolean supported;
         private boolean updatingUi;
         private int commandId;
-        private final Runnable timeout = () -> fail("Quá thời gian chờ ESP32 xác nhận ");
+        private String operationId;
+        private final Runnable timeout = () -> fail("timeout", "Quá thời gian chờ ESP32 xác nhận ");
 
         SensorControl(androidx.appcompat.widget.SwitchCompat toggle, String name, String topic) {
             this.toggle = toggle;
@@ -801,6 +868,9 @@ public class MainActivity extends AppCompatActivity {
             if (pendingTarget != null && pendingTarget.equals(enabled)) {
                 handler.removeCallbacks(timeout);
                 pendingTarget = null;
+                OperationLog.get(MainActivity.this).finish(operationId, "confirmed",
+                        "ESP32 báo trạng thái khớp yêu cầu");
+                operationId = null;
                 showActionFeedback("ESP32 đã xác nhận " + name
                         + (enabled ? " đang bật." : " đã tắt."), false);
             }
@@ -809,6 +879,11 @@ public class MainActivity extends AppCompatActivity {
         void reset() {
             handler.removeCallbacks(timeout);
             commandId++;
+            if (pendingTarget != null) {
+                OperationLog.get(MainActivity.this).finish(operationId, "interrupted",
+                        "Rời màn hình hoặc kết nối thiết bị thay đổi");
+            }
+            operationId = null;
             if (pendingTarget != null && activityVisible) {
                 showActionFeedback("Chưa xác nhận thay đổi " + name
                         + " do kết nối thiết bị thay đổi.", true);
@@ -827,6 +902,7 @@ public class MainActivity extends AppCompatActivity {
                     : !supported ? "Không hỗ trợ"
                     : pendingTarget != null ? "Đang chờ xác nhận..."
                     : enabled ? "Đang bật" : "Đã tắt");
+            renderSystemStatus();
         }
 
         private void send(boolean target) {
@@ -835,6 +911,8 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
             pendingTarget = target;
+            operationId = OperationLog.get(MainActivity.this).begin(
+                    (target ? "Bật " : "Tắt ") + name);
             final int requestId = ++commandId;
             final long session = mqttSession.get();
             render();
@@ -853,21 +931,23 @@ public class MainActivity extends AppCompatActivity {
                                 Log.e(TAG, "Không gửi được lệnh cho " + name, error);
                                 handler.post(() -> {
                                     if (requestId == commandId && session == mqttSession.get()) {
-                                        fail("Không gửi được lệnh cho ");
+                                        fail("failed", "Không gửi được lệnh cho ");
                                     }
                                 });
                             }
                         });
             } catch (MqttException e) {
                 Log.e(TAG, "Không gửi được lệnh cho " + name, e);
-                fail("Không gửi được lệnh cho ");
+                fail("failed", "Không gửi được lệnh cho ");
             }
         }
 
-        private void fail(String message) {
+        private void fail(String result, String message) {
             if (pendingTarget == null) return;
             handler.removeCallbacks(timeout);
             pendingTarget = null;
+            OperationLog.get(MainActivity.this).finish(operationId, result, message + name);
+            operationId = null;
             render();
             showActionFeedback(message + name + ".", true);
         }
@@ -892,6 +972,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         String topic = pumpIn ? config.getTopicCmdPumpIn() : config.getTopicCmdPumpOut();
+        final String operation = pumpIn ? pumpInLog : pumpOutLog;
 
         try {
             mqttClient.publish(
@@ -911,6 +992,8 @@ public class MainActivity extends AppCompatActivity {
                         @Override
                         public void onFailure(IMqttToken token, Throwable error) {
                             handler.post(() -> {
+                                if (!java.util.Objects.equals(operation, pumpIn ? pumpInLog : pumpOutLog)) return;
+                                finishPumpLog(pumpIn, "failed", "Broker không nhận lệnh");
                                 if (pumpIn) {
                                     handler.removeCallbacks(pumpInTimeoutRunnable);
                                     pumpInPending = false;
@@ -927,6 +1010,7 @@ public class MainActivity extends AppCompatActivity {
             );
 
         } catch (MqttException e) {
+            finishPumpLog(pumpIn, "failed", "Không gửi được lệnh MQTT");
             if (pumpIn) {
                 handler.removeCallbacks(pumpInTimeoutRunnable);
                 pumpInPending = false;
@@ -1086,6 +1170,8 @@ public class MainActivity extends AppCompatActivity {
 
         String url = config.getHttpApiUrl();
         if (url == null || url.trim().isEmpty()) {
+            apiDatabaseOk = null;
+            lastApiCheckMs = 0;
             txtConnection.setText("HTTP API: Chưa cấu hình URL");
             txtConnection.setTextColor(Color.rgb(148, 163, 184));
             lastHttpError = "Chưa cấu hình URL";
@@ -1101,6 +1187,12 @@ public class MainActivity extends AppCompatActivity {
                 null,
                 response -> {
                     polling = false;
+                    if (url.equals(config.getHttpApiUrl())) {
+                        apiDatabaseOk = response.optInt("id", -1) == 1
+                                && response.has("nhiet_do") && response.has("muc_nuoc");
+                        lastApiCheckMs = System.currentTimeMillis();
+                    }
+                    OperationLog.get(this).sync();
                     lastHttpError = "";
 
                     double temp = response.optDouble("nhiet_do", Double.NaN);
@@ -1128,6 +1220,10 @@ public class MainActivity extends AppCompatActivity {
                 },
                 error -> {
                     polling = false;
+                    if (url.equals(config.getHttpApiUrl())) {
+                        apiDatabaseOk = false;
+                        lastApiCheckMs = System.currentTimeMillis();
+                    }
                     lastHttpError = "Lỗi kết nối";
                     renderPumpStates();
                     Log.e(TAG, "Lỗi HTTP GET: " + error);
@@ -1251,16 +1347,165 @@ public class MainActivity extends AppCompatActivity {
         txtUpdated.setText("Cập nhật gần nhất: " + time);
     }
 
+    private void selectMainTab(boolean systemStatus) {
+        showingSystemStatus = systemStatus;
+        dashboardContent.setVisibility(systemStatus ? View.GONE : View.VISIBLE);
+        systemStatusContent.setVisibility(systemStatus ? View.VISIBLE : View.GONE);
+        Button[] tabs = {tabDashboard, tabSystemStatus};
+        for (int i = 0; i < tabs.length; i++) {
+            boolean selected = (i == 1) == systemStatus;
+            tabs[i].setSelected(selected);
+            tabs[i].setBackgroundResource(selected
+                    ? R.drawable.bg_button_primary : R.drawable.bg_button_secondary);
+            tabs[i].setTextColor(getColor(selected ? R.color.white : R.color.blue));
+        }
+        renderSystemStatus();
+        rootScroll.scrollTo(0, 0);
+    }
+
+    private void renderSystemStatus() {
+        if (systemStatusDiagram == null || temperatureControl == null || waterControl == null) return;
+        List<SystemStatusView.Node> nodes = new ArrayList<>();
+        nodes.add(new SystemStatusView.Node("Ứng dụng Android",
+                activityVisible ? "Đang theo dõi" : "Tạm ngừng màn hình",
+                isAdmin ? "Vai trò: Admin" : "Vai trò: Guest",
+                activityVisible ? SystemStatusView.State.ON : SystemStatusView.State.OFF));
+        nodes.add(new SystemStatusView.Node("API trên Raspberry Pi",
+                apiDatabaseOk == null ? "Chưa xác minh"
+                        : apiDatabaseOk ? "API phản hồi hợp lệ" : "Không đọc được API",
+                "HTTP kiểm tra: " + statusTime(lastApiCheckMs),
+                apiDatabaseOk == null ? SystemStatusView.State.UNKNOWN
+                        : apiDatabaseOk ? SystemStatusView.State.ON : SystemStatusView.State.ERROR));
+        nodes.add(new SystemStatusView.Node("MQTT / Mosquitto",
+                mqttConnected ? "Đã kết nối" : mqttConnecting ? "Đang kết nối" : "Chưa kết nối",
+                "Kết nối của app tới broker",
+                mqttConnected ? SystemStatusView.State.ON
+                        : mqttConnecting ? SystemStatusView.State.WAIT : SystemStatusView.State.ERROR));
+        nodes.add(new SystemStatusView.Node("MariaDB",
+                Boolean.TRUE.equals(apiDatabaseOk) ? "Truy vấn thành công" : "Chưa xác minh",
+                "Suy ra từ API, không dò SQL",
+                Boolean.TRUE.equals(apiDatabaseOk)
+                        ? SystemStatusView.State.ON : SystemStatusView.State.UNKNOWN));
+        boolean deviceAvailable = activityVisible && mqttConnected && espOnline
+                && reportedSystemStatus != null;
+        boolean reportedOffline = mqttConnected && reportedSystemStatus != null
+                && Boolean.FALSE.equals(reportedFlag("online"));
+        nodes.add(new SystemStatusView.Node("ESP32-S3",
+                deviceAvailable ? "ESP báo online" : reportedOffline ? "ESP báo offline" : "Chưa rõ",
+                "Nhận status: " + statusTime(lastSystemStatusMs),
+                deviceAvailable ? SystemStatusView.State.ON : reportedOffline
+                        ? SystemStatusView.State.ERROR : SystemStatusView.State.UNKNOWN));
+        nodes.add(componentNode("Cảm biến nhiệt độ", "temperature_supported",
+                "temperature_enabled", temperatureControl.pendingTarget != null, deviceAvailable));
+        nodes.add(componentNode("Cảm biến mực nước", "water_supported",
+                "water_level_enabled", waterControl.pendingTarget != null, deviceAvailable));
+        nodes.add(componentNode("Bơm cấp / relay 1", "relay1_supported",
+                "bom_vao_control", pumpInPending, deviceAvailable));
+        nodes.add(componentNode("Bơm thoát / relay 2", "relay2_supported",
+                "bom_ra_control", pumpOutPending, deviceAvailable));
+        nodes.add(componentNode("Khóa liên động", null, "interlock", false, deviceAvailable));
+        boolean hasWifiIp = deviceAvailable && !espIpAddress.isEmpty();
+        nodes.add(new SystemStatusView.Node("Wi-Fi của ESP32",
+                hasWifiIp ? "ESP báo có IP LAN" : "Chưa rõ",
+                hasWifiIp ? espIpAddress : "Không có xác nhận IP",
+                hasWifiIp ? SystemStatusView.State.ON : SystemStatusView.State.UNKNOWN));
+        nodes.add(automationNode(1, deviceAvailable));
+        nodes.add(automationNode(2, deviceAvailable));
+        systemStatusDiagram.setNodes(nodes);
+        JSONObject device = reportedSystemStatus == null ? null
+                : reportedSystemStatus.optJSONObject("device");
+        String deviceId = device == null ? "" : device.optString("id", "");
+        txtSystemStatusUpdated.setText((deviceAvailable && !deviceId.isEmpty()
+                ? "ID ESP32 báo: " + deviceId : "ID cấu hình app: " + config.getDeviceId())
+                + "\nAPI kiểm tra: " + statusTime(lastApiCheckMs)
+                + " • Nhận MQTT status: " + statusTime(lastSystemStatusMs)
+                + "\nLưu đồ chỉ theo dõi, không gửi lệnh điều khiển.");
+    }
+
+    private SystemStatusView.Node componentNode(String title, String supportedKey,
+                                               String enabledKey, boolean pending, boolean available) {
+        Boolean supported = supportedKey == null ? Boolean.TRUE : reportedFlag(supportedKey);
+        Boolean enabled = reportedFlag(enabledKey);
+        String status;
+        SystemStatusView.State state;
+        if (!available) {
+            status = "Chưa rõ";
+            state = SystemStatusView.State.UNKNOWN;
+        } else if (Boolean.FALSE.equals(supported)) {
+            status = "Không hỗ trợ";
+            state = SystemStatusView.State.OFF;
+        } else if (supported == null || enabled == null) {
+            status = "Chưa rõ";
+            state = SystemStatusView.State.UNKNOWN;
+        } else if (pending) {
+            status = "Chờ ESP32 xác nhận";
+            state = SystemStatusView.State.WAIT;
+        } else {
+            status = enabled ? "Đang bật / Enabled" : "Đã tắt / Disabled";
+            state = enabled ? SystemStatusView.State.ON : SystemStatusView.State.OFF;
+        }
+        return new SystemStatusView.Node(title, status,
+                available ? "Theo trạng thái ESP32" : "Chưa xác nhận hiện tại", state);
+    }
+
+    private Boolean reportedFlag(String key) {
+        Object value = reportedSystemStatus == null ? null : reportedSystemStatus.opt(key);
+        if (value instanceof Boolean) return (Boolean) value;
+        if (value instanceof Number) {
+            double number = ((Number) value).doubleValue();
+            if (number == 0 || number == 1) return number == 1;
+        }
+        return null;
+    }
+
+    private SystemStatusView.Node automationNode(int channel, boolean available) {
+        JSONObject rule = null;
+        org.json.JSONArray rules = reportedSystemStatus == null ? null
+                : reportedSystemStatus.optJSONArray("automation");
+        if (rules != null) {
+            for (int i = 0; i < rules.length(); i++) {
+                JSONObject candidate = rules.optJSONObject(i);
+                if (candidate != null && candidate.optInt("channel") == channel) {
+                    rule = candidate;
+                    break;
+                }
+            }
+        }
+        String title = channel == 1 ? "Tự động bơm cấp" : "Tự động bơm thoát";
+        if (!available || rule == null || !(rule.opt("enabled") instanceof Boolean)
+                || !(rule.opt("running") instanceof Boolean)
+                || !(rule.opt("paused") instanceof Boolean)) {
+            return new SystemStatusView.Node(title, "Chưa rõ", "Chưa có trạng thái quy tắc",
+                    SystemStatusView.State.UNKNOWN);
+        }
+        boolean enabled = rule.optBoolean("enabled");
+        boolean running = rule.optBoolean("running");
+        boolean paused = rule.optBoolean("paused");
+        return new SystemStatusView.Node(title,
+                !enabled ? "Disabled" : running ? "Đang chạy" : paused ? "Đang tạm dừng" : "Enabled",
+                !enabled ? "Quy tắc đã tắt" : running ? "ESP đang chạy tự động"
+                        : paused ? "Tạm dừng theo ESP32" : "Đang chờ điều kiện",
+                !enabled ? SystemStatusView.State.OFF
+                        : paused ? SystemStatusView.State.WAIT : SystemStatusView.State.ON);
+    }
+
+    private String statusTime(long timestamp) {
+        return timestamp == 0 ? "chưa có" : new SimpleDateFormat(
+                "HH:mm:ss", Locale.getDefault()).format(new Date(timestamp));
+    }
+
     // ==================== HIỂN THỊ TRẠNG THÁI BƠM (DOUBLE CHECK) ====================
 
     private void handlePumpTimeout(boolean isPumpIn) {
         if (!activityVisible) return;
         if (isPumpIn && pumpInPending) {
+            finishPumpLog(true, "timeout", "Chưa nhận được trạng thái ESP32 khớp yêu cầu");
             pumpInPending = false;
             renderPumpStates();
             showActionFeedback("Quá thời gian chờ xác nhận bơm cấp. Hãy kiểm tra thiết bị.", true);
             updateGeneralStatusAndErrors();
         } else if (!isPumpIn && pumpOutPending) {
+            finishPumpLog(false, "timeout", "Chưa nhận được trạng thái ESP32 khớp yêu cầu");
             pumpOutPending = false;
             renderPumpStates();
             showActionFeedback("Quá thời gian chờ xác nhận bơm thoát. Hãy kiểm tra thiết bị.", true);
@@ -1285,8 +1530,17 @@ public class MainActivity extends AppCompatActivity {
     private void clearPendingPumpCommands() {
         handler.removeCallbacks(pumpInTimeoutRunnable);
         handler.removeCallbacks(pumpOutTimeoutRunnable);
+        if (pumpInPending) finishPumpLog(true, "interrupted", "Rời màn hình hoặc mất kết nối");
+        if (pumpOutPending) finishPumpLog(false, "interrupted", "Rời màn hình hoặc mất kết nối");
         pumpInPending = false;
         pumpOutPending = false;
+    }
+
+    private void finishPumpLog(boolean pumpIn, String result, String detail) {
+        String operation = pumpIn ? pumpInLog : pumpOutLog;
+        if (operation != null) OperationLog.get(this).finish(operation, result, detail);
+        if (pumpIn) pumpInLog = null;
+        else pumpOutLog = null;
     }
 
     private void renderPumpStates() {
