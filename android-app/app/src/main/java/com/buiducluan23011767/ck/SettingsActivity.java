@@ -1604,7 +1604,7 @@ public class SettingsActivity extends AppCompatActivity {
         String pass = edtMqttPass.getText().toString();
 
         if (broker.isEmpty()) {
-            edtMqttBroker.setError("Vui lòng nhập Broker URI (ssl://... hoặc tcp://...)");
+            edtMqttBroker.setError("Vui lòng nhập Broker URI (ssl://..., tcp://... hoặc wss://.../mqtt)");
             return;
         }
 
