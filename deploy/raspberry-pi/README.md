@@ -1,5 +1,7 @@
 # Backend Smart Pool trên Raspberry Pi 4 B
 
+[Luồng toàn hệ thống ESP → Pi → Android](../../docs/system-flow.md) · [README tổng thể](../../README.md)
+
 Bộ triển khai chạy API PHP/Apache, MariaDB 11.4 và Mosquitto 2 bằng Docker Compose trên **hệ điều hành 64-bit**. Dữ liệu database và MQTT dùng volume bền vững; các dịch vụ tự chạy lại khi Pi khởi động. Không cần XAMPP hoặc HiveMQ Cloud cho cấu hình LAN này.
 
 **Tunnel mặc định hiện là Cloudflare Quick Tunnel**, miễn phí cho thử nghiệm và không cần tài khoản/token. Trên ESP thực tế, HTTPS và MQTT WSS đã kết nối thành công qua Cloudflare. URL ngẫu nhiên tự ghi vào **`~/smartpool-endpoints.txt`**, cập nhật mỗi 10 giây và sau khi tunnel khởi động lại. Xem phần Cloudflare bên dưới.
@@ -16,7 +18,7 @@ sudo bash pool.sh admin             # tạo admin API lần đầu
 sudo bash pool.sh up                # bật lại hoặc triển khai mã mới
 sudo bash pool.sh stop              # dừng toàn bộ, giữ dữ liệu và mật khẩu
 sudo bash pool.sh restart           # dừng rồi build/khởi động lại toàn bộ
-sudo bash pool.sh status            # trạng thái container và địa chỉ TCP
+sudo bash pool.sh status            # trạng thái container và URL Cloudflare
 sudo bash pool.sh logs              # theo dõi log tất cả container
 sudo bash pool.sh logs mqtt         # có thể chọn api, db, cloudflare
 sudo bash pool.sh endpoints         # đọc file địa chỉ của tunnel đang dùng
@@ -118,7 +120,7 @@ android_http_api_url=https://random-name.trycloudflare.com/pool_api/pool_api.php
 mqtt_wss_uri=wss://random-name.trycloudflare.com/mqtt
 ```
 
-Nhập `http_api_url` cho ESP/Android/Postman; dùng `mqtt_wss_uri` cho ESP/Android/MQTTX. Username MQTT vẫn là `esp32` / `android`; mật khẩu không đổi khi chuyển tunnel. MariaDB truy cập qua API hoặc kết nối riêng trong LAN, không được publish qua Quick Tunnel.
+Nhập `http_api_url` cho ESP/Android/Postman; dùng `mqtt_wss_uri` cho ESP/Android/MQTTX. Username MQTT vẫn là `esp32` / `android`; mật khẩu không đổi khi chuyển tunnel. MariaDB chỉ mở trong mạng Docker, không publish cổng ra LAN hoặc Quick Tunnel; dùng API hoặc công cụ bên trong container để truy cập.
 
 `pool.sh up` giữ container đang chạy nếu cấu hình không đổi; không tạo thêm một tunnel mỗi lần gọi. Nếu tiến trình Cloudflare khởi động lại, domain có thể đổi. Service `smartpool-cloudflare-endpoints.service` tự phát hiện thế hệ container mới và cập nhật file mỗi 10 giây; khi dừng/ngắt kết nối, file ghi offline và bỏ URL cũ. File thuộc tài khoản gọi `sudo` (ví dụ `qnm`), quyền `600`, không chứa mật khẩu.
 
@@ -146,4 +148,4 @@ Kiểm tra từ Pi qua domain đang có trong file, không gửi lệnh bơm:
 sudo python3 smoke-wss.py wss://DOMAIN_TRONG_FILE/mqtt
 ```
 
-Script đăng nhập cả hai tài khoản và thử publish/subscribe topic `smartpool/diagnostics/probe`. Nếu URL Quick Tunnel đổi sau reboot, cập nhật lại URI trên ESP, Android, MQTTX và Postman; file text không tự sửa các client. Kết nối MariaDB trực tiếp vẫn dành cho LAN hoặc một kết nối riêng.
+Script đăng nhập cả hai tài khoản và thử publish/subscribe topic `smartpool/diagnostics/probe`. Nếu URL Quick Tunnel đổi sau reboot, cập nhật lại URI trên ESP, Android, MQTTX và Postman; file text không tự sửa các client. Compose hiện không publish cổng MariaDB ra host.

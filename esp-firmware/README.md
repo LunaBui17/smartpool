@@ -1,5 +1,7 @@
 # SmartPool ESP32-S3 firmware
 
+[Luồng toàn hệ thống ESP → Pi → Android](../docs/system-flow.md) · [README tổng thể](../README.md)
+
 ESP-IDF firmware with MQTT control, DS18B20 temperature measurement, analog water level measurement, and HTTP storage uploads.
 
 ## Final build configuration
@@ -52,7 +54,7 @@ The Vietnamese dashboard supports mobile and desktop layouts, live sensor readin
 
 The **router Wi-Fi** switch disconnects the station while keeping the local AP/server running. This preference is stored in NVS and survives reboot. Re-enable it to reconnect using stored credentials, or save new credentials. If `Enable router Wi-Fi connection (STA)` is disabled in menuconfig, the web switch and credential submission cannot enable the station. The AP stays available when the router disconnects and after it reconnects. The AP and router share a radio channel, so phones may briefly reconnect when the router channel changes.
 
-The inlet and outlet pumps operate independently and may both be ON, through either web or MQTT. A router/MQTT disconnection stops remotely operated pumps, but does not repeatedly interrupt a pump started through the local dashboard while the router is unavailable. Any explicit mode transition or Wi-Fi credential change stops both pumps. Control ownership is tracked per pump: a later explicit MQTT command takes control of only its target channel. When one pump is local and the other remote, loss of router/MQTT connectivity stops only the remote channel. Sensor switches use the same runtime state across web and MQTT. Local sensor runtime settings reset on reboot according to menuconfig.
+The inlet and outlet pumps operate independently and may both be ON when the saved interlock is OFF. With interlock ON, web, MQTT and automatic control cannot start both together. A router/MQTT disconnection stops remotely operated pumps, but does not repeatedly interrupt a pump started through the local dashboard while the router is unavailable. Any explicit mode transition or Wi-Fi credential change stops both pumps. Control ownership is tracked per pump: a later explicit MQTT command takes control of only its target channel. When one pump is local and the other remote, loss of router/MQTT connectivity stops only the remote channel. Sensor switches use the same runtime state across web and MQTT. Local sensor runtime settings reset on reboot according to menuconfig.
 
 Local endpoints (JSON requests require `Content-Type: application/json`):
 
@@ -67,7 +69,7 @@ Local endpoints (JSON requests require `Content-Type: application/json`):
 
 ## MQTT control
 
-Configure the broker in `CONFIG_POOL_MQTT_URI` and credentials in `main/mqtt_credentials.h` using the adjacent example file, or enter them on the local dashboard at `http://192.168.4.1` under **MQTT & HTTP**. Dashboard MQTT settings are stored in NVS and take effect after the automatic restart; the password is never returned by the config API. The same panel saves the HTTP upload URL in NVS and applies it to subsequent uploads without restart. TLS MQTT starts after SNTP clock synchronization. Keep the Android app configured for the same broker and credentials.
+Configure the broker in `CONFIG_POOL_MQTT_URI` and credentials in `main/mqtt_credentials.h` using the adjacent example file, or enter them on the local dashboard at `http://192.168.4.1` under **MQTT & HTTP**. Dashboard MQTT settings are stored in NVS and take effect after the automatic restart; the password is never returned by the config API. The same panel saves the HTTP upload URL in NVS and applies it to subsequent uploads without restart. TLS MQTT starts after SNTP clock synchronization. Keep Android configured for the same broker; on the Pi, ESP uses account `esp32` and Android uses its separate account `android`.
 
 Publish an exact one-byte payload: `1` means ON/enabled; `0` means OFF/disabled.
 
@@ -211,7 +213,7 @@ Sync All may include `"wifi":{"ssid":"","password":""}` when Android has no save
 
 ## MQTT control availability
 
-The Android pump buttons and live interlock switch require a connected MQTT client and ESP32 `online:1` from the current session. They lock on startup, disconnect, or ESP32 offline. HTTP read/publish callbacks cannot reopen them; the configured HTTP control transport also requires MQTT readiness. Pending command timers and queued HTTP control requests are cancelled when readiness is lost. Reconnect waits for device status rather than reusing the previous session's online flag. Settings configuration/scan send buttons require that screen's MQTT connection; broker setup and local drafts remain accessible.
+The Android pump buttons and live interlock switch require a connected MQTT client and ESP32 `online:1` from the current session. They lock on startup, disconnect, or ESP32 offline. HTTP sensor responses cannot reopen them. The current app sends pump commands through MQTT; the firmware does not poll the legacy HTTP command endpoint. Pending command UI state is cleared when readiness is lost. Reconnect waits for device status rather than reusing the previous session's online flag. Settings configuration/scan send buttons require that screen's MQTT connection; broker setup and local drafts remain accessible.
 
 ESP32 validates MQTT/Wi-Fi/STA state for both ON and OFF commands and for remote sensor toggles. It ignores incoming/queued MQTT work when disconnected. Internal disconnect cleanup bypasses the remote-command gate so remote-owned pumps can always be stopped. As requested, the local/AP web and automatic operation remain independent of broker availability, subject to the configured interlock and sensor rules.
 

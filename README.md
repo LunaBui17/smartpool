@@ -1,8 +1,32 @@
 # Smart Pool
 
-Triển khai backend, MQTT broker riêng và MariaDB trên Raspberry Pi 4 B: xem [hướng dẫn triển khai Pi](deploy/raspberry-pi/README.md). Khi dùng XAMPP, cần chép cả `backend/database.php` cùng thư mục với `pool_api.php`.
+Hệ thống giám sát và điều khiển bể bơi: **ESP32-S3 → Raspberry Pi 4 B → Android**. ESP đo nhiệt độ/mực nước, điều khiển hai relay và thực thi tự động hóa. Pi chạy API PHP/Apache, MariaDB và Mosquitto bằng Docker Compose. Android đọc số đo/lịch sử qua API và gửi lệnh qua MQTT.
 
-Hệ thống dùng ESP32-S3 để đo nhiệt độ nước bằng DS18B20, đọc cảm biến mực nước dạng analog và điều khiển hai bơm qua relay. Ứng dụng Android điều khiển bơm qua HiveMQ Cloud (MQTT/TLS). App đọc dữ liệu cảm biến và lịch sử qua API PHP trên XAMPP để hiển thị và vẽ biểu đồ.
+Truy cập ngoài mạng dùng **Cloudflare Quick Tunnel**: HTTPS cho API và MQTT qua WebSocket bảo mật (WSS) trên cùng tên miền. Broker và database vẫn nằm trên Pi; không còn dùng ngrok trong bộ triển khai.
+
+- [Luồng xử lý toàn hệ thống](docs/system-flow.md): sơ đồ, trình tự xử lý, dữ liệu, xác nhận lệnh và tình huống mất kết nối.
+- [Triển khai và vận hành Pi](deploy/raspberry-pi/README.md).
+- [Firmware ESP32-S3](esp-firmware/README.md).
+- [Giao thức MQTT](README_MQTT_ESP32.md).
+- [Kiểm tra API bằng Postman](backend/postman/README.md).
+
+## Kiến trúc tổng thể
+
+```mermaid
+flowchart LR
+    S[DS18B20 và cảm biến mực nước] --> E[ESP32-S3]
+    E --> R[Relay và hai bơm]
+    E <-->|HTTPS API và MQTT WSS| C[Cloudflare Quick Tunnel]
+    A[Ứng dụng Android] <-->|HTTPS API và MQTT WSS| C
+    subgraph PI [Raspberry Pi 4 B / Docker]
+        T[cloudflared] --> H[Apache / PHP API]
+        H <-->|SQL nội bộ| D[(MariaDB / pool_db)]
+        H <-->|Proxy WebSocket /mqtt| M[Mosquitto]
+    end
+    C <--> T
+```
+
+Hai luồng chạy song song: **HTTP lưu và đọc dữ liệu**, **MQTT chuyển lệnh/cấu hình và báo trạng thái**. Không có dịch vụ MQTT consumer ghi vào database; ESP tự POST mẫu đo lên API. Android không kết nối MariaDB trực tiếp.
 
 ## Sơ đồ đấu nối
 
@@ -51,83 +75,111 @@ Sơ đồ dưới đây dùng **một nguồn 12 V** và hai nhánh hạ áp ri�
 
 DS18B20 có thể cấp VDD bằng 5 V, nhưng dây DQ nối GPIO9 của ESP32-S3 phải được kéo lên **3V3**, không kéo lên 5 V. Nếu dùng module DS18B20 có điện trở kéo lên tích hợp, kiểm tra điện áp DQ khi bus rảnh và vị trí nối điện trở trên module trước khi cắm vào ESP.
 
-## Cấu hình của project
+## Cấu hình hiện tại trong source
 
-Các mục firmware nằm trong `esp-firmware/main/Kconfig.projbuild` và chỉnh bằng `idf.py menuconfig`. `esp-firmware/sdkconfig.defaults` là giá trị mặc định cho cấu hình mới; `esp-firmware/sdkconfig` là cấu hình hiện có trên máy.
+| Thành phần | Cấu hình | Giá trị / nơi thay đổi |
+| --- | --- | --- |
+| Pi | IP LAN triển khai | `192.168.60.87`; `PI_BIND_IP` trong `.env` |
+| ESP | Hai cảm biến và hai relay | Đều bật trong `esp-firmware/sdkconfig` |
+| ESP | Chu kỳ lấy mẫu | 60 giây khi hai bơm tắt; 5 giây khi có bơm chạy |
+| ESP | Relay lúc khởi động | Hai bơm OFF; mức kích HIGH trên GPIO15/16 |
+| ESP | API và broker mặc định | Cloudflare trong `sdkconfig`, `sdkconfig.defaults`, `main/Kconfig.projbuild` |
+| Android | API mặc định | Cloudflare trong `AppConfig.DEFAULT_HTTP_API_URL`; đổi ngay màn hình đăng nhập hoặc Settings |
+| Android | Broker mặc định | **Source vẫn là HiveMQ Cloud**; cần đổi trong Settings sang WSS của Pi |
+| Android | Chu kỳ đọc API | Mặc định 3 giây khi MainActivity đang hiển thị |
+| MQTT | Người dùng | `esp32` cho firmware, `android` cho app/MQTTX |
+| DB | Database / user | `pool_db` / `smartpool`, chỉ API dùng trong mạng Docker |
 
-| Mục cấu hình | Mặc định | Cấu hình hiện có | Ý nghĩa |
-| --- | --- | --- | --- |
-| `DS18B20_GPIO` | 9 | 9 | Chân DQ của DS18B20 |
-| `DS18B20_MAX_DEVICES` | 2 | 2 | Số cảm biến nhiệt tối đa trên bus |
-| `DS18B20_READ_INTERVAL_MS` | 1000 ms | 10000 ms | Chu kỳ đọc và gửi mẫu |
-| `WATER_LEVEL_GPIO` | 10 | 10 | Chân ADC đọc mực nước |
-| `WATER_LOW_THRESHOLD` | 2000 | 2000 | ADC dưới ngưỡng nghĩa là thiếu nước |
-| `RELAY_1_GPIO` / `RELAY_2_GPIO` | 15 / 16 | 15 / 16 | Hai chân điều khiển relay |
-| `RELAY_ACTIVE_LEVEL` | HIGH | HIGH | Mức GPIO làm relay hút; có thể đổi sang LOW nếu module cần |
-| `POOL_SETUP_AP_SSID` | `SmartPool-Setup` | `SmartPool-Setup` | Tên Wi-Fi cấu hình của ESP |
-| `POOL_SETUP_AP_PASSWORD` | `12345678` | `12345678` | Mật khẩu Wi-Fi cấu hình |
-| `POOL_API_URL` | `http://192.168.10.214/pool_api/pool_api.php` | Giống mặc định | Địa chỉ API XAMPP |
-| `POOL_MQTT_URI` | `mqtts://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883` | Giống mặc định | Địa chỉ HiveMQ Cloud của ESP |
-| `POOL_CONTROL_TRANSPORT` | MQTT | MQTT | Chọn MQTT hoặc HTTP trong **Smart Pool Network → Pump control transport** |
+Tên miền đang được ghi trong source tại lần cập nhật tài liệu:
 
-Ứng dụng Android dùng HiveMQ Cloud qua `ssl://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883` trong `MainActivity.java` và `PoolMonitorService.java`. API XAMPP vẫn ở `192.168.10.214`; nếu IP máy XAMPP thay đổi, sửa URL API trong firmware và `MainActivity.java` rồi triển khai lại. Có thể giữ địa chỉ bằng DHCP reservation trên router.
+```text
+https://division-unlikely-drinking-disks.trycloudflare.com/pool_api/pool_api.php
+wss://division-unlikely-drinking-disks.trycloudflare.com/mqtt
+```
 
-Mosquitto cục bộ không còn được firmware và ứng dụng sử dụng; `mqtt-broker/mosquitto.conf` chỉ là cấu hình cũ để tham khảo. API PHP dùng MySQL tại `localhost`, cơ sở dữ liệu `pool_db`, tài khoản `root` và mật khẩu rỗng; nếu cấu hình MySQL khác, cập nhật thông tin kết nối trong cả `backend/pool_api.php` và `backend/create_admin.php`. API HTTP hiện dành cho mạng nội bộ.
+Đây là địa chỉ của một phiên Quick Tunnel, **có thể hết hiệu lực sau khi tunnel khởi động lại**. Nguồn địa chỉ vận hành là `~/smartpool-endpoints.txt` trên Pi. Không suy ra tunnel đang online chỉ từ URL trong source.
 
-## Cài đặt máy chủ và ứng dụng
+## Khởi động và kết nối các thành phần
 
-1. Khởi động Apache và MySQL trong XAMPP. Nhập lại `backend/pool_db.sql` bằng phpMyAdmin. Tệp SQL tạo các bảng cảm biến, lệnh bơm, tài khoản và phiên đăng nhập; nhập lại không xóa dữ liệu cũ.
-2. Chép `backend/pool_api.php` vào `xampp/htdocs/pool_api/pool_api.php`. Trên điện thoại cùng mạng, mở `http://192.168.10.214/pool_api/pool_api.php` và kiểm tra API trả về JSON.
-3. Tạo admin đầu tiên một lần bằng PHP CLI trên máy chạy MySQL (Windows/XAMPP: `C:\xampp\php\php.exe backend\create_admin.php`). Script chỉ chạy ở CLI, từ chối tạo thêm admin nếu đã có admin, và lưu mật khẩu dạng hash. Đăng nhập app bằng tài khoản đó; vào tab **Người dùng** để quản lý guest. Không có đăng ký công khai hoặc nút tự nâng quyền.
-4. Tạo tài khoản MQTT trên HiveMQ Cloud với quyền đọc và ghi các topic của project. Sao chép `esp-firmware/main/mqtt_credentials.h.example` thành `esp-firmware/main/mqtt_credentials.h`, rồi điền `SMARTPOOL_MQTT_USERNAME` và `SMARTPOOL_MQTT_PASSWORD`. Tệp này được Git bỏ qua. Nếu hai giá trị còn rỗng, ESP vẫn gửi HTTP nhưng không khởi động MQTT.
-5. Sao chép `android-app/mqtt.properties.example` thành `android-app/mqtt.properties`, rồi điền `hivemq.username` và `hivemq.password`. App chỉ điều khiển bằng MQTT; tệp này được Git bỏ qua. Tài khoản được nhúng vào APK; nên dùng tài khoản riêng có quyền phù hợp.
-6. Trong thư mục `esp-firmware`, chạy `idf.py menuconfig` và chọn **Pump control transport: MQTT**; kiểm tra chân, ngưỡng ADC, URL API và URI MQTT. Sau đó build/flash ESP32-S3, build và cài lại ứng dụng Android.
-7. ESP và điện thoại cần truy cập XAMPP trong LAN qua cổng **80**. Khi dùng MQTT để điều khiển hoặc nhận telemetry trực tiếp, cả hai cần truy cập HiveMQ Cloud cổng **8883**; ESP cần đồng bộ giờ qua NTP (`pool.ntp.org`, UDP **123**) trước khi kiểm tra chứng chỉ TLS.
+### 1. Pi: chạy backend, broker, database và tunnel
 
-## Cấu hình Wi-Fi cho ESP
+Chép mã từ Windows theo [hướng dẫn triển khai](deploy/raspberry-pi/README.md), rồi trên Pi:
 
-Khi chưa có thông tin Wi-Fi, ESP phát mạng **SmartPool-Setup**, mật khẩu mặc định **12345678**. Kết nối điện thoại vào mạng đó, mở `http://192.168.4.1`, chọn Wi-Fi từ danh sách quét được hoặc nhập SSID ẩn, rồi điền mật khẩu. ESP lưu thông tin Wi-Fi vào flash và tự kết nối sau những lần khởi động tiếp theo.
+```bash
+cd ~/smartpool/deploy/raspberry-pi
+sudo bash pool.sh up 192.168.60.87  # lần đầu; lần sau chỉ cần pool.sh up
+sudo bash pool.sh admin            # chỉ khi chưa có admin
+cat ~/smartpool-endpoints.txt
+```
 
-Khi kết nối thành công, ESP tắt mạng cấu hình. Trang cấu hình vẫn truy cập được bằng IP nội bộ của ESP, được in trong log dưới dạng `Wi-Fi got IP: ...`. Nếu mất Wi-Fi sau ba lần thử, ESP bật lại mạng cấu hình và tiếp tục thử kết nối mạng đã lưu mỗi **30 giây**; mạng cấu hình tắt khi ESP nhận lại IP nội bộ.
+Lấy `android_http_api_url` cho Android, `http_api_url` cho ESP và `mqtt_wss_uri` cho cả hai. `api_url` chỉ là địa chỉ gốc; API đầy đủ phải có `/pool_api/pool_api.php`.
 
-## Dữ liệu, điều khiển và lịch sử
+`mqtt-init` kết thúc sau khi tạo file tài khoản là bình thường. Các container `db`, `api`, `mqtt`, `cloudflare` dùng `restart: unless-stopped`; exporter systemd ghi địa chỉ mỗi 10 giây. `pool.sh stop` chủ động dừng stack và exporter; chạy `up` để bật lại.
 
-ESP gửi `nhiet_do`, `muc_nuoc` và `muc_nuoc_raw` đến API bằng HTTP POST, đồng thời phát mẫu đo trực tiếp qua MQTT. Ứng dụng Android đọc API mỗi **3 giây** để hiển thị cảm biến và biểu đồ; MQTT dùng để điều khiển bơm và nhận trạng thái relay. `muc_nuoc = 1` khi ADC lớn hơn hoặc bằng `WATER_LOW_THRESHOLD`; `muc_nuoc = 0` khi thấp hơn ngưỡng. Nếu một cảm biến đọc lỗi, ESP không gửi giá trị mới của cảm biến đó trong mẫu hiện tại.
+### 2. ESP: Wi-Fi, API, MQTT và cảm biến
 
-App dùng MQTT cho lệnh bơm và xác nhận trạng thái relay. `GET pool_api.php` trả dữ liệu cảm biến mới nhất, gồm `muc_nuoc_raw`; `GET pool_api.php?history=1&limit=100` trả tối đa 100 mẫu từ `pool_history` theo thứ tự thời gian để vẽ biểu đồ nhiệt độ và mực nước cm. Cần chép bản `backend/pool_api.php` mới lên XAMPP cùng với bản app mới.
+Trong ESP-IDF terminal:
 
-Trong Cài đặt app, nhập mực nước thấp nhất và cao nhất có thể đo cho từng bể, theo cm. App chỉ hiển thị mực nước và cho nhập ngưỡng cảnh báo/tự động hóa bằng cm trong khoảng này; ánh xạ sang ADC được giữ nội bộ trước khi lưu/gửi ESP để tương thích firmware. Cấu hình mới mặc định ánh xạ toàn dải cảm biến, còn các điểm ADC đã hiệu chuẩn từ phiên bản trước được giữ lại khi cập nhật.
+```powershell
+cd D:\esp\smartpool\esp-firmware
+idf.py menuconfig
+idf.py build
+idf.py -p COM3 flash monitor
+```
 
-Topic trạng thái MQTT cũng gửi IP LAN và URL HTTP API đang cấu hình trên ESP. App đối chiếu URL này với URL HTTP của app để báo hai bên có cùng cấu hình endpoint hay không; đây là phép so sánh URL, không xác minh máy chủ đích. App hiển thị nút mở web local tại IP LAN của ESP khi online; điện thoại cần cùng mạng Wi-Fi. Nếu chưa có IP LAN, có thể kết nối Wi-Fi `SmartPool-Setup` rồi mở `http://192.168.4.1/`.
+Kiểm tra URL API/URI MQTT và tài khoản `esp32` trong `main/mqtt_credentials.h`. `sdkconfig` quyết định bản build hiện tại; `sdkconfig.defaults` dùng khi tạo cấu hình mới. Cổng COM tùy máy.
 
-Tab **Tự động hóa** trong Cài đặt app đọc quy tắc hiện tại từ MQTT `smartpool/status` và lưu từng bơm qua `smartpool/config/automation`; ESP xác nhận bằng `smartpool/ack` và lưu quy tắc trong NVS. Điều kiện mực nước chỉ nhập bằng cm, giới hạn trong khoảng đo đã hiệu chuẩn, rồi app tự ánh xạ sang ADC trước khi gửi để giữ tương thích firmware. Có thể kết hợp với nhiệt độ và dừng theo ngưỡng hoặc thời gian tối đa. Lệnh cấu hình không retained để tránh áp dụng lại quy tắc cũ khi kết nối lại.
+ESP luôn có AP `SmartPool-Setup` (mật khẩu mặc định `12345678`); mở `http://192.168.4.1` để chọn Wi-Fi và cấu hình **MQTT & HTTP**. Cũng có thể mở bằng IP LAN của ESP khi cùng mạng. AP được giữ để cấu hình local ngay cả khi STA đã kết nối router.
 
-## Đăng nhập và quyền
+Thông tin Wi-Fi, broker/credential, API và quy tắc đã lưu trong NVS có thể được sử dụng sau reboot; riêng cấu hình API/MQTT đã lưu sẽ ghi đè mặc định firmware. Lưu API áp dụng cho các upload tiếp theo; lưu MQTT làm ESP khởi động lại. Muốn đổi endpoint sau khi flash, kiểm tra trang local thay vì chỉ nhìn `sdkconfig`.
 
-Tài khoản và role (`admin`/`guest`) được lưu trong MySQL `pool_users`; mật khẩu chỉ lưu dưới dạng `password_hash`, token phiên đăng nhập được lưu dạng hash trong `pool_user_sessions`. Admin đầu tiên được khởi tạo bằng `backend/create_admin.php`; tab **Người dùng** trong Cài đặt dành riêng cho admin để xem, thêm, sửa, khóa/mở khóa và xóa guest. Không có đăng ký tự do hoặc sửa tài khoản admin trong tab này. Tùy chọn **Ghi nhớ đăng nhập** lưu phiên riêng tư trên thiết bị và cấp phiên máy chủ 30 ngày; khi bỏ chọn, phiên chỉ có hạn 12 giờ. Đăng xuất chủ động sẽ xóa phiên đã ghi nhớ. Admin giữ toàn bộ giao diện cấu hình; guest chỉ thấy cảm biến/biểu đồ và điều khiển hai bơm, còn Settings/Automation, HTTP/MQTT diagnostics và thông tin IP/web local bị ẩn.
+### 3. Android: đăng nhập và chọn đúng broker
 
-Đăng nhập hiện gửi tới API HTTP của project nên chỉ dùng trong mạng tin cậy; trên mạng không tin cậy cần triển khai HTTPS. Role trong app giới hạn giao diện và thao tác trong app, không thay thế ACL cho MQTT broker hay xác thực cho các endpoint telemetry công khai hiện có.
+1. Build/cài app từ `android-app`. Máy build cần Android SDK và JDK phù hợp với cấu hình Gradle của dự án; đường dẫn JDK/SDK phải đúng trên từng máy.
+2. Trên màn hình đăng nhập, kiểm tra **URL máy chủ API** rồi đăng nhập tài khoản đã tạo trên Pi. Nếu chỉ nhập URL gốc, app bổ sung `/pool_api/pool_api.php`. Các URL mặc định cũ đã biết được chuyển sang mặc định Cloudflare khi cập nhật app.
+3. Với admin, mở Settings → MQTT: nhập `mqtt_wss_uri`, username `android`, password tương ứng trên Pi. **Đổi API không tự đổi broker MQTT.** Tên khóa `hivemq.username/password` trong `mqtt.properties` vẫn là tên cũ dùng để nhúng credential vào BuildConfig, không buộc app dùng HiveMQ.
+4. Kiểm tra app đã nối broker và nhận `smartpool/status` có `online:1` từ ESP. API trả JSON thành công chưa đủ để xác nhận điều khiển bơm hoạt động.
 
-| MQTT topic | Dữ liệu |
-| --- | --- |
-| `smartpool/telemetry` | Nhiệt độ và mực nước từ ESP |
-| `smartpool/status` | Trạng thái trực tuyến, trạng thái thực tế của hai bơm, IP LAN và URL HTTP API đã cấu hình |
-| `smartpool/config/automation` | Lưu quy tắc tự động của một bơm; không retained |
-| `smartpool/ack` | ESP xác nhận kết quả lưu cấu hình tự động hóa |
-| `smartpool/cmd/bom_vao` | Lệnh `0`/`1` tắt/bật bơm 1 |
-| `smartpool/cmd/bom_ra` | Lệnh `0`/`1` tắt/bật bơm 2 |
+Tài khoản app (`admin`/`guest`), tài khoản MQTT và tài khoản MariaDB là ba cơ chế riêng. Lấy mật khẩu từ cấu hình riêng trên Pi; tài liệu không lưu mật khẩu triển khai.
 
-Firmware không cho hai bơm bật đồng thời. Khi mất Wi-Fi, hai relay được tắt. Ở chế độ MQTT, mất broker cũng tắt bơm. Ở chế độ HTTP, ESP hỏi `GET /pool_api/pool_api.php?commands=1` mỗi **3 giây** và tắt bơm nếu hai lần hỏi liên tiếp thất bại. `pool_status` giữ trạng thái mới nhất do ESP báo về; `pool_history` lưu lịch sử mẫu đo. HTTP telemetry tới XAMPP vẫn hoạt động ở cả hai chế độ; MQTT telemetry/status vẫn hoạt động nếu đã cấu hình tài khoản HiveMQ.
+## Các luồng chính
 
-Ở chế độ HTTP, ứng dụng gửi `POST /pool_api/pool_api.php` với JSON `{"command":{"bom_vao":1,"bom_ra":0}}` để bật bơm vào; gửi cả hai giá trị bằng `0` để tắt. API lưu lệnh vào `pool_commands` và tăng `revision`; ESP chỉ áp dụng revision mới. Lần đọc đầu sau khi ESP khởi động, kết nối lại Wi-Fi hoặc khôi phục API chỉ lấy mốc revision để tránh bật bơm từ lệnh cũ. Hãy chờ log `HTTP command baseline` trước khi bấm lệnh mới. API HTTP hiện dành cho LAN và chưa có xác thực riêng.
+| Luồng | Đường đi | Kết quả |
+| --- | --- | --- |
+| Lấy mẫu | Cảm biến → ESP → HTTPS POST API → MariaDB | Lưu trạng thái và lịch sử; hàng đợi NVS khi gửi lỗi |
+| Hiển thị số đo | Android → HTTPS GET API → MariaDB | MainActivity cập nhật cảm biến; màn biểu đồ đọc lịch sử |
+| Cảnh báo nền | ESP → MQTT telemetry → PoolMonitorService | App đánh giá ngưỡng và phát thông báo |
+| Điều khiển bơm | Android → MQTT cmd → ESP → GPIO relay → MQTT status | App chờ trạng thái ESP báo về; không coi publish thành công là bơm đã bật |
+| Cấu hình | Settings → MQTT config → ESP → NVS → ACK/status | Lưu ngưỡng, thiết bị, API, Wi-Fi, tự động hóa |
+| Tự động hóa | Cảm biến → quy tắc trên ESP → relay | Chạy tại ESP, không cần app luôn mở |
+| Đăng nhập | Android → HTTPS login → pool_users / pool_user_sessions | Token phiên; quản lý guest yêu cầu admin |
 
-Khi mất Wi-Fi hoặc API không phản hồi, ESP lưu mẫu chưa gửi vào hàng đợi NVS trong flash và gửi bù theo thứ tự khi có mạng. Hàng đợi vẫn còn sau khi khởi động lại; `sample_id` giúp API tránh ghi trùng. Hàng đợi chứa tối đa **128 mẫu**: khoảng **2 phút** nếu lấy mẫu mỗi 1 giây, hoặc khoảng **21 phút** với cấu hình hiện tại là 10 giây. Khi đầy, mẫu cũ nhất bị thay thế và ESP ghi cảnh báo. Cột `received_at` là thời điểm máy chủ **nhận** mẫu, không phải thời điểm ESP đo lúc đang mất mạng.
+Xem [trình tự chi tiết và hợp đồng dữ liệu](docs/system-flow.md).
 
-## Kiểm tra khi có lỗi
+## Vận hành và kiểm tra
 
-- **Không thấy DS18B20:** kiểm tra VDD 3,3 V, GND, DQ GPIO9 và điện trở kéo lên 4,7 kΩ. Khi chưa có cảm biến hoạt động, ESP tìm lại mỗi **5 giây** mà vẫn tiếp tục đọc mực nước. Sau khi tìm thấy, log có dạng `DS18B20[0]: 27.50 C`.
-- **DS18B20 báo CRC, mất kết nối hoặc 85 °C:** firmware thử lại tối đa ba lần, cách nhau 50 ms, khi sai CRC hoặc mất phản hồi trên bus; giá trị 85 °C vẫn bị bỏ qua. Nếu lỗi lặp lại, kiểm tra dây, nguồn cảm biến và nhiễu khi bơm chạy. Sau ba chu kỳ đọc lỗi liên tiếp, cảm biến tạm ngừng đọc; ESP sẽ tìm lại khi không còn cảm biến nào hoạt động.
-- **Mực nước thay đổi bất thường:** xem giá trị `Water ADC` trong log, kiểm tra dây AO/GND và đo điện áp AO tại GPIO10 (ADC1). Tách dây tín hiệu cảm biến khỏi dây cấp nguồn bơm và hiệu chỉnh lại ngưỡng trong `menuconfig` nếu cần.
-- **Lỗi xuất hiện khi bật bơm 5 V:** kiểm tra điện áp 5 V tại bơm và điện áp cấp cho ESP đúng lúc khởi động bơm. Để dây cấp bơm tách khỏi dây cấp ESP; nếu dùng chung một bộ hạ áp, kiểm tra dòng đầu ra của bộ hạ áp hoặc dùng hai nhánh hạ áp như sơ đồ trên.
-- **Không kết nối API:** kiểm tra IP máy XAMPP, Apache, đường dẫn PHP và tường lửa cổng 80. ESP in `HTTP API target` khi khởi động và `HTTP POST OK` khi gửi mẫu thành công.
-- **Không kết nối HiveMQ Cloud:** kiểm tra tên đăng nhập/mật khẩu trong hai tệp cục bộ, quyền đọc/ghi topic, Internet, cổng 8883 và đồng bộ giờ NTP của ESP. ESP in lỗi MQTT/TLS khi không kết nối được.
+```bash
+cd ~/smartpool/deploy/raspberry-pi
+sudo bash pool.sh status
+sudo bash pool.sh logs api          # có thể chọn mqtt, db, cloudflare
+sudo bash pool.sh endpoints
+sudo bash pool.sh backup
+sudo bash pool.sh stop
+sudo bash pool.sh up
+```
+
+- API: mở URL đầy đủ, hoặc chạy bộ [Postman](backend/postman/README.md). Request kiểm tra token đã thu hồi nhận HTTP 403 là kết quả mong đợi.
+- MQTT: dùng MQTTX với `mqtt_wss_uri`, user `android`; hoặc trên Pi chạy `sudo python3 smoke-wss.py wss://DOMAIN_TRONG_FILE/mqtt`. Smoke test dùng topic diagnostics, không gửi lệnh bơm.
+- ESP: tìm log `SNTP synchronized`, `MQTT connected`, `HTTP POST OK`; web `/api/status` cho biết lỗi HTTP/MQTT và trạng thái cảm biến.
+- Khi tunnel đổi URL: cập nhật cả API lẫn broker trên ESP và Android, cùng URL trong MQTTX/Postman. File text không tự đẩy cấu hình ra client.
+- Database nằm trong volume Docker. `pool.sh stop` giữ dữ liệu; `docker compose down -v` xóa volume. Không chỉ sửa mật khẩu DB trong `.env` nếu tài khoản trong MariaDB chưa được đổi tương ứng.
+
+## Giới hạn cần hiểu khi đọc trạng thái
+
+Trạng thái relay là mức điều khiển GPIO, chưa có cảm biến phản hồi để xác nhận bơm thực sự quay. Số đo từ API có thể là mẫu cũ; app hỏi API mỗi 3 giây không làm ESP đo mỗi 3 giây. `received_at` là giờ server nhận mẫu, kể cả mẫu gửi bù.
+
+Interlock là cấu hình: firmware ban đầu cho phép hai bơm cùng chạy, còn app mặc định bật interlock và có thể đồng bộ xuống ESP. Khi bật interlock, ESP từ chối bật đồng thời. Mất Wi-Fi/MQTT dừng bơm đang thuộc điều khiển từ xa; điều khiển local và tự động hóa trên ESP có cơ chế riêng, không mặc định dừng chỉ vì mất broker.
+
+Role admin/guest và token bảo vệ các API quản lý tài khoản, nhưng chưa bảo vệ toàn bộ API dữ liệu/lệnh cũ hoặc phân quyền riêng từng user app tại MQTT. Xem [ranh giới xác thực hiện tại](docs/system-flow.md#xac-thuc-va-ranh-gioi-quyen). Backend còn endpoint lệnh HTTP tương thích cũ; firmware hiện tại đã bỏ việc polling lệnh HTTP, nên không dùng endpoint đó để điều khiển ESP.
+
+XAMPP vẫn là phương án chạy backend thay thế nếu chép cả `backend/database.php` và `pool_api.php`, nhập schema và tạo admin. Luồng triển khai đang dùng trong project là Pi + Docker + Cloudflare Quick Tunnel.
