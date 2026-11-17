@@ -63,7 +63,7 @@ public class AppConfig {
     private static final String KEY_TOPIC_CMD_PUMP_OUT = "mqtt_topic_cmd_pump_out";
 
     private static final String KEY_HTTP_API_URL = "http_api_url";
-    private static final String KEY_HTTP_API_URL_MIGRATED = "http_api_url_migrated_165";
+    private static final String KEY_HTTP_API_URL_MIGRATED = "http_api_url_migrated_cloudflare_v1";
     private static final String KEY_HTTP_POLL_INTERVAL = "http_poll_interval";
     private static final String KEY_CONTROL_MODE = "control_mode";
     private static final String KEY_INTERLOCK_ENABLED = "interlock_enabled";
@@ -106,7 +106,7 @@ public class AppConfig {
     public static final String DEFAULT_TOPIC_CMD_PUMP_IN = "smartpool/cmd/bom_vao";
     public static final String DEFAULT_TOPIC_CMD_PUMP_OUT = "smartpool/cmd/bom_ra";
 
-    public static final String DEFAULT_HTTP_API_URL = "http://192.168.10.165/pool_api/pool_api.php";
+    public static final String DEFAULT_HTTP_API_URL = "https://division-unlikely-drinking-disks.trycloudflare.com/pool_api/pool_api.php";
     public static final int DEFAULT_HTTP_POLL_INTERVAL = 3;
 
     private static AppConfig instance;
@@ -117,8 +117,11 @@ public class AppConfig {
                 .getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
         if (!prefs.getBoolean(KEY_HTTP_API_URL_MIGRATED, false)) {
             SharedPreferences.Editor edit = prefs.edit();
-            if ("http://192.168.10.214/pool_api/pool_api.php".equals(
-                    prefs.getString(KEY_HTTP_API_URL, null))) {
+            String savedUrl = prefs.getString(KEY_HTTP_API_URL, "").trim();
+            if (savedUrl.isEmpty()
+                    || "http://192.168.10.214/pool_api/pool_api.php".equals(savedUrl)
+                    || "http://192.168.10.165/pool_api/pool_api.php".equals(savedUrl)
+                    || "https://karma-unpleased-stoppage.ngrok-free.dev/pool_api/pool_api.php".equals(savedUrl)) {
                 edit.putString(KEY_HTTP_API_URL, DEFAULT_HTTP_API_URL);
             }
             edit.putBoolean(KEY_HTTP_API_URL_MIGRATED, true).apply();

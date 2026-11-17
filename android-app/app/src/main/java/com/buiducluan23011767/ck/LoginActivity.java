@@ -16,11 +16,14 @@ import com.android.volley.toolbox.Volley;
 
 import org.json.JSONObject;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.Locale;
 
 public class LoginActivity extends AppCompatActivity {
     private EditText username;
     private EditText password;
+    private EditText apiUrl;
     private Button login;
     private TextView status;
     private androidx.appcompat.widget.SwitchCompat rememberLogin;
@@ -33,6 +36,8 @@ public class LoginActivity extends AppCompatActivity {
 
         username = findViewById(R.id.edtLoginUsername);
         password = findViewById(R.id.edtLoginPassword);
+        apiUrl = findViewById(R.id.edtLoginApiUrl);
+        apiUrl.setText(AppConfig.getInstance(this).getHttpApiUrl());
         login = findViewById(R.id.btnLogin);
         status = findViewById(R.id.txtLoginStatus);
         rememberLogin = findViewById(R.id.switchRememberLogin);
@@ -49,11 +54,26 @@ public class LoginActivity extends AppCompatActivity {
             return;
         }
 
-        String url = AppConfig.getInstance(this).getHttpApiUrl().trim();
-        if (url.isEmpty()) {
-            status.setText("Máy chủ đăng nhập chưa được cấu hình.");
+        String url = apiUrl.getText().toString().trim();
+        try {
+            URI uri = new URI(url);
+            if ((!"https".equalsIgnoreCase(uri.getScheme())
+                    && !"http".equalsIgnoreCase(uri.getScheme()))
+                    || uri.getHost() == null || uri.getUserInfo() != null
+                    || uri.getFragment() != null) {
+                throw new URISyntaxException(url, "Invalid API URL");
+            }
+            if (uri.getRawPath() == null || uri.getRawPath().isEmpty()
+                    || "/".equals(uri.getRawPath())) {
+                url = new URI(uri.getScheme(), uri.getRawAuthority(),
+                        "/pool_api/pool_api.php", null, null).toString();
+            }
+        } catch (URISyntaxException e) {
+            apiUrl.setError("Nhập URL API HTTP hoặc HTTPS hợp lệ");
             return;
         }
+        AppConfig.getInstance(this).setHttpApiUrl(url);
+        apiUrl.setText(url);
 
         login.setEnabled(false);
         status.setText("Đang xác thực tài khoản...");
@@ -101,7 +121,8 @@ public class LoginActivity extends AppCompatActivity {
                     if (responseCode == 401) {
                         status.setText("Tên đăng nhập hoặc mật khẩu không đúng.");
                     } else if (responseCode == 0) {
-                        status.setText("Không thể kết nối máy chủ đăng nhập. Kiểm tra mạng và URL API.");
+                        status.setText("Không thể kết nối máy chủ. Kiểm tra mạng và URL API ở trên; "
+                                + "nếu Quick Tunnel đổi địa chỉ, nhập URL mới từ file smartpool-endpoints.txt trên Pi.");
                     } else {
                         status.setText(String.format(Locale.getDefault(),
                                 "Đăng nhập thất bại (HTTP %d).", responseCode));

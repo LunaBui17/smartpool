@@ -940,7 +940,7 @@
                     android:layout_height="46dp"
                     android:layout_marginTop="6dp"
                     android:background="@drawable/bg_input_field"
-                    android:hint="http://192.168.10.165/pool_api/pool_api.php"
+                    android:hint="https://your-tunnel.trycloudflare.com/pool_api/pool_api.php"
                     android:inputType="textUri"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"

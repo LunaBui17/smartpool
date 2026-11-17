@@ -30,6 +30,32 @@
             android:textColor="@color/text_secondary"
             android:textSize="14sp" />
 
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:labelFor="@id/edtLoginApiUrl"
+            android:text="URL máy chủ API"
+            android:textColor="@color/text_secondary" />
+
+        <EditText
+            android:id="@+id/edtLoginApiUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="50dp"
+            android:background="@drawable/bg_input_field"
+            android:inputType="textUri"
+            android:padding="14dp"
+            android:textColor="@color/text_primary"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Khi Quick Tunnel đổi địa chỉ, dùng android_http_api_url trong file smartpool-endpoints.txt trên Pi."
+            android:textColor="@color/text_muted"
+            android:textSize="11sp" />
+
         <EditText
             android:id="@+id/edtLoginUsername"
             android:layout_width="match_parent"
