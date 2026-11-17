@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/PoolCard">
+    <TextView android:id="@+id/txtEventTime" style="@style/PoolCaption" />
+    <TextView android:id="@+id/txtEventAction"
+        style="@style/PoolSectionTitle" />
+    <TextView android:id="@+id/txtEventResult"
+        style="@style/PoolBody"
+        android:textStyle="bold" />
+    <TextView android:id="@+id/txtEventActor"
+        style="@style/PoolCaption" android:layout_marginTop="10dp" />
+    <TextView android:id="@+id/txtEventDetail"
+        style="@style/PoolBody" android:layout_marginTop="8dp" />
+    <TextView android:id="@+id/txtEventSync"
+        style="@style/PoolCaption" android:layout_marginTop="8dp"
+        android:text="Chưa đồng bộ lên máy chủ"
+        android:textColor="@color/warning" />
+</LinearLayout>

@@ -19,9 +19,7 @@ import android.text.TextWatcher;
 import android.text.Editable;
 
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
 
 import com.android.volley.DefaultRetryPolicy;
 import com.android.volley.Request;
@@ -54,7 +52,6 @@ public class SettingsActivity extends AppCompatActivity {
     private static final String TAG = "SettingsActivity";
 
     private View settingsRoot;
-    private View toolbarContainer;
 
     private ImageButton btnBack;
     private ImageButton btnToolbarPreview;
@@ -151,6 +148,7 @@ public class SettingsActivity extends AppCompatActivity {
     private String pendingAckReqId = null;
     private String pendingAckAction;
     private String pendingConfigLog;
+    private int expandedSettingsSection;
     private static final long ACK_TIMEOUT_MS = 10000L;
     private final Runnable ackTimeoutRunnable = this::handleAckTimeout;
 
@@ -193,6 +191,7 @@ public class SettingsActivity extends AppCompatActivity {
         loadValuesToViews();
         setupAutomationTab();
         setupListeners();
+        setupSettingsSections(savedInstanceState);
 
         refreshMqttActions();
         connectMqtt();
@@ -201,7 +200,6 @@ public class SettingsActivity extends AppCompatActivity {
 
     private void initViews() {
         settingsRoot = findViewById(R.id.settingsRoot);
-        toolbarContainer = findViewById(R.id.toolbarContainer);
 
         btnBack = findViewById(R.id.btnBack);
         btnToolbarPreview = findViewById(R.id.btnToolbarPreview);
@@ -298,12 +296,43 @@ public class SettingsActivity extends AppCompatActivity {
         View[] tabs = {tabSettings, tabAutomation, tabUsers};
         for (int i = 0; i < tabs.length; i++) {
             boolean active = i == selected;
-            tabs[i].setBackgroundColor(getColor(active ? R.color.water_accent : R.color.white));
+            tabs[i].setSelected(active);
+            tabs[i].setBackgroundResource(active
+                    ? R.drawable.bg_button_primary : R.drawable.bg_button_secondary);
             ((TextView) tabs[i]).setTextColor(getColor(
                     active ? R.color.white : R.color.text_secondary));
         }
         if (selected == 1) requestAutomationStatus();
         if (selected == 2) requestUsers();
+    }
+
+    private void setupSettingsSections(Bundle savedInstanceState) {
+        int[] headings = {R.id.headingThresholds, R.id.headingWifi, R.id.headingDevice,
+                R.id.headingMqtt, R.id.headingHttp};
+        int[] sections = {R.id.sectionThresholds, R.id.sectionWifi, R.id.sectionDevice,
+                R.id.sectionMqtt, R.id.sectionHttp};
+        String[] titles = {"Ngưỡng và hiệu chuẩn", "Wi-Fi thiết bị", "Thông tin thiết bị",
+                "Kết nối MQTT", "Kết nối HTTP"};
+        expandedSettingsSection = savedInstanceState == null ? -1
+                : savedInstanceState.getInt("settings_section", -1);
+        Runnable renderSections = () -> {
+            for (int i = 0; i < sections.length; i++) {
+                boolean expanded = expandedSettingsSection == i;
+                findViewById(sections[i]).setVisibility(expanded ? View.VISIBLE : View.GONE);
+                TextView heading = findViewById(headings[i]);
+                heading.setText(titles[i] + (expanded ? "  −" : "  +"));
+                heading.setSelected(expanded);
+                ViewCompat.setStateDescription(heading, expanded ? "Đã mở" : "Đã thu gọn");
+            }
+        };
+        for (int i = 0; i < headings.length; i++) {
+            final int section = i;
+            findViewById(headings[i]).setOnClickListener(v -> {
+                expandedSettingsSection = expandedSettingsSection == section ? -1 : section;
+                renderSections.run();
+            });
+        }
+        renderSections.run();
     }
 
     private AutomationRuleViews createAutomationRule(int channel, String title) {
@@ -781,25 +810,7 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     private void applySystemBarInsets() {
-        if (settingsRoot == null || toolbarContainer == null) return;
-        final int headerTop = toolbarContainer.getPaddingTop();
-
-        ViewCompat.setOnApplyWindowInsetsListener(settingsRoot, (view, insets) -> {
-            Insets bars = insets.getInsets(
-                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout()
-            );
-
-            toolbarContainer.setPadding(
-                    toolbarContainer.getPaddingLeft(),
-                    headerTop + bars.top,
-                    toolbarContainer.getPaddingRight(),
-                    toolbarContainer.getPaddingBottom()
-            );
-
-            return insets;
-        });
-
-        ViewCompat.requestApplyInsets(settingsRoot);
+        ScreenInsets.apply(settingsRoot);
     }
 
     private void setupWifiSpinner() {
@@ -1125,7 +1136,7 @@ public class SettingsActivity extends AppCompatActivity {
         spnUserRole.setSelection(0);
         spnUserRole.setEnabled(false);
         switchUserActive.setChecked(user.optInt("is_active", 0) == 1);
-        btnSaveUser.setText("LƯU THAY ĐỔI");
+        btnSaveUser.setText("Lưu thay đổi");
         btnCancelUserEdit.setVisibility(View.VISIBLE);
         edtUserUsername.requestFocus();
     }
@@ -1137,7 +1148,7 @@ public class SettingsActivity extends AppCompatActivity {
         spnUserRole.setSelection(0);
         spnUserRole.setEnabled(true);
         switchUserActive.setChecked(true);
-        btnSaveUser.setText("TẠO TÀI KHOẢN");
+        btnSaveUser.setText("Tạo tài khoản");
         btnCancelUserEdit.setVisibility(View.GONE);
     }
 
@@ -1876,6 +1887,12 @@ public class SettingsActivity extends AppCompatActivity {
                 handler.post(() -> onFailure.accept(e.getMessage()));
             }
         }).start();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        outState.putInt("settings_section", expandedSettingsSection);
+        super.onSaveInstanceState(outState);
     }
 
     @Override

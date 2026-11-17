@@ -34,6 +34,7 @@ public class LoginActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_login);
+        ScreenInsets.apply(findViewById(R.id.loginRoot));
 
         username = findViewById(R.id.edtLoginUsername);
         password = findViewById(R.id.edtLoginPassword);
@@ -45,6 +46,11 @@ public class LoginActivity extends AppCompatActivity {
         requestQueue = Volley.newRequestQueue(getApplicationContext());
         configureApiUrl.setOnClickListener(v -> showApiUrlDialog());
         login.setOnClickListener(v -> submitLogin());
+        password.setOnEditorActionListener((view, action, event) -> {
+            if (action != android.view.inputmethod.EditorInfo.IME_ACTION_DONE) return false;
+            if (login.isEnabled()) submitLogin();
+            return true;
+        });
     }
 
     private void showApiUrlDialog() {
@@ -87,7 +93,7 @@ public class LoginActivity extends AppCompatActivity {
         try {
             url = normalizeApiUrl(AppConfig.getInstance(this).getHttpApiUrl().trim());
         } catch (URISyntaxException e) {
-            status.setText("URL API không hợp lệ. Nhấn vào dòng URL để cập nhật.");
+            status.setText("URL API không hợp lệ. Nhấn Cấu hình API để cập nhật.");
             return;
         }
         AppConfig.getInstance(this).setHttpApiUrl(url);

@@ -1,119 +1,113 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/loginRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/background"
-    android:fillViewport="true">
-
+    android:fillViewport="true"
+    android:overScrollMode="never">
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:gravity="center"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
         android:orientation="vertical"
-        android:padding="28dp">
+        android:padding="24dp">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="SMART POOL"
-            android:textColor="@color/navy"
-            android:textSize="28sp"
-            android:textStyle="bold" />
+        <ImageView
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:layout_marginBottom="16dp"
+            android:background="@drawable/bg_button_secondary"
+            android:importantForAccessibility="no"
+            android:padding="12dp"
+            android:src="@drawable/ic_water_drop" />
+        <TextView style="@style/PoolCaption"
+            android:text="SMART POOL" android:textColor="@color/blue_dark"
+            android:textStyle="bold" android:letterSpacing="0.12" />
+        <TextView style="@style/PoolTitle"
+            android:layout_marginTop="8dp" android:text="Chào mừng trở lại" />
+        <TextView style="@style/PoolBody"
+            android:layout_marginTop="8dp" android:layout_marginBottom="24dp"
+            android:text="Theo dõi bể bơi và điều khiển thiết bị của bạn ở một nơi." />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:gravity="center"
-            android:text="Đăng nhập để giám sát và điều khiển hệ thống"
-            android:textColor="@color/text_secondary"
-            android:textSize="14sp" />
-
+        <LinearLayout style="@style/PoolCard" android:padding="20dp">
+            <TextView style="@style/PoolSectionTitle" android:text="Đăng nhập tài khoản" />
+            <com.google.android.material.textfield.TextInputLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Tên đăng nhập"
+                app:boxBackgroundMode="outline">
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/edtLoginUsername"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:autofillHints="username"
+                    android:background="@null"
+                    android:imeOptions="actionNext"
+                    android:inputType="text"
+                    android:minHeight="56dp"
+                    android:singleLine="true" />
+            </com.google.android.material.textfield.TextInputLayout>
+            <com.google.android.material.textfield.TextInputLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:hint="Mật khẩu"
+                app:boxBackgroundMode="outline"
+                app:endIconMode="password_toggle">
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/edtLoginPassword"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:autofillHints="password"
+                    android:background="@null"
+                    android:imeOptions="actionDone"
+                    android:inputType="textPassword"
+                    android:minHeight="56dp"
+                    android:singleLine="true" />
+            </com.google.android.material.textfield.TextInputLayout>
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switchRememberLogin"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:checked="true"
+                android:minHeight="48dp"
+                android:text="Ghi nhớ đăng nhập"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+            <TextView style="@style/PoolCaption"
+                android:text="Tối đa 30 ngày trên thiết bị này. Không ghi nhớ: phiên có hạn 12 giờ." />
+            <TextView
+                android:id="@+id/txtLoginStatus"
+                style="@style/PoolBody"
+                android:layout_marginTop="12dp"
+                android:accessibilityLiveRegion="polite"
+                android:minHeight="28dp" />
+            <Button
+                android:id="@+id/btnLogin"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_button_primary"
+                android:minHeight="52dp"
+                android:text="Đăng nhập"
+                android:textColor="@color/white" />
+        </LinearLayout>
         <TextView
             android:id="@+id/txtConfigureApiUrl"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
+            style="@style/PoolCaption"
+            android:layout_width="wrap_content"
+            android:layout_gravity="center_horizontal"
             android:background="?attr/selectableItemBackground"
             android:clickable="true"
             android:focusable="true"
-            android:gravity="center_vertical"
-            android:minHeight="40dp"
-            android:paddingStart="4dp"
-            android:paddingEnd="4dp"
-            android:text="Cấu hình API"
-            android:textColor="@color/blue"
-            android:textSize="13sp" />
-
-        <EditText
-            android:id="@+id/edtLoginUsername"
-            android:layout_width="match_parent"
-            android:layout_height="50dp"
-            android:layout_marginTop="30dp"
-            android:autofillHints="username"
-            android:background="@drawable/bg_input_field"
-            android:hint="Tên đăng nhập"
-            android:inputType="text"
-            android:paddingStart="14dp"
-            android:paddingEnd="14dp"
-            android:singleLine="true"
-            android:textColor="@color/text_primary"
-            android:textSize="15sp" />
-
-        <EditText
-            android:id="@+id/edtLoginPassword"
-            android:layout_width="match_parent"
-            android:layout_height="50dp"
-            android:layout_marginTop="12dp"
-            android:autofillHints="password"
-            android:background="@drawable/bg_input_field"
-            android:hint="Mật khẩu"
-            android:inputType="textPassword"
-            android:paddingStart="14dp"
-            android:paddingEnd="14dp"
-            android:singleLine="true"
-            android:textColor="@color/text_primary"
-            android:textSize="15sp" />
-
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchRememberLogin"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:checked="true"
-            android:text="Ghi nhớ đăng nhập trên thiết bị này"
-            android:textColor="@color/text_secondary"
-            android:textSize="13sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:text="Giữ đăng nhập tối đa 30 ngày; bỏ chọn thì phiên hết hạn sau 12 giờ."
-            android:textColor="@color/text_muted"
-            android:textSize="11sp" />
-
-        <TextView
-            android:id="@+id/txtLoginStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
             android:gravity="center"
-            android:minHeight="40dp"
-            android:textColor="@color/text_secondary"
-            android:textSize="13sp" />
-
-        <Button
-            android:id="@+id/btnLogin"
-            android:layout_width="match_parent"
-            android:layout_height="50dp"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/bg_button_primary"
-            android:text="ĐĂNG NHẬP"
-            android:textAllCaps="false"
-            android:textColor="@color/white"
-            android:textSize="15sp"
-            android:textStyle="bold" />
+            android:minHeight="48dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:text="Cấu hình API"
+            android:textColor="@color/blue_dark" />
     </LinearLayout>
 </ScrollView>

@@ -19,9 +19,7 @@ import android.widget.TextView;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
+import com.google.android.material.bottomnavigation.BottomNavigationView;
 
 import com.android.volley.DefaultRetryPolicy;
 import com.android.volley.Request;
@@ -52,7 +50,6 @@ public class MainActivity extends AppCompatActivity {
     private static final String TAG = "SmartPool";
 
     private View rootScroll;
-    private View headerContainer;
     private View alertBannerContainer;
     private TextView txtActionFeedback;
     private View protocolSectionTitle;
@@ -60,11 +57,11 @@ public class MainActivity extends AppCompatActivity {
     private View interlockControlSection;
     private View dashboardContent;
     private View systemStatusContent;
-    private Button tabDashboard;
-    private Button tabSystemStatus;
+    private View controlContent;
+    private BottomNavigationView mainNavigation;
     private SystemStatusView systemStatusDiagram;
     private TextView txtSystemStatusUpdated;
-    private boolean showingSystemStatus;
+    private int selectedMainTab;
     private JSONObject reportedSystemStatus;
     private Boolean apiDatabaseOk;
     private long lastSystemStatusMs;
@@ -197,30 +194,34 @@ public class MainActivity extends AppCompatActivity {
         config = AppConfig.getInstance(this);
 
         initViews();
-        applySystemBarInsets();
+        ScreenInsets.apply(findViewById(R.id.mainRoot));
         setupListeners();
 
         requestQueue = Volley.newRequestQueue(getApplicationContext());
 
         renderPumpStates();
-        selectMainTab(savedInstanceState != null
-                && savedInstanceState.getBoolean("system_status_tab", false));
+        selectMainTab(savedInstanceState == null ? 0
+                : savedInstanceState.getInt("main_tab", 0));
         requestNotificationPermissionAndStartService();
     }
 
     private void initViews() {
         rootScroll = findViewById(R.id.rootScroll);
-        headerContainer = findViewById(R.id.headerContainer);
         alertBannerContainer = findViewById(R.id.alertBannerContainer);
         txtActionFeedback = findViewById(R.id.txtActionFeedback);
         dashboardContent = findViewById(R.id.dashboardContent);
         systemStatusContent = findViewById(R.id.systemStatusContent);
-        tabDashboard = findViewById(R.id.tabDashboard);
-        tabSystemStatus = findViewById(R.id.tabSystemStatus);
+        controlContent = findViewById(R.id.controlContent);
+        mainNavigation = findViewById(R.id.mainNavigation);
         systemStatusDiagram = findViewById(R.id.systemStatusDiagram);
         txtSystemStatusUpdated = findViewById(R.id.txtSystemStatusUpdated);
-        tabDashboard.setOnClickListener(v -> selectMainTab(false));
-        tabSystemStatus.setOnClickListener(v -> selectMainTab(true));
+        mainNavigation.setOnItemSelectedListener(item -> {
+            if (item.getItemId() == R.id.navOverview) selectMainTab(0);
+            else if (item.getItemId() == R.id.navControl) selectMainTab(1);
+            else if (item.getItemId() == R.id.navSystem) selectMainTab(2);
+            else return false;
+            return true;
+        });
 
         txtHeaderSubtitle = findViewById(R.id.txtHeaderSubtitle);
         btnLogout = findViewById(R.id.btnLogout);
@@ -268,7 +269,7 @@ public class MainActivity extends AppCompatActivity {
 
         txtUpdated = findViewById(R.id.txtUpdated);
 
-        btnLogout.setText(isAdmin ? "Admin • Thoát" : "Guest • Thoát");
+        btnLogout.setText(isAdmin ? "Admin • Đăng xuất" : "Guest • Đăng xuất");
         btnOpenSettings.setVisibility(isAdmin ? View.VISIBLE : View.GONE);
         protocolSectionTitle.setVisibility(isAdmin ? View.VISIBLE : View.GONE);
         protocolDetailsSection.setVisibility(isAdmin ? View.VISIBLE : View.GONE);
@@ -375,8 +376,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void refreshConfigUI() {
-        txtDeviceBadge.setText(config.getDeviceId());
-        txtHeaderSubtitle.setText(config.getDeviceName().toUpperCase(Locale.getDefault())
+        txtDeviceBadge.setText("ID thiết bị: " + config.getDeviceId());
+        txtHeaderSubtitle.setText(config.getDeviceName()
                 + " • " + config.getDeviceLocation());
 
         txtControlModeBadge.setText(isAdmin ? "Vai trò: Admin" : "Vai trò: Guest");
@@ -502,39 +503,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void applySystemBarInsets() {
-        if (rootScroll == null || headerContainer == null) {
-            return;
-        }
-
-        final int headerTop = headerContainer.getPaddingTop();
-        final int bottom = rootScroll.getPaddingBottom();
-
-        ViewCompat.setOnApplyWindowInsetsListener(rootScroll, (view, insets) -> {
-            Insets bars = insets.getInsets(
-                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout()
-            );
-
-            headerContainer.setPadding(
-                    headerContainer.getPaddingLeft(),
-                    headerTop + bars.top,
-                    headerContainer.getPaddingRight(),
-                    headerContainer.getPaddingBottom()
-            );
-
-            view.setPadding(
-                    view.getPaddingLeft(),
-                    view.getPaddingTop(),
-                    view.getPaddingRight(),
-                    Math.max(bottom, bars.bottom)
-            );
-
-            return insets;
-        });
-
-        ViewCompat.requestApplyInsets(rootScroll);
-    }
-
     @Override
     protected void onResume() {
         super.onResume();
@@ -570,7 +538,7 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onSaveInstanceState(Bundle outState) {
-        outState.putBoolean("system_status_tab", showingSystemStatus);
+        outState.putInt("main_tab", selectedMainTab);
         super.onSaveInstanceState(outState);
     }
 
@@ -1347,18 +1315,13 @@ public class MainActivity extends AppCompatActivity {
         txtUpdated.setText("Cập nhật gần nhất: " + time);
     }
 
-    private void selectMainTab(boolean systemStatus) {
-        showingSystemStatus = systemStatus;
-        dashboardContent.setVisibility(systemStatus ? View.GONE : View.VISIBLE);
-        systemStatusContent.setVisibility(systemStatus ? View.VISIBLE : View.GONE);
-        Button[] tabs = {tabDashboard, tabSystemStatus};
-        for (int i = 0; i < tabs.length; i++) {
-            boolean selected = (i == 1) == systemStatus;
-            tabs[i].setSelected(selected);
-            tabs[i].setBackgroundResource(selected
-                    ? R.drawable.bg_button_primary : R.drawable.bg_button_secondary);
-            tabs[i].setTextColor(getColor(selected ? R.color.white : R.color.blue));
-        }
+    private void selectMainTab(int tab) {
+        selectedMainTab = tab;
+        dashboardContent.setVisibility(tab == 0 ? View.VISIBLE : View.GONE);
+        controlContent.setVisibility(tab == 1 ? View.VISIBLE : View.GONE);
+        systemStatusContent.setVisibility(tab == 2 ? View.VISIBLE : View.GONE);
+        int menuId = tab == 0 ? R.id.navOverview : tab == 1 ? R.id.navControl : R.id.navSystem;
+        mainNavigation.getMenu().findItem(menuId).setChecked(true);
         renderSystemStatus();
         rootScroll.scrollTo(0, 0);
     }
@@ -1558,31 +1521,41 @@ public class MainActivity extends AppCompatActivity {
         // 1. Bơm cấp nước
         if (pumpInPending) {
             btnPumpIn.setEnabled(false);
-            btnPumpIn.setText(desiredPumpInOn ? "⏳ ĐANG BẬT..." : "⏳ ĐANG TẮT...");
+            btnPumpIn.setText(desiredPumpInOn ? "Đang bật bơm..." : "Đang tắt bơm...");
             btnPumpIn.setBackgroundResource(R.drawable.bg_button_secondary);
+            btnPumpIn.setTextColor(getColor(R.color.text_secondary));
             txtPumpInStatus.setText("Trạng thái: Đang đợi ESP32 xác nhận (Double Check)...");
             txtPumpInStatus.setTextColor(Color.rgb(217, 119, 6));
         } else {
             btnPumpIn.setEnabled(canControlDevice());
-            btnPumpIn.setText(pumpInOn ? "TẮT BƠM" : "BẬT BƠM");
-            btnPumpIn.setBackgroundResource(pumpInOn ? R.drawable.bg_button_danger : R.drawable.bg_button_primary);
-            txtPumpInStatus.setText("Trạng thái: " + (pumpInOn ? "ĐANG BẬT" : "ĐANG TẮT"));
-            txtPumpInStatus.setTextColor(pumpInOn ? Color.rgb(220, 38, 38) : Color.rgb(100, 116, 139));
+            btnPumpIn.setText(!canControlDevice() ? "Chờ thiết bị" : pumpInOn ? "Tắt bơm cấp" : "Bật bơm cấp");
+            btnPumpIn.setBackgroundResource(!canControlDevice() ? R.drawable.bg_button_secondary
+                    : pumpInOn ? R.drawable.bg_button_danger : R.drawable.bg_button_primary);
+            btnPumpIn.setTextColor(getColor(canControlDevice() ? R.color.white : R.color.text_secondary));
+            txtPumpInStatus.setText(!canControlDevice() ? "Chưa xác nhận trạng thái ESP32"
+                    : "Trạng thái: " + (pumpInOn ? "Đang bật" : "Đã tắt"));
+            txtPumpInStatus.setTextColor(canControlDevice() && pumpInOn
+                    ? Color.rgb(220, 38, 38) : Color.rgb(100, 116, 139));
         }
 
         // 2. Bơm thoát nước
         if (pumpOutPending) {
             btnPumpOut.setEnabled(false);
-            btnPumpOut.setText(desiredPumpOutOn ? "⏳ ĐANG BẬT..." : "⏳ ĐANG TẮT...");
+            btnPumpOut.setText(desiredPumpOutOn ? "Đang bật bơm..." : "Đang tắt bơm...");
             btnPumpOut.setBackgroundResource(R.drawable.bg_button_secondary);
+            btnPumpOut.setTextColor(getColor(R.color.text_secondary));
             txtPumpOutStatus.setText("Trạng thái: Đang đợi ESP32 xác nhận (Double Check)...");
             txtPumpOutStatus.setTextColor(Color.rgb(217, 119, 6));
         } else {
             btnPumpOut.setEnabled(canControlDevice());
-            btnPumpOut.setText(pumpOutOn ? "TẮT BƠM" : "BẬT BƠM");
-            btnPumpOut.setBackgroundResource(pumpOutOn ? R.drawable.bg_button_danger : R.drawable.bg_button_primary);
-            txtPumpOutStatus.setText("Trạng thái: " + (pumpOutOn ? "ĐANG BẬT" : "ĐANG TẮT"));
-            txtPumpOutStatus.setTextColor(pumpOutOn ? Color.rgb(220, 38, 38) : Color.rgb(100, 116, 139));
+            btnPumpOut.setText(!canControlDevice() ? "Chờ thiết bị" : pumpOutOn ? "Tắt bơm thoát" : "Bật bơm thoát");
+            btnPumpOut.setBackgroundResource(!canControlDevice() ? R.drawable.bg_button_secondary
+                    : pumpOutOn ? R.drawable.bg_button_danger : R.drawable.bg_button_primary);
+            btnPumpOut.setTextColor(getColor(canControlDevice() ? R.color.white : R.color.text_secondary));
+            txtPumpOutStatus.setText(!canControlDevice() ? "Chưa xác nhận trạng thái ESP32"
+                    : "Trạng thái: " + (pumpOutOn ? "Đang bật" : "Đã tắt"));
+            txtPumpOutStatus.setTextColor(canControlDevice() && pumpOutOn
+                    ? Color.rgb(220, 38, 38) : Color.rgb(100, 116, 139));
         }
         if (!canControlDevice()) {
             String unavailable = isAdmin

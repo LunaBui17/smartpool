@@ -2,18 +2,95 @@
 <resources>
 
     <style name="Theme.SmartPool"
-        parent="Theme.AppCompat.Light.NoActionBar">
+        parent="Theme.Material3.Light.NoActionBar">
 
-        <item name="colorPrimary">@color/navy</item>
+        <item name="colorPrimary">@color/blue</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorSecondary">@color/cyan</item>
+        <item name="colorPrimaryContainer">@color/cyan_soft</item>
+        <item name="colorOnPrimaryContainer">@color/navy</item>
+        <item name="colorSecondaryContainer">@color/cyan_soft</item>
+        <item name="colorOnSecondaryContainer">@color/blue_dark</item>
+        <item name="colorSurface">@color/surface_card</item>
+        <item name="colorOnSurface">@color/text_primary</item>
         <item name="colorPrimaryDark">@color/navy</item>
         <item name="colorAccent">@color/blue</item>
 
         <item name="android:fontFamily">sans</item>
-        <item name="android:statusBarColor">@color/navy</item>
-        <item name="android:navigationBarColor">@color/navy</item>
+        <item name="android:statusBarColor">@color/background</item>
+        <item name="android:navigationBarColor">@color/background</item>
         <item name="android:windowBackground">@color/background</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="colorControlActivated">@color/blue</item>
+        <item name="buttonStyle">@style/PoolButton</item>
+        <item name="android:buttonStyle">@style/PoolButton</item>
+        <item name="editTextStyle">@style/PoolEditText</item>
+        <item name="android:editTextStyle">@style/PoolEditText</item>
+        <!-- Keep existing button backgrounds when adding Material navigation and text fields. -->
+        <item name="viewInflaterClass">androidx.appcompat.app.AppCompatViewInflater</item>
 
     </style>
 
+    <style name="PoolButton" parent="Widget.AppCompat.Button">
+        <item name="android:minHeight">48dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:background">@drawable/bg_button_secondary</item>
+        <item name="backgroundTint">@null</item>
+        <item name="android:backgroundTint">@null</item>
+        <item name="android:textColor">@color/navy</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">16dp</item>
+    </style>
+    <style name="PoolEditText" parent="Widget.AppCompat.EditText">
+        <item name="android:minHeight">48dp</item>
+        <item name="android:background">@drawable/bg_input_field</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:paddingStart">14dp</item>
+        <item name="android:paddingEnd">14dp</item>
+    </style>
+    <style name="PoolCard">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginBottom">12dp</item>
+        <item name="android:background">@drawable/bg_card_modern</item>
+        <item name="android:padding">18dp</item>
+        <item name="android:orientation">vertical</item>
+    </style>
+    <style name="PoolTitle">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/navy</item>
+        <item name="android:textSize">24sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+    <style name="PoolSectionTitle">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">8dp</item>
+        <item name="android:layout_marginBottom">12dp</item>
+        <item name="android:textColor">@color/navy</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+    <style name="PoolBody">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:lineSpacingExtra">3dp</item>
+    </style>
+    <style name="PoolCaption" parent="PoolBody">
+        <item name="android:textSize">12sp</item>
+    </style>
+    <style name="PoolIconButton">
+        <item name="android:layout_width">48dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:background">@drawable/bg_button_secondary</item>
+        <item name="android:padding">12dp</item>
+        <item name="android:tint">@color/navy</item>
+    </style>
 </resources>

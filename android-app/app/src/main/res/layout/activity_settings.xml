@@ -11,19 +11,17 @@
         android:id="@+id/toolbarContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@drawable/bg_header_gradient"
+        android:background="@color/white"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="12dp"
-        android:paddingTop="48dp"
+        android:paddingTop="16dp"
         android:paddingEnd="16dp"
         android:paddingBottom="16dp">
 
         <ImageButton
             android:id="@+id/btnBack"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
+            style="@style/PoolIconButton"
             android:contentDescription="Quay lại"
             android:src="@drawable/ic_back" />
 
@@ -37,26 +35,24 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="CÀI ĐẶT HỆ THỐNG"
-                android:textColor="@color/white"
-                android:textSize="18sp"
+                android:text="Cài đặt"
+                android:textColor="@color/navy"
+                android:textSize="24sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="Cấu hình ngưỡng, WiFi, MQTT &amp; HTTP"
-                android:textColor="@color/text_on_dark_muted"
-                android:textSize="11sp" />
+                android:text="Thiết bị, tự động hóa và tài khoản"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
         </LinearLayout>
 
         <ImageButton
             android:id="@+id/btnToolbarPreview"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Xem JSON"
+            style="@style/PoolIconButton"
+            android:contentDescription="Xem dữ liệu cấu hình nâng cao"
             android:src="@drawable/ic_copy" />
 
     </LinearLayout>
@@ -64,49 +60,57 @@
     <LinearLayout
         android:id="@+id/settingsTabs"
         android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:background="@color/white"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="8dp"
+        android:background="@color/background"
         android:orientation="horizontal">
 
         <TextView
             android:id="@+id/tabSettings"
             android:layout_width="0dp"
-            android:layout_height="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
             android:layout_weight="1"
             android:gravity="center"
-            android:text="Cài đặt"
+            android:text="Thiết bị"
             android:textColor="@color/white"
             android:textSize="14sp"
             android:textStyle="bold"
-            android:background="@color/water_accent"
+            android:background="@drawable/bg_button_primary"
             android:clickable="true"
             android:focusable="true" />
 
         <TextView
             android:id="@+id/tabAutomation"
             android:layout_width="0dp"
-            android:layout_height="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:minHeight="48dp"
             android:layout_weight="1"
             android:gravity="center"
-            android:text="Tự động hóa"
+            android:text="Tự động"
             android:textColor="@color/text_secondary"
             android:textSize="14sp"
             android:textStyle="bold"
-            android:background="@color/white"
+            android:background="@drawable/bg_button_secondary"
             android:clickable="true"
             android:focusable="true" />
 
         <TextView
             android:id="@+id/tabUsers"
             android:layout_width="0dp"
-            android:layout_height="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:minHeight="48dp"
             android:layout_weight="1"
             android:gravity="center"
-            android:text="Người dùng"
+            android:text="Tài khoản"
             android:textColor="@color/text_secondary"
             android:textSize="14sp"
             android:textStyle="bold"
-            android:background="@color/white"
+            android:background="@drawable/bg_button_secondary"
             android:clickable="true"
             android:focusable="true"
             android:visibility="gone" />
@@ -155,16 +159,26 @@
                 android:textSize="11sp"
                 android:visibility="gone" />
 
-            <!-- CARD 1: CẤU HÌNH NGƯỠNG CẢM BIẾN (CÓ NÚT LƯU RIÊNG) -->
+            <TextView style="@style/PoolBody"
+                android:layout_marginBottom="16dp"
+                android:text="Chọn một nhóm để chỉnh sửa. Các thông số được áp dụng theo nút lưu của từng nhóm." />
             <TextView
+                android:id="@+id/headingThresholds"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="1. CẤU HÌNH NGƯỠNG CẢNH BÁO CẢM BIẾN"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp"
+                android:background="@drawable/bg_button_secondary"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:minHeight="56dp"
+                android:padding="14dp"
+                android:text="Ngưỡng và hiệu chuẩn"
+                android:textColor="@color/navy"
+                android:textSize="16sp"
                 android:textStyle="bold" />
 
             <LinearLayout
+                android:id="@+id/sectionThresholds"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
@@ -492,15 +506,23 @@
 
             <!-- CARD 2: CẤU HÌNH WIFI (QUÉT MẠNG + MẠNG ẨN + NÚT LƯU) -->
             <TextView
+                android:id="@+id/headingWifi"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
-                android:text="2. CẤU HÌNH WIFI CHO ESP32"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_button_secondary"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:minHeight="56dp"
+                android:padding="14dp"
+                android:text="Wi-Fi thiết bị"
+                android:textColor="@color/navy"
+                android:textSize="16sp"
                 android:textStyle="bold" />
 
             <LinearLayout
+                android:id="@+id/sectionWifi"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
@@ -657,15 +679,23 @@
 
             <!-- CARD 3: THÔNG TIN THIẾT BỊ -->
             <TextView
+                android:id="@+id/headingDevice"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
-                android:text="3. THÔNG TIN THIẾT BỊ (ESP32-S3)"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_button_secondary"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:minHeight="56dp"
+                android:padding="14dp"
+                android:text="Thông tin thiết bị"
+                android:textColor="@color/navy"
+                android:textSize="16sp"
                 android:textStyle="bold" />
 
             <LinearLayout
+                android:id="@+id/sectionDevice"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
@@ -754,15 +784,23 @@
 
             <!-- CARD 4: CẤU HÌNH MQTT BROKER (TOPIC DO APP TỰ ĐỘNG ĐIỀU PHỐI) -->
             <TextView
+                android:id="@+id/headingMqtt"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
-                android:text="4. CẤU HÌNH MQTT BROKER (TOPIC TỰ ĐỘNG)"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_button_secondary"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:minHeight="56dp"
+                android:padding="14dp"
+                android:text="Kết nối MQTT"
+                android:textColor="@color/navy"
+                android:textSize="16sp"
                 android:textStyle="bold" />
 
             <LinearLayout
+                android:id="@+id/sectionMqtt"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
@@ -910,15 +948,23 @@
 
             <!-- CARD 5: CẤU HÌNH HTTP REST API -->
             <TextView
+                android:id="@+id/headingHttp"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
-                android:text="5. CẤU HÌNH HTTP API"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_button_secondary"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:minHeight="56dp"
+                android:padding="14dp"
+                android:text="Kết nối HTTP"
+                android:textColor="@color/navy"
+                android:textSize="16sp"
                 android:textStyle="bold" />
 
             <LinearLayout
+                android:id="@+id/sectionHttp"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
@@ -998,7 +1044,10 @@
 
             </LinearLayout>
 
-            <!-- ACTION BUTTONS: GỬI TỔNG HỢP VÀ TIỆN ÍCH -->
+            <TextView style="@style/PoolSectionTitle"
+                android:layout_marginTop="24dp" android:text="Thao tác nâng cao" />
+            <TextView style="@style/PoolCaption"
+                android:text="Gửi tổng hợp sẽ áp dụng các nhóm cấu hình đã nhập. Khôi phục mặc định chỉ đặt lại cấu hình trong app." />
             <Button
                 android:id="@+id/btnSaveAndPublishMqtt"
                 android:layout_width="match_parent"
@@ -1006,7 +1055,7 @@
                 android:layout_marginTop="24dp"
                 android:background="@drawable/bg_button_gradient"
                 android:elevation="2dp"
-                android:text="🚀  GỬI ĐỒNG BỘ TOÀN BỘ CẤU HÌNH (ALL)"
+                android:text="Lưu và gửi toàn bộ cấu hình"
                 android:textAllCaps="false"
                 android:textColor="@color/white"
                 android:textSize="14sp"
@@ -1018,7 +1067,7 @@
                 android:layout_height="48dp"
                 android:layout_marginTop="10dp"
                 android:background="@drawable/bg_button_secondary"
-                android:text="📋  Xem trước các chuỗi JSON cấu hình"
+                android:text="Xem dữ liệu cấu hình nâng cao"
                 android:textAllCaps="false"
                 android:textColor="@color/text_primary"
                 android:textSize="13sp" />
@@ -1026,7 +1075,7 @@
             <Button
                 android:id="@+id/btnResetDefaults"
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
+                android:layout_height="48dp"
                 android:layout_marginTop="10dp"
                 android:background="?attr/selectableItemBackground"
                 android:text="Khôi phục cài đặt gốc"

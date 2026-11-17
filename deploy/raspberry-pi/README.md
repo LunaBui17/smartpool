@@ -31,6 +31,50 @@ pool.sh tạo/giữ .env, cài Docker nếu cần, tạo schema mới, chạy mi
 ## Cập nhật API v2 thông thường
 
 Sau khi đã chuyển sang schema v2, cập nhật mã mà không restart DB/MQTT/tunnel:
+## 3. Chuyển Android và ESP sang Pi
+
+Đọc mật khẩu ngay trên terminal Pi bằng `sudo cat .env`; không đưa `.env` lên Git hoặc gửi vào chat.
+
+| Thiết bị | Cấu hình | Giá trị |
+| --- | --- | --- |
+| Android, Cài đặt → Thiết bị → Kết nối HTTP | API URL | `http://192.168.60.87/pool_api/pool_api.php` |
+| Android, Cài đặt → Thiết bị → Kết nối MQTT | Broker URI | `tcp://192.168.60.87:1883` |
+| Android | MQTT username/password | `android` / `MQTT_APP_PASSWORD` trong `.env` |
+| ESP, `idf.py menuconfig` → Smart Pool Network | API URL (`POOL_API_URL`) | `http://192.168.60.87/pool_api/pool_api.php` |
+| ESP, cùng menu | Broker URI (`POOL_MQTT_URI`) | `mqtt://192.168.60.87:1883` |
+| ESP, `main/mqtt_credentials.h` | `SMARTPOOL_MQTT_USERNAME` / `SMARTPOOL_MQTT_PASSWORD` | `esp32` / `MQTT_ESP_PASSWORD` trong `.env` |
+
+Bật HTTP telemetry, MQTT và Wi-Fi trong menuconfig; nếu chọn transport điều khiển thì chọn MQTT. Tạo `mqtt_credentials.h` từ file `.example` nếu chưa có, sau đó build/flash lại ESP. Đổi broker trong Settings Android không đổi broker của ESP. URL HTTP từng lưu trong NVS cũng có thể ghi đè menuconfig: sau khi ESP kết nối broker mới, lưu/đồng bộ URL HTTP từ app và kiểm tra URL ESP báo trong status. Giữ tên topic `smartpool/...` mặc định để khớp ACL.
+
+ACL cho ESP đọc lệnh/cấu hình và ghi telemetry/status/ack; Android đọc trạng thái và ghi lệnh/cấu hình. Tài khoản `android` có quyền điều khiển và cấu hình thiết bị, nên chỉ cấp cho người được phép. Role guest trong API không tự giới hạn quyền tài khoản MQTT này.
+
+HTTP và MQTT TCP trong cấu hình LAN này không mã hóa. Cloudflare bên dưới cung cấp HTTPS API và MQTT WSS để truy cập từ ngoài mạng.
+
+## 4. Kiểm tra và vận hành
+
+```bash
+sudo docker compose ps
+sudo docker compose logs --tail=100 api db mqtt
+sudo bash smoke-test.sh
+curl -f 'http://192.168.60.87/pool_api/pool_api.php?commands=1'
+sudo bash backup.sh
+```
+
+Bài kiểm tra không gửi lệnh bơm hoặc chèn mẫu đo giả; MQTT dùng topic chẩn đoán riêng. Khi kiểm tra tích hợp, chờ ESP online, xem telemetry/lịch sử trong app rồi thử bơm bằng thao tác chủ động.
+
+Cập nhật mã bằng `send-to-pi.ps1` rồi chạy lại `sudo bash deploy.sh`; `.env` và volume được giữ lại. Không dùng `docker compose down -v` vì tùy chọn `-v` xóa volume dữ liệu. Không đổi mật khẩu DB trong `.env` sau khi đã khởi tạo database mà chưa đổi mật khẩu tài khoản tương ứng trong MariaDB.
+
+Sao lưu bằng `backup.sh` tạo `backups/pool_db-*.sql.gz`; giữ thêm bản sao `.env` ở nơi an toàn ngoài Pi. Phục hồi vào stack đã chạy (thay tên file đúng):
+
+```bash
+gzip -dc backups/pool_db-YYYYMMDD-HHMMSS.sql.gz | sudo docker compose exec -T db sh -ec 'MYSQL_PWD="$MARIADB_PASSWORD" exec mariadb -u "$MARIADB_USER" "$MARIADB_DATABASE"'
+```
+
+Schema ban đầu chỉ tự nhập khi volume database trống. Riêng migration nhật ký `backend/migrations/001_activity_log.sql` được `deploy.sh` áp dụng cả khi volume đã có dữ liệu, bằng `CREATE TABLE IF NOT EXISTS`, không xóa bảng cũ. Khi khôi phục từ bản sao lưu, dữ liệu phục hồi sẽ thay thế các bảng cùng tên. Không cần một dịch vụ nhận MQTT để ghi database vì firmware gửi mẫu đo vào API qua HTTP.
+
+### Cập nhật nhật ký thao tác và quản lý admin
+
+Sau khi chép backend và cấu hình triển khai mới lên Pi, chạy:
 
 ```bash
 cd ~/smartpool/deploy/raspberry-pi

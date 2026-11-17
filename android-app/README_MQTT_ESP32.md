@@ -6,9 +6,25 @@
 
 Ứng dụng đăng nhập và đọc số đo/lịch sử qua HTTPS API; điều khiển bơm, nhận trạng thái ESP32 và cấu hình thiết bị qua MQTT. Dịch vụ nền nhận telemetry để phát cảnh báo. Admin có thể tạo tài khoản admin/guest và quản lý guest; người dùng có thể xem biểu đồ và nhật ký thao tác.
 
+## Bố cục và điều hướng
+
+Giao diện sáng dùng màu navy–cyan, thẻ bo góc và thanh điều hướng dưới cố định:
+
+| Mục | Nội dung |
+| --- | --- |
+| **Tổng quan** | Tên/ID thiết bị, hai số đo đồng thời, cảnh báo, thời gian cập nhật; chạm số đo để xem biểu đồ |
+| **Điều khiển** | Bật/tắt hai bơm, kích hoạt cảm biến và khóa liên động theo quyền hiện có |
+| **Hệ thống** | Lưu đồ trạng thái; thông tin kết nối chi tiết dành cho admin |
+
+Biểu tượng **Nhật ký** và **Cài đặt** ở thanh trên. Guest không thấy Cài đặt, vẫn dùng ba mục chính và nhật ký của mình. Đăng xuất nằm dưới tên ứng dụng. Chuyển mục không ngắt MQTT, không dừng polling và không phát lại lệnh.
+
+Trong **Cài đặt**, ba tab là **Thiết bị / Tự động / Tài khoản**. Tab Thiết bị chia thành năm nhóm có thể mở/thu gọn: ngưỡng và hiệu chuẩn, Wi-Fi, thông tin thiết bị, MQTT, HTTP. Các nhóm mặc định thu gọn; mở nhóm không tự lưu hay gửi cấu hình. Nhóm đang mở và mục điều hướng được giữ khi tái tạo màn hình.
+
+Đăng nhập có nhãn nhập liệu và nút hiện/ẩn mật khẩu; cấu hình API vẫn chỉ là dòng **Cấu hình API**, mở hộp cập nhật khi nhấn. Biểu đồ có vùng cuộn để giữ các nút và chú thích dễ tiếp cận trên màn hình nhỏ. Nhật ký trình bày từng sự kiện thành thẻ, tách thời gian, thao tác, kết quả và trạng thái đồng bộ.
+
 ## Nhật ký thao tác
 
-Nhấn **Nhật ký thao tác** trên màn hình chính để xem tối đa 100 sự kiện mới nhất: thời gian, tài khoản, ID thiết bị, thao tác và kết quả. Guest xem nhật ký của mình; admin xem nhật ký các tài khoản.
+Nhấn biểu tượng **Nhật ký** ở thanh trên để xem tối đa 100 sự kiện mới nhất: thời gian, tài khoản, ID thiết bị, thao tác và kết quả. Guest xem nhật ký của mình; admin xem nhật ký các tài khoản.
 
 - Ghi nhận lệnh bơm, bật/tắt cảm biến, khóa liên động, gửi cấu hình/tự động hóa, lưu kết nối MQTT, hiệu chuẩn, khôi phục mặc định và quản lý tài khoản.
 - Lệnh bơm/cảm biến chỉ được ghi **Đã xác nhận** khi nhận trạng thái ESP32 khớp yêu cầu. Gửi cấu hình cần ACK khớp `req_id` và `action`. Khóa liên động chỉ ghi broker đã nhận, không khẳng định thiết bị đã áp dụng.
@@ -20,7 +36,7 @@ Mục **Chưa đồng bộ** vẫn nằm trên điện thoại; nhấn **Đồng
 
 ## Tab Trạng thái hệ thống
 
-Màn hình chính có hai tab **Giám sát** và **Trạng thái hệ thống**, dùng được cho cả admin và guest. Tab trạng thái vẽ lưu đồ có các khối và mũi tên:
+Chọn **Hệ thống** trên thanh điều hướng dưới, dùng được cho cả admin và guest. Màn hình vẽ lưu đồ có các khối và mũi tên:
 
 - Android → API trên Raspberry Pi → MariaDB.
 - Android → MQTT/Mosquitto → ESP32-S3.
@@ -44,13 +60,13 @@ App **không tự gửi lại lệnh bật bơm** khi mở lại. Trạng thái 
 
 ## Admin tạo admin khác
 
-Trong **Settings → Tài khoản**, nhập tên/mật khẩu, chọn vai trò **Guest** hoặc **Admin**, rồi nhấn **Tạo tài khoản**. Mặc định là Guest. Admin mới có thể đăng nhập và quản lý như admin hiện có; API kiểm tra quyền admin của người tạo.
+Trong **Cài đặt → Tài khoản**, nhập tên/mật khẩu, chọn vai trò **Guest** hoặc **Admin**, rồi nhấn **Tạo tài khoản**. Mặc định là Guest. Admin mới có thể đăng nhập và quản lý như admin hiện có; API kiểm tra quyền admin của người tạo.
 
 Danh sách hiển thị cả hai vai trò. Admin hiện có chỉ đọc, không sửa/xóa tại đây. Khi sửa guest, vai trò giữ nguyên guest, không dùng biểu mẫu sửa để nâng quyền. Admin đầu tiên vẫn được tạo bằng công cụ CLI trên Pi.
 
 ## Bật/tắt cảm biến
 
-Mỗi thẻ nhiệt độ và mực nước trên màn hình chính có công tắc bật/tắt đo trên ESP32. Công tắc chỉ thao tác được khi MQTT đã kết nối, ESP32 trực tuyến và firmware hỗ trợ cảm biến đó. Ứng dụng chờ trạng thái ESP32 xác nhận; nếu gửi lỗi hoặc quá thời gian chờ sẽ báo lỗi, không coi việc broker nhận lệnh là thành công.
+Trong **Điều khiển → Cảm biến**, mỗi cảm biến có công tắc bật/tắt đo trên ESP32. Công tắc chỉ thao tác được khi MQTT đã kết nối, ESP32 trực tuyến và firmware hỗ trợ cảm biến đó. Ứng dụng chờ trạng thái ESP32 xác nhận; nếu gửi lỗi hoặc quá thời gian chờ sẽ báo lỗi, không coi việc broker nhận lệnh là thành công.
 
 Khi cảm biến tắt, thẻ hiển thị “Đã tắt” và không tạo cảnh báo trên màn hình từ số đo cũ của cảm biến đó. Thao tác này dừng đo, không ngắt nguồn điện cảm biến; không xóa lịch sử đã lưu. Có thể bật lại từ app hoặc web ESP32; trạng thái được đồng bộ qua MQTT. Việc tắt cảm biến cũng có thể ảnh hưởng các quy tắc tự động hóa đang dùng cảm biến đó.
 
@@ -74,8 +90,8 @@ APK debug được tạo tại `app/build/outputs/apk/debug/app-debug.apk`. Đâ
 
 1. Trên màn hình đăng nhập, nhấn **Cấu hình API** để xem hoặc cập nhật URL API. Nếu nhập URL gốc, ứng dụng tự bổ sung `/pool_api/pool_api.php`.
 2. Đăng nhập bằng tài khoản ứng dụng đã tạo trên Pi. Tài khoản ứng dụng không phải tài khoản MQTT hoặc MariaDB.
-3. Với tài khoản admin, trong Settings → MQTT, nhập `mqtt_wss_uri` từ `~/smartpool-endpoints.txt` để kết nối Mosquitto trên Pi. Dùng tài khoản MQTT `android` và mật khẩu từ cấu hình riêng trên Pi; file endpoint không chứa mật khẩu.
-4. Lưu cấu hình MQTT trong Settings. Đổi URL API không tự đổi broker MQTT; thông tin kết nối đã lưu được ưu tiên hơn giá trị mặc định của ứng dụng.
+3. Với tài khoản admin, trong **Cài đặt → Thiết bị → Kết nối MQTT**, nhập `mqtt_wss_uri` từ `~/smartpool-endpoints.txt` để kết nối Mosquitto trên Pi. Dùng tài khoản MQTT `android` và mật khẩu từ cấu hình riêng trên Pi; file endpoint không chứa mật khẩu.
+4. Lưu cấu hình MQTT. Đổi URL API không tự đổi broker MQTT; thông tin kết nối đã lưu được ưu tiên hơn giá trị mặc định của ứng dụng.
 
 Để nhúng tài khoản MQTT mặc định khi build, sao chép `mqtt.properties.example` thành `mqtt.properties` rồi điền `mqtt.username` và `mqtt.password` bằng tài khoản ứng dụng trên Mosquitto. Không chia sẻ hoặc đưa tệp chứa mật khẩu lên Git.
 

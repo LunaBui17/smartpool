@@ -62,6 +62,7 @@ public class SensorChartActivity extends AppCompatActivity {
             return;
         }
         setContentView(R.layout.activity_sensor_chart);
+        ScreenInsets.apply(findViewById(R.id.chartRoot));
 
         title = findViewById(R.id.txtChartTitle);
         status = findViewById(R.id.txtChartStatus);

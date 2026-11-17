@@ -1,742 +1,332 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/rootScroll"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/mainRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/background"
-    android:fillViewport="true"
-    android:overScrollMode="never">
+    android:orientation="vertical">
 
     <LinearLayout
+        android:id="@+id/headerContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingBottom="28dp">
+        android:background="@color/white"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="16dp">
 
-        <!-- HEADER GRADIENT -->
         <LinearLayout
-            android:id="@+id/headerContainer"
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:background="@drawable/bg_header_gradient"
-            android:elevation="4dp"
-            android:orientation="vertical"
-            android:paddingStart="20dp"
-            android:paddingTop="50dp"
-            android:paddingEnd="20dp"
-            android:paddingBottom="24dp">
-
-            <LinearLayout
+            android:layout_marginEnd="12dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+            <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:text="Smart Pool"
+                android:textColor="@color/navy"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+            <TextView
+                android:id="@+id/btnLogout"
+                style="@style/PoolCaption"
+                android:layout_width="wrap_content"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
                 android:gravity="center_vertical"
-                android:orientation="horizontal">
+                android:minHeight="48dp"
+                android:text="Đăng xuất"
+                android:textColor="@color/blue_dark" />
+        </LinearLayout>
+        <ImageButton
+            android:id="@+id/btnOpenOperationLog"
+            style="@style/PoolIconButton"
+            android:contentDescription="Nhật ký thao tác"
+            android:src="@drawable/ic_history" />
+        <ImageButton
+            android:id="@+id/btnOpenSettings"
+            style="@style/PoolIconButton"
+            android:layout_marginStart="8dp"
+            android:contentDescription="Cài đặt"
+            android:src="@drawable/ic_settings" />
+    </LinearLayout>
 
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
+    <TextView
+        android:id="@+id/txtActionFeedback"
+        style="@style/PoolBody"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="16dp"
+        android:background="@drawable/bg_card"
+        android:padding="12dp"
+        android:visibility="gone" />
 
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:letterSpacing="0.05"
-                        android:text="SMART POOL IoT"
-                        android:textColor="@color/white"
-                        android:textSize="24sp"
-                        android:textStyle="bold" />
+    <ScrollView
+        android:id="@+id/rootScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true"
+        android:overScrollMode="never">
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
 
+            <LinearLayout
+                android:id="@+id/alertBannerContainer"
+                style="@style/PoolCard"
+                android:background="@drawable/bg_alert_banner"
+                android:visibility="gone">
+                <TextView
+                    android:id="@+id/txtAlert"
+                    style="@style/PoolBody"
+                    android:textColor="@color/danger" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/dashboardContent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <LinearLayout style="@style/PoolCard"
+                    android:background="@drawable/bg_header_gradient"
+                    android:padding="20dp">
+                    <TextView style="@style/PoolCaption"
+                        android:text="TỔNG QUAN BỂ BƠI"
+                        android:textColor="@color/cyan_soft" />
                     <TextView
                         android:id="@+id/txtHeaderSubtitle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:text="HỆ THỐNG GIÁM SÁT &amp; ĐIỀU KHIỂN BỂ BƠI"
-                        android:textColor="@color/text_on_dark_muted"
-                        android:textSize="11sp" />
+                        style="@style/PoolSectionTitle"
+                        android:text="Hệ thống Smart Pool"
+                        android:textColor="@color/white"
+                        android:textSize="20sp" />
+                    <TextView
+                        android:id="@+id/txtDeviceBadge"
+                        style="@style/PoolBody"
+                        android:textColor="@color/cyan_soft"
+                        android:textIsSelectable="true" />
+                    <TextView
+                        android:id="@+id/txtControlModeBadge"
+                        style="@style/PoolCaption"
+                        android:layout_marginTop="8dp"
+                        android:textColor="@color/text_on_dark" />
+                    <TextView
+                        android:id="@+id/txtGeneralStatus"
+                        style="@style/PoolCaption"
+                        android:layout_marginTop="12dp"
+                        android:text="Đang kiểm tra kết nối..."
+                        android:textColor="@color/text_on_dark" />
                 </LinearLayout>
 
-                <TextView
-                    android:id="@+id/btnLogout"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:layout_marginEnd="8dp"
-                    android:background="@drawable/bg_chip"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:gravity="center"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:text="Thoát"
-                    android:textColor="@color/white"
-                    android:textSize="12sp"
-                    android:textStyle="bold" />
+                <TextView style="@style/PoolSectionTitle" android:text="Chất lượng nước" />
+                <TextView style="@style/PoolCaption"
+                    android:layout_marginBottom="12dp"
+                    android:text="Chạm vào số đo để xem biểu đồ theo thời gian." />
 
-                <!-- NÚT MỞ MÀN HÌNH CÀI ĐẶT -->
-                <ImageButton
-                    android:id="@+id/btnOpenSettings"
-                    android:layout_width="46dp"
-                    android:layout_height="46dp"
-                    android:background="@drawable/bg_chip"
-                    android:contentDescription="Cài đặt hệ thống"
-                    android:padding="10dp"
-                    android:src="@drawable/ic_settings" />
-            </LinearLayout>
-
-            <!-- THÔNG TIN CHUNG: THIẾT BỊ VÀ CHẾ ĐỘ -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:id="@+id/txtDeviceBadge"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/bg_chip"
-                    android:paddingStart="10dp"
-                    android:paddingTop="4dp"
-                    android:paddingEnd="10dp"
-                    android:paddingBottom="4dp"
-                    android:text="ESP32-S3"
-                    android:textColor="#38BDF8"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-
-                <Space
-                    android:layout_width="8dp"
-                    android:layout_height="wrap_content" />
-
-                <TextView
-                    android:id="@+id/txtControlModeBadge"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/bg_chip"
-                    android:paddingStart="10dp"
-                    android:paddingTop="4dp"
-                    android:paddingEnd="10dp"
-                    android:paddingBottom="4dp"
-                    android:text="Chế độ: MQTT"
-                    android:textColor="#FBBF24"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-
-            <!-- THÔNG TIN CHUNG & HIỂN THỊ LỖI NẾU CÓ -->
-            <TextView
-                android:id="@+id/txtGeneralStatus"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:text="✓ Trạng thái chung: Hệ thống đang vận hành"
-                android:textColor="@color/text_on_dark_muted"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_margin="16dp"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/tabDashboard"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:minHeight="48dp"
-                android:text="Giám sát"
-                android:textAllCaps="false" />
-
-            <Button
-                android:id="@+id/tabSystemStatus"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:minHeight="48dp"
-                android:text="Trạng thái hệ thống"
-                android:textAllCaps="false" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/systemStatusContent"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:visibility="gone">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="TRẠNG THÁI HỆ THỐNG"
-                android:textColor="@color/text_primary"
-                android:textSize="18sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/txtSystemStatusUpdated"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
-
-            <com.buiducluan23011767.ck.SystemStatusView
-                android:id="@+id/systemStatusDiagram"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:importantForAccessibility="yes" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="Xanh: đang bật/kết nối • Xám: đã tắt • Cam: đang chờ • Đỏ: lỗi kết nối.&#10;Chưa rõ: chưa nhận đủ dữ liệu hoặc đã mất liên lạc.&#10;API và MQTT được theo dõi độc lập. API phản hồi không chứng minh ESP32 online. Trạng thái thiết bị lấy từ bản tin MQTT gần nhất, có thể là retained. Bơm bật là trạng thái relay do ESP32 báo, không phải phản hồi cơ khí. Không kiểm tra trực tiếp tiến trình Docker hoặc Cloudflare."
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/dashboardContent"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-        <!-- BANNER CẢNH BÁO NGUY HIỂM / VƯỢT NGƯỠNG -->
-        <LinearLayout
-            android:id="@+id/alertBannerContainer"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="14dp"
-            android:layout_marginEnd="16dp"
-            android:background="@drawable/bg_alert_banner"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:padding="12dp"
-            android:visibility="gone">
-
-            <TextView
-                android:id="@+id/txtAlert"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="⚠ CẢNH BÁO: Nhiệt độ vượt ngưỡng an toàn!"
-                android:textColor="@color/danger"
-                android:textSize="13sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <!-- PHẦN 1: GIÁM SÁT CẢM BIẾN -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="20dp"
-            android:layout_marginEnd="20dp"
-            android:text="GIÁM SÁT CẢM BIẾN THỜI GIAN THỰC"
-            android:textColor="@color/text_secondary"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/txtActionFeedback"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="8dp"
-            android:layout_marginEnd="16dp"
-            android:background="@drawable/bg_card"
-            android:padding="10dp"
-            android:textSize="12sp"
-            android:visibility="gone" />
-
-        <Button
-            android:id="@+id/btnOpenOperationLog"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="8dp"
-            android:layout_marginEnd="16dp"
-            android:background="@drawable/bg_button_secondary"
-            android:text="Nhật ký thao tác"
-            android:textAllCaps="false"
-            android:textColor="@color/blue" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="10dp"
-            android:layout_marginEnd="16dp"
-            android:orientation="horizontal">
-
-            <!-- THẺ NHIỆT ĐỘ -->
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:background="@drawable/bg_card_modern"
-                android:elevation="1dp"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="🌡 NHIỆT ĐỘ NƯỚC"
-                    android:textColor="@color/temp_accent"
-                    android:textSize="12sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/txtTemp"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:clickable="true"
-                    android:contentDescription="Mở biểu đồ nhiệt độ"
-                    android:focusable="true"
-                    android:text="--.- °C"
-                    android:textColor="@color/text_primary"
-                    android:textSize="32sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/txtTempThresholdInfo"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="Ngưỡng: 20.0°C - 35.0°C"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
-
-                <TextView
-                    android:id="@+id/txtTempStatus"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="DS18B20 • Đang đợi số liệu"
-                    android:textColor="@color/text_muted"
-                    android:textSize="10sp" />
-
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/switchTemperatureEnabled"
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:enabled="false"
-                    android:minHeight="48dp"
-                    android:text="Chờ thiết bị"
-                    android:contentDescription="Bật hoặc tắt cảm biến nhiệt độ"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="12sp" />
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+                    <LinearLayout style="@style/PoolCard"
+                        android:layout_width="0dp"
+                        android:layout_marginEnd="6dp"
+                        android:layout_weight="1"
+                        android:padding="14dp">
+                        <TextView style="@style/PoolBody"
+                            android:text="Nhiệt độ"
+                            android:textColor="@color/temp_accent"
+                            android:textStyle="bold" />
+                        <androidx.appcompat.widget.AppCompatTextView
+                            android:id="@+id/txtTemp"
+                            android:layout_width="match_parent"
+                            android:layout_height="72dp"
+                            android:background="?attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:contentDescription="Mở biểu đồ nhiệt độ"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:maxLines="2"
+                            android:text="--.- °C"
+                            android:textColor="@color/navy"
+                            android:textSize="30sp"
+                            android:textStyle="bold"
+                            app:autoSizeMaxTextSize="30sp"
+                            app:autoSizeMinTextSize="16sp"
+                            app:autoSizeTextType="uniform" />
+                        <TextView android:id="@+id/txtTempStatus"
+                            style="@style/PoolCaption" android:text="Đang chờ số đo" />
+                        <TextView android:id="@+id/txtTempThresholdInfo"
+                            style="@style/PoolCaption" android:layout_marginTop="10dp" />
+                    </LinearLayout>
+                    <LinearLayout style="@style/PoolCard"
+                        android:layout_width="0dp"
+                        android:layout_marginStart="6dp"
+                        android:layout_weight="1"
+                        android:padding="14dp">
+                        <TextView style="@style/PoolBody"
+                            android:text="Mực nước"
+                            android:textColor="@color/water_accent"
+                            android:textStyle="bold" />
+                        <androidx.appcompat.widget.AppCompatTextView
+                            android:id="@+id/txtWater"
+                            android:layout_width="match_parent"
+                            android:layout_height="72dp"
+                            android:background="?attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:contentDescription="Mở biểu đồ mực nước"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:maxLines="2"
+                            android:text="Chờ dữ liệu"
+                            android:textColor="@color/navy"
+                            android:textSize="30sp"
+                            android:textStyle="bold"
+                            app:autoSizeMaxTextSize="30sp"
+                            app:autoSizeMinTextSize="16sp"
+                            app:autoSizeTextType="uniform" />
+                        <TextView android:id="@+id/txtWaterStatus"
+                            style="@style/PoolCaption" android:text="Đang chờ số đo" />
+                        <TextView android:id="@+id/txtWaterThresholdInfo"
+                            style="@style/PoolCaption" android:layout_marginTop="10dp" />
+                    </LinearLayout>
+                </LinearLayout>
+                <TextView android:id="@+id/txtUpdated" style="@style/PoolCaption"
+                    android:text="Chưa có dữ liệu cảm biến" />
+                <TextView style="@style/PoolBody"
+                    android:layout_marginTop="16dp"
+                    android:text="Bật/tắt bơm và cảm biến trong Điều khiển. Xem kết nối từng thành phần trong Hệ thống." />
             </LinearLayout>
 
-            <Space
-                android:layout_width="12dp"
-                android:layout_height="wrap_content" />
-
-            <!-- THẺ MỰC NƯỚC -->
             <LinearLayout
-                android:layout_width="0dp"
+                android:id="@+id/controlContent"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:background="@drawable/bg_card_modern"
-                android:elevation="1dp"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:visibility="gone">
+                <TextView style="@style/PoolTitle" android:text="Điều khiển thiết bị" />
+                <TextView style="@style/PoolBody"
+                    android:layout_marginTop="8dp" android:layout_marginBottom="16dp"
+                    android:text="Chỉ cho phép thao tác khi MQTT kết nối và ESP32 báo online. Lệnh cần thiết bị xác nhận." />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="💧 MỰC NƯỚC"
-                    android:textColor="@color/water_accent"
-                    android:textSize="12sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/txtWater"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:clickable="true"
-                    android:contentDescription="Mở biểu đồ mực nước"
-                    android:focusable="true"
-                    android:text="Chưa có dữ liệu"
-                    android:textColor="@color/text_primary"
-                    android:textSize="32sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/txtWaterThresholdInfo"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="Ngưỡng mực nước: cần hiệu chuẩn"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
-
-                <TextView
-                    android:id="@+id/txtWaterStatus"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="Trạng thái cảm biến"
-                    android:textColor="@color/text_muted"
-                    android:textSize="10sp" />
-
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/switchWaterEnabled"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:enabled="false"
-                    android:minHeight="48dp"
-                    android:text="Chờ thiết bị"
-                    android:contentDescription="Bật hoặc tắt cảm biến mực nước"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="12sp" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- PHẦN 2: ĐIỀU KHIỂN THIẾT BỊ (MÁY BƠM) -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="24dp"
-            android:layout_marginEnd="20dp"
-            android:text="ĐIỀU KHIỂN HỆ THỐNG MÁY BƠM"
-            android:textColor="@color/text_secondary"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="10dp"
-            android:layout_marginEnd="16dp"
-            android:background="@drawable/bg_card_modern"
-            android:elevation="1dp"
-            android:orientation="vertical"
-            android:padding="16dp">
-
-            <!-- BƠM CẤP NƯỚC (BỂ PHỤ -> BỂ CHÍNH) -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Bơm cấp nước vào"
-                        android:textColor="@color/text_primary"
-                        android:textSize="15sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:text="Đường nước: Bể phụ → Bể chính"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="11sp" />
-
-                    <TextView
-                        android:id="@+id/txtPumpInStatus"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="Trạng thái: ĐANG TẮT"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="12sp"
-                        android:textStyle="bold" />
+                <TextView style="@style/PoolSectionTitle" android:text="Hệ thống bơm" />
+                <LinearLayout style="@style/PoolCard">
+                    <TextView style="@style/PoolSectionTitle" android:text="Bơm cấp nước" />
+                    <TextView style="@style/PoolCaption" android:text="Từ bể phụ vào bể chính" />
+                    <TextView android:id="@+id/txtPumpInStatus" style="@style/PoolBody"
+                        android:layout_marginTop="8dp" android:text="Chờ trạng thái ESP32" />
+                    <Button android:id="@+id/btnPumpIn"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp" android:minHeight="52dp"
+                        android:background="@drawable/bg_button_primary"
+                        android:text="Chờ thiết bị" android:textColor="@color/white" />
+                </LinearLayout>
+                <LinearLayout style="@style/PoolCard">
+                    <TextView style="@style/PoolSectionTitle" android:text="Bơm thoát nước" />
+                    <TextView style="@style/PoolCaption" android:text="Từ bể chính ra đường thoát" />
+                    <TextView android:id="@+id/txtPumpOutStatus" style="@style/PoolBody"
+                        android:layout_marginTop="8dp" android:text="Chờ trạng thái ESP32" />
+                    <Button android:id="@+id/btnPumpOut"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp" android:minHeight="52dp"
+                        android:background="@drawable/bg_button_primary"
+                        android:text="Chờ thiết bị" android:textColor="@color/white" />
                 </LinearLayout>
 
-                <Button
-                    android:id="@+id/btnPumpIn"
-                    android:layout_width="120dp"
-                    android:layout_height="48dp"
-                    android:background="@drawable/bg_button_primary"
-                    android:text="BẬT BƠM"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="16dp"
-                android:layout_marginBottom="16dp"
-                android:background="@color/line" />
-
-            <!-- BƠM THOÁT NƯỚC (BỂ CHÍNH -> NGOÀI) -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Bơm thoát nước ra"
-                        android:textColor="@color/text_primary"
-                        android:textSize="15sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:text="Đường nước: Bể chính → Thoát ngoài"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="11sp" />
-
-                    <TextView
-                        android:id="@+id/txtPumpOutStatus"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="Trạng thái: ĐANG TẮT"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="12sp"
-                        android:textStyle="bold" />
+                <TextView style="@style/PoolSectionTitle" android:text="Cảm biến" />
+                <LinearLayout style="@style/PoolCard">
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchTemperatureEnabled"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:contentDescription="Bật hoặc tắt cảm biến nhiệt độ"
+                        android:enabled="false" android:minHeight="56dp"
+                        android:text="Chờ thiết bị" android:textColor="@color/text_primary" />
+                    <TextView style="@style/PoolCaption" android:text="Cảm biến nhiệt độ nước" />
+                    <View android:layout_width="match_parent" android:layout_height="1dp"
+                        android:layout_marginTop="12dp" android:layout_marginBottom="12dp"
+                        android:background="@color/line" />
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchWaterEnabled"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:contentDescription="Bật hoặc tắt cảm biến mực nước"
+                        android:enabled="false" android:minHeight="56dp"
+                        android:text="Chờ thiết bị" android:textColor="@color/text_primary" />
+                    <TextView style="@style/PoolCaption" android:text="Cảm biến mực nước" />
                 </LinearLayout>
-
-                <Button
-                    android:id="@+id/btnPumpOut"
-                    android:layout_width="120dp"
-                    android:layout_height="48dp"
-                    android:background="@drawable/bg_button_primary"
-                    android:text="BẬT BƠM"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="16dp"
-                android:layout_marginBottom="12dp"
-                android:background="@color/line" />
-
-            <!-- SWITCH KHÓA LIÊN ĐỘNG 2 BƠM (INTERLOCK) -->
-            <LinearLayout
-                android:id="@+id/interlockControlSection"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Khóa liên động 2 bơm (Interlock)"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/txtInterlockStatus"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:text="BẬT: Chặn chạy 2 bơm cùng lúc (Bảo vệ đường ống)"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="11sp" />
+                <LinearLayout android:id="@+id/interlockControlSection" style="@style/PoolCard">
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchInterlock"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:checked="true" android:minHeight="48dp"
+                        android:text="Khóa liên động"
+                        android:textColor="@color/text_primary" />
+                    <TextView android:id="@+id/txtInterlockStatus" style="@style/PoolCaption"
+                        android:layout_marginTop="8dp"
+                        android:text="Ngăn hai bơm hoạt động cùng lúc." />
                 </LinearLayout>
-
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/switchInterlock"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:checked="true" />
             </LinearLayout>
 
+            <LinearLayout
+                android:id="@+id/systemStatusContent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+                <TextView style="@style/PoolTitle" android:text="Trạng thái hệ thống" />
+                <TextView style="@style/PoolBody" android:layout_marginTop="8dp"
+                    android:text="Theo dõi đường kết nối và trạng thái từng thành phần." />
+                <TextView android:id="@+id/txtSystemStatusUpdated"
+                    style="@style/PoolCaption" android:layout_marginTop="12dp" />
+                <com.buiducluan23011767.ck.SystemStatusView
+                    android:id="@+id/systemStatusDiagram"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp" android:importantForAccessibility="yes" />
+                <LinearLayout style="@style/PoolCard">
+                    <TextView style="@style/PoolSectionTitle" android:text="Đọc lưu đồ" />
+                    <TextView style="@style/PoolBody"
+                        android:text="Xanh: bật hoặc kết nối\nXám: tắt hoặc chưa rõ\nCam: chờ xác nhận\nĐỏ: lỗi kết nối" />
+                    <TextView style="@style/PoolCaption" android:layout_marginTop="12dp"
+                        android:text="API và MQTT được theo dõi độc lập. Mất liên lạc không có nghĩa thiết bị đã tắt. Trạng thái MQTT gần nhất có thể là retained; bơm bật là trạng thái relay do ESP báo, không phải phản hồi cơ khí. Không dò trực tiếp tiến trình Docker hoặc Cloudflare." />
+                </LinearLayout>
+                <TextView android:id="@+id/protocolSectionTitle"
+                    style="@style/PoolSectionTitle" android:text="Chi tiết kết nối" />
+                <LinearLayout android:id="@+id/protocolDetailsSection" style="@style/PoolCard">
+                    <TextView android:id="@+id/txtMqttBadge" style="@style/PoolBody"
+                        android:text="MQTT: Đang kết nối..." android:textStyle="bold" />
+                    <TextView android:id="@+id/txtConnection" style="@style/PoolCaption"
+                        android:layout_marginTop="8dp" android:text="Đang kiểm tra API..." />
+                    <TextView android:id="@+id/txtLocalWebAddress" style="@style/PoolBody"
+                        android:layout_marginTop="16dp" />
+                    <TextView android:id="@+id/txtHttpEndpointMatch" style="@style/PoolCaption"
+                        android:layout_marginTop="8dp" />
+                    <Button android:id="@+id/btnOpenLocalWeb"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp" android:text="Mở trang thiết bị trong LAN" />
+                    <TextView android:id="@+id/txtMqttCurrentBroker" style="@style/PoolBody"
+                        android:layout_marginTop="16dp" />
+                    <TextView android:id="@+id/txtMqttCurrentTopics" style="@style/PoolCaption"
+                        android:layout_marginTop="8dp" />
+                    <Button android:id="@+id/btnGoToSettings"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp" android:text="Cài đặt kết nối" />
+                </LinearLayout>
+            </LinearLayout>
         </LinearLayout>
+    </ScrollView>
 
-        <!-- PHẦN 3: CẤU HÌNH VÀ TEST MQTT - HTTP -->
-        <TextView
-            android:id="@+id/protocolSectionTitle"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="22dp"
-            android:layout_marginEnd="20dp"
-            android:text="CẤU HÌNH VÀ TEST MQTT - HTTP"
-            android:textColor="@color/text_secondary"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <LinearLayout
-            android:id="@+id/protocolDetailsSection"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="10dp"
-            android:layout_marginEnd="16dp"
-            android:background="@drawable/bg_card_modern"
-            android:elevation="1dp"
-            android:orientation="vertical"
-            android:padding="16dp">
-
-            <!-- TRẠNG THÁI MQTT ĐƯỢC CHUYỂN XUỐNG ĐÂY -->
-            <TextView
-                android:id="@+id/txtMqttBadge"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="MQTT: Đang kết nối Broker..."
-                android:textColor="@color/warning"
-                android:textSize="13sp"
-                android:textStyle="bold" />
-
-            <!-- TRẠNG THÁI HTTP ĐƯỢC CHUYỂN XUỐNG ĐÂY -->
-            <TextView
-                android:id="@+id/txtConnection"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:text="HTTP API: Đang kiểm tra..."
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
-
-            <TextView
-                android:id="@+id/txtLocalWebAddress"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:text="Đang chờ địa chỉ ESP32..."
-                android:textColor="@color/text_primary"
-                android:textSize="12sp" />
-
-            <TextView
-                android:id="@+id/txtHttpEndpointMatch"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:text="Đối chiếu HTTP: đang chờ ESP32..."
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
-
-            <Button
-                android:id="@+id/btnOpenLocalWeb"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:layout_marginTop="10dp"
-                android:background="@drawable/bg_button_secondary"
-                android:text="MỞ WEB LOCAL ESP"
-                android:textAllCaps="false"
-                android:textColor="@color/blue"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="12dp"
-                android:layout_marginBottom="12dp"
-                android:background="@color/line" />
-
-            <TextView
-                android:id="@+id/txtMqttCurrentBroker"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Broker MQTT"
-                android:textColor="@color/text_primary"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/txtMqttCurrentTopics"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="• Topic Ngưỡng: smartpool/config/thresholds\n• Topic WiFi: smartpool/config/wifi\n• Topic Telemetry: smartpool/telemetry"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
-
-            <!-- NÚT CẤU HÌNH MQTT VÀ HTTP -->
-            <Button
-                android:id="@+id/btnGoToSettings"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="14dp"
-                android:background="@drawable/bg_button_secondary"
-                android:text="⚙  CẤU HÌNH MQTT VÀ HTTP"
-                android:textAllCaps="false"
-                android:textColor="@color/blue"
-                android:textSize="13sp"
-                android:textStyle="bold" />
-
-        </LinearLayout>
-
-        <!-- THỜI GIAN CẬP NHẬT & FOOTER -->
-        <TextView
-            android:id="@+id/txtUpdated"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="20dp"
-            android:layout_marginEnd="20dp"
-            android:gravity="center"
-            android:text="Chưa có dữ liệu cảm biến"
-            android:textColor="@color/text_secondary"
-            android:textSize="11sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:gravity="center"
-            android:text="SMART POOL • ESP32-S3 IoT SYSTEM"
-            android:textColor="@color/text_muted"
-            android:textSize="10sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:gravity="center"
-            android:text="BÙI ĐỨC LUÂN • 23011767"
-            android:textColor="@color/navy"
-            android:textSize="11sp"
-            android:textStyle="bold" />
-
-        </LinearLayout>
-    </LinearLayout>
-</ScrollView>
+    <com.google.android.material.bottomnavigation.BottomNavigationView
+        android:id="@+id/mainNavigation"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/white"
+        app:itemIconTint="@color/navigation_item"
+        app:itemTextColor="@color/navigation_item"
+        app:labelVisibilityMode="labeled"
+        app:menu="@menu/main_navigation" />
+</LinearLayout>

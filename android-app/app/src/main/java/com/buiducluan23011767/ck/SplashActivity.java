@@ -53,6 +53,7 @@ public class SplashActivity extends AppCompatActivity {
         setContentView(R.layout.activity_splash);
 
         splashRoot = findViewById(R.id.splashRoot);
+        ScreenInsets.apply(splashRoot);
         imgLogo = findViewById(R.id.imgSplashLogo);
         txtTitle = findViewById(R.id.txtSplashTitle);
         txtSubtitle = findViewById(R.id.txtSplashSubtitle);

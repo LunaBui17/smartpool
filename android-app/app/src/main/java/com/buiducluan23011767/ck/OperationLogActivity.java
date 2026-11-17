@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.database.sqlite.SQLiteException;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -45,6 +46,7 @@ public class OperationLogActivity extends AppCompatActivity {
             return;
         }
         setContentView(R.layout.activity_operation_log);
+        ScreenInsets.apply(findViewById(R.id.operationLogRoot));
         status = findViewById(R.id.txtLogStatus);
         entries = findViewById(R.id.layoutOperationLog);
         queue = Volley.newRequestQueue(getApplicationContext());
@@ -138,26 +140,39 @@ public class OperationLogActivity extends AppCompatActivity {
         SimpleDateFormat format = new SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault());
         for (int i = 0; i < Math.min(100, sorted.size()); i++) {
             JSONObject row = sorted.get(i);
-            TextView item = new TextView(this);
-            item.setText(format.format(new Date(row.optLong("occurred_at_ms")))
-                    + " • " + row.optString("username") + "\nThiết bị: " + row.optString("device_id")
-                    + "\n" + row.optString("action") + " • "
-                    + OperationLog.resultLabel(row.optString("result"))
-                    + (row.optString("detail").isEmpty() ? "" : "\n" + row.optString("detail"))
-                    + (row.optBoolean("synced", false) ? "" : "\nChưa đồng bộ lên máy chủ"));
-            item.setTextColor(getColor(R.color.text_primary));
-            item.setTextSize(13);
-            int padding = Math.round(12 * getResources().getDisplayMetrics().density);
-            item.setPadding(padding, padding, padding, padding);
-            item.setBackgroundResource(R.drawable.bg_card_modern);
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            params.bottomMargin = padding;
-            entries.addView(item, params);
+            View item = getLayoutInflater().inflate(R.layout.item_operation_log, entries, false);
+            TextView time = item.findViewById(R.id.txtEventTime);
+            time.setText(format.format(new Date(row.optLong("occurred_at_ms"))));
+            TextView action = item.findViewById(R.id.txtEventAction);
+            action.setText(row.optString("action"));
+            TextView result = item.findViewById(R.id.txtEventResult);
+            String resultCode = row.optString("result");
+            result.setText(OperationLog.resultLabel(resultCode));
+            int color = R.color.text_secondary;
+            switch (resultCode) {
+                case "confirmed":
+                case "saved": color = R.color.success; break;
+                case "failed":
+                case "timeout": color = R.color.danger; break;
+                case "requested":
+                case "published":
+                case "interrupted": color = R.color.warning; break;
+            }
+            result.setTextColor(getColor(color));
+            TextView actor = item.findViewById(R.id.txtEventActor);
+            actor.setText(row.optString("username") + "\nThiết bị: " + row.optString("device_id"));
+            TextView detail = item.findViewById(R.id.txtEventDetail);
+            detail.setText(row.optString("detail"));
+            detail.setVisibility(row.optString("detail").isEmpty() ? View.GONE : View.VISIBLE);
+            item.findViewById(R.id.txtEventSync).setVisibility(
+                    row.optBoolean("synced", false) ? View.GONE : View.VISIBLE);
+            entries.addView(item);
         }
         if (sorted.isEmpty()) {
             TextView empty = new TextView(this);
             empty.setText("Chưa có nhật ký thao tác.");
+            empty.setTextColor(getColor(R.color.text_secondary));
+            empty.setTextSize(14);
             entries.addView(empty);
         }
     }
