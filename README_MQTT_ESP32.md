@@ -1,6 +1,6 @@
 # Giao thức MQTT Smart Pool: Android ↔ Mosquitto trên Pi ↔ ESP32-S3
 
-Tài liệu mô tả firmware ESP-IDF hiện tại; xem [luồng toàn hệ thống](docs/system-flow.md) để phân biệt MQTT điều khiển với HTTP lưu/đọc dữ liệu. Các ví dụ Arduino và cấu hình HiveMQ của tài liệu trước không phải firmware đang triển khai.
+Tài liệu mô tả giao thức giữa firmware ESP-IDF, Mosquitto trên Raspberry Pi và ứng dụng Android; xem [luồng toàn hệ thống](docs/system-flow.md) để phân biệt MQTT điều khiển với HTTP lưu/đọc dữ liệu.
 
 ## Kết nối
 
@@ -8,7 +8,7 @@ Tài liệu mô tả firmware ESP-IDF hiện tại; xem [luồng toàn hệ th�
 - LAN: ESP dùng `mqtt://192.168.60.87:1883`; Android/MQTTX dùng `tcp://192.168.60.87:1883`.
 - Broker là Mosquitto chạy trên Pi; Apache proxy `/mqtt` tới WebSocket port 9001. Cloudflare Quick Tunnel đưa WSS ra Internet, không biến broker thành broker Cloudflare.
 - ESP dùng user `esp32`, Android/MQTTX dùng `android`. Password lấy từ cấu hình riêng trên Pi; tài khoản đăng nhập app không phải tài khoản MQTT.
-- App hiện vẫn có broker mặc định HiveMQ trong `AppConfig.java`; đổi Settings → MQTT sang URI Pi trước khi thử điều khiển. Thay URL API không tự thay broker.
+- Trong ứng dụng, cấu hình Settings → MQTT bằng URI Mosquitto trên Pi trước khi thử điều khiển. Thay URL API không tự thay broker.
 - Các bản tin chính dùng QoS 1. URL Quick Tunnel có thể đổi sau restart; file text không tự sửa cấu hình client.
 
 ## Topic và retained

@@ -6,6 +6,7 @@ Truy cập ngoài mạng dùng **Cloudflare Quick Tunnel**: HTTPS cho API và MQ
 
 - [Luồng xử lý toàn hệ thống](docs/system-flow.md): sơ đồ, trình tự xử lý, dữ liệu, xác nhận lệnh và tình huống mất kết nối.
 - [Triển khai và vận hành Pi](deploy/raspberry-pi/README.md).
+- [Xem MariaDB bằng Adminer trong LAN](deploy/raspberry-pi/README.md#xem-mariadb-qua-trình-duyệt-bằng-adminer): giao diện web tại cổng `8080` của Pi.
 - [Firmware ESP32-S3](esp-firmware/README.md).
 - [Giao thức MQTT](README_MQTT_ESP32.md).
 - [Kiểm tra API bằng Postman](backend/postman/README.md).
@@ -85,7 +86,7 @@ DS18B20 có thể cấp VDD bằng 5 V, nhưng dây DQ nối GPIO9 của ESP32-S
 | ESP | Relay lúc khởi động | Hai bơm OFF; mức kích HIGH trên GPIO15/16 |
 | ESP | API và broker mặc định | Cloudflare trong `sdkconfig`, `sdkconfig.defaults`, `main/Kconfig.projbuild` |
 | Android | API mặc định | Cloudflare trong `AppConfig.DEFAULT_HTTP_API_URL`; đổi ngay màn hình đăng nhập hoặc Settings |
-| Android | Broker mặc định | **Source vẫn là HiveMQ Cloud**; cần đổi trong Settings sang WSS của Pi |
+| Android | Broker sử dụng | Mosquitto trên Pi; nhập `mqtt_wss_uri` hiện hành trong Settings → MQTT |
 | Android | Chu kỳ đọc API | Mặc định 3 giây khi MainActivity đang hiển thị |
 | MQTT | Người dùng | `esp32` cho firmware, `android` cho app/MQTTX |
 | DB | Database / user | `pool_db` / `smartpool`, chỉ API dùng trong mạng Docker |
@@ -135,9 +136,9 @@ Thông tin Wi-Fi, broker/credential, API và quy tắc đã lưu trong NVS có t
 
 ### 3. Android: đăng nhập và chọn đúng broker
 
-1. Build/cài app từ `android-app`. Máy build cần Android SDK và JDK phù hợp với cấu hình Gradle của dự án; đường dẫn JDK/SDK phải đúng trên từng máy.
-2. Trên màn hình đăng nhập, kiểm tra **URL máy chủ API** rồi đăng nhập tài khoản đã tạo trên Pi. Nếu chỉ nhập URL gốc, app bổ sung `/pool_api/pool_api.php`. Các URL mặc định cũ đã biết được chuyển sang mặc định Cloudflare khi cập nhật app.
-3. Với admin, mở Settings → MQTT: nhập `mqtt_wss_uri`, username `android`, password tương ứng trên Pi. **Đổi API không tự đổi broker MQTT.** Tên khóa `hivemq.username/password` trong `mqtt.properties` vẫn là tên cũ dùng để nhúng credential vào BuildConfig, không buộc app dùng HiveMQ.
+1. Build/cài app theo [hướng dẫn Android](android-app/README_MQTT_ESP32.md). Máy build cần Android SDK và JDK phù hợp với cấu hình Gradle của dự án.
+2. Trên màn hình đăng nhập, nhấn **Cấu hình API** để xem hoặc cập nhật địa chỉ máy chủ, rồi đăng nhập tài khoản đã tạo trên Pi. Nếu nhập URL gốc, app tự bổ sung `/pool_api/pool_api.php`.
+3. Với admin, mở Settings → MQTT: nhập `mqtt_wss_uri`, username `android`, password tương ứng trên Pi. **Đổi API không tự đổi broker MQTT.**
 4. Kiểm tra app đã nối broker và nhận `smartpool/status` có `online:1` từ ESP. API trả JSON thành công chưa đủ để xác nhận điều khiển bơm hoạt động.
 
 Tài khoản app (`admin`/`guest`), tài khoản MQTT và tài khoản MariaDB là ba cơ chế riêng. Lấy mật khẩu từ cấu hình riêng trên Pi; tài liệu không lưu mật khẩu triển khai.
@@ -148,7 +149,8 @@ Tài khoản app (`admin`/`guest`), tài khoản MQTT và tài khoản MariaDB l
 | --- | --- | --- |
 | Lấy mẫu | Cảm biến → ESP → HTTPS POST API → MariaDB | Lưu trạng thái và lịch sử; hàng đợi NVS khi gửi lỗi |
 | Hiển thị số đo | Android → HTTPS GET API → MariaDB | MainActivity cập nhật cảm biến; màn biểu đồ đọc lịch sử |
-| Cảnh báo nền | ESP → MQTT telemetry → PoolMonitorService | App đánh giá ngưỡng và phát thông báo |
+| Cảnh báo nền | ESP → MQTT status/telemetry → PoolMonitorService | App đánh giá ngưỡng và phát thông báo khi cảm biến đang bật |
+| Bật/tắt cảm biến | Công tắc trên app → MQTT cmd → ESP → MQTT status | Bật/tắt đo nhiệt độ và mực nước; chờ ESP xác nhận |
 | Điều khiển bơm | Android → MQTT cmd → ESP → GPIO relay → MQTT status | App chờ trạng thái ESP báo về; không coi publish thành công là bơm đã bật |
 | Cấu hình | Settings → MQTT config → ESP → NVS → ACK/status | Lưu ngưỡng, thiết bị, API, Wi-Fi, tự động hóa |
 | Tự động hóa | Cảm biến → quy tắc trên ESP → relay | Chạy tại ESP, không cần app luôn mở |
@@ -182,4 +184,4 @@ Interlock là cấu hình: firmware ban đầu cho phép hai bơm cùng chạy, 
 
 Role admin/guest và token bảo vệ các API quản lý tài khoản, nhưng chưa bảo vệ toàn bộ API dữ liệu/lệnh cũ hoặc phân quyền riêng từng user app tại MQTT. Xem [ranh giới xác thực hiện tại](docs/system-flow.md#xac-thuc-va-ranh-gioi-quyen). Backend còn endpoint lệnh HTTP tương thích cũ; firmware hiện tại đã bỏ việc polling lệnh HTTP, nên không dùng endpoint đó để điều khiển ESP.
 
-XAMPP vẫn là phương án chạy backend thay thế nếu chép cả `backend/database.php` và `pool_api.php`, nhập schema và tạo admin. Luồng triển khai đang dùng trong project là Pi + Docker + Cloudflare Quick Tunnel.
+Hệ thống triển khai trên Raspberry Pi bằng Docker Compose: PHP/Apache, MariaDB và Mosquitto; Cloudflare Quick Tunnel cung cấp truy cập HTTPS/WSS từ ngoài mạng.

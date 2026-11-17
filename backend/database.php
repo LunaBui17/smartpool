@@ -1,5 +1,5 @@
 <?php
-// Environment overrides allow the same backend to run on XAMPP or Raspberry Pi.
+// Database settings are supplied through POOL_DB_* environment variables.
 function pool_database_connect()
 {
     $env = function ($name, $fallback) {

@@ -47,6 +47,7 @@ public class PoolMonitorService extends Service {
     private NotificationManager notificationManager;
     private MqttAsyncClient mqttClient;
     private boolean mqttConnecting;
+    private boolean temperatureEnabled = true;
     private String lastAlertKey = "";
 
     private AppConfig config;
@@ -281,10 +282,11 @@ public class PoolMonitorService extends Service {
         }
 
         try {
+            mqttClient.subscribe(config.getTopicStatus(), 1);
             String topicTelemetry = config.getTopicTelemetry();
             mqttClient.subscribe(topicTelemetry, 1);
         } catch (MqttException e) {
-            Log.e(TAG, "Không subscribe được telemetry", e);
+            Log.e(TAG, "Không subscribe được trạng thái và telemetry", e);
             scheduleReconnect();
         }
     }
@@ -297,12 +299,28 @@ public class PoolMonitorService extends Service {
     // ==================== ĐỌC DỮ LIỆU CẢM BIẾN ====================
 
     private void handleMqttMessage(String topic, String payload) {
-        if (!topic.equals(config.getTopicTelemetry())) {
+        if (!topic.equals(config.getTopicTelemetry()) && !topic.equals(config.getTopicStatus())) {
             return;
         }
 
         try {
             JSONObject json = new JSONObject(payload);
+            if (topic.equals(config.getTopicStatus())) {
+                if (json.has("temperature_enabled")) {
+                    int enabled = json.getInt("temperature_enabled");
+                    if (enabled != 0 && enabled != 1) {
+                        throw new org.json.JSONException("Invalid temperature_enabled state");
+                    }
+                    temperatureEnabled = enabled == 1;
+                    if (!temperatureEnabled) {
+                        lastAlertKey = "";
+                        notificationManager.cancel(ALERT_NOTIFICATION_ID);
+                        notificationManager.cancel(RECOVERY_NOTIFICATION_ID);
+                    }
+                }
+                return;
+            }
+            if (!temperatureEnabled) return;
             double temp = json.optDouble("nhiet_do", Double.NaN);
 
             if (Double.isNaN(temp) || Double.isInfinite(temp)) {

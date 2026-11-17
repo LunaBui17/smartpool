@@ -192,7 +192,7 @@ public class SettingsActivity extends AppCompatActivity {
         setupListeners();
 
         refreshMqttActions();
-        connectHiveMq();
+        connectMqtt();
     }
 
     private void initViews() {
@@ -1182,7 +1182,7 @@ public class SettingsActivity extends AppCompatActivity {
         }
     }
 
-    // ==================== KẾT NỐI HIVEMQ CLOUD ====================
+    // ==================== KẾT NỐI MQTT ====================
 
     private void refreshMqttActions() {
         boolean ready = mqttClient != null && mqttClient.isConnected();
@@ -1193,7 +1193,7 @@ public class SettingsActivity extends AppCompatActivity {
         refreshAutomationControls();
     }
 
-    private void connectHiveMq() {
+    private void connectMqtt() {
         final String broker = config.getMqttBroker();
         final String username = config.getMqttUsername();
         final String password = config.getMqttPassword();
@@ -1207,12 +1207,12 @@ public class SettingsActivity extends AppCompatActivity {
                     @Override
                     public void connectComplete(boolean reconnect, String uri) {
                         isMqttConnected = true;
-                        Log.i(TAG, "HiveMQ connected");
+                        Log.i(TAG, "MQTT connected");
                         subscribeScanResultTopic();
                         handler.post(() -> {
                             refreshMqttActions();
                             if (txtSettingsMqttStatus != null) {
-                                txtSettingsMqttStatus.setText("✓ Trạng thái: Đã kết nối HiveMQ Cloud • Sẵn sàng");
+                                txtSettingsMqttStatus.setText("✓ Trạng thái: Đã kết nối MQTT • Sẵn sàng");
                                 txtSettingsMqttStatus.setTextColor(android.graphics.Color.rgb(22, 163, 74));
                             }
                         });
@@ -1221,11 +1221,11 @@ public class SettingsActivity extends AppCompatActivity {
                     @Override
                     public void connectionLost(Throwable cause) {
                         isMqttConnected = false;
-                        Log.w(TAG, "HiveMQ connection lost", cause);
+                        Log.w(TAG, "MQTT connection lost", cause);
                         handler.post(() -> {
                             refreshMqttActions();
                             if (txtSettingsMqttStatus != null) {
-                                txtSettingsMqttStatus.setText("⚠ Trạng thái: Mất kết nối HiveMQ • Đang thử lại...");
+                                txtSettingsMqttStatus.setText("⚠ Trạng thái: Mất kết nối MQTT • Đang thử lại...");
                                 txtSettingsMqttStatus.setTextColor(android.graphics.Color.rgb(220, 38, 38));
                             }
                             txtAutomationConnection.setText(
@@ -1273,7 +1273,7 @@ public class SettingsActivity extends AppCompatActivity {
                     handler.post(() -> {
                         refreshMqttActions();
                         if (txtSettingsMqttStatus != null) {
-                            txtSettingsMqttStatus.setText("✓ Trạng thái: Đã kết nối HiveMQ Cloud • Sẵn sàng");
+                            txtSettingsMqttStatus.setText("✓ Trạng thái: Đã kết nối MQTT • Sẵn sàng");
                             txtSettingsMqttStatus.setTextColor(android.graphics.Color.rgb(22, 163, 74));
                         }
                     });
@@ -1282,7 +1282,7 @@ public class SettingsActivity extends AppCompatActivity {
                 @Override
                 public void onFailure(IMqttToken token, Throwable exception) {
                     isMqttConnected = false;
-                    Log.e(TAG, "Lỗi kết nối HiveMQ", exception);
+                    Log.e(TAG, "Lỗi kết nối MQTT", exception);
                     handler.post(() -> {
                         refreshMqttActions();
                         if (txtSettingsMqttStatus != null) {
@@ -1627,7 +1627,7 @@ public class SettingsActivity extends AppCompatActivity {
         txtSettingsMqttStatus.setTextColor(android.graphics.Color.rgb(217, 119, 6));
 
         refreshMqttActions();
-        connectHiveMq();
+        connectMqtt();
     }
 
     private void saveAndPublishHttp() {

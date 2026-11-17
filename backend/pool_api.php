@@ -1,5 +1,5 @@
 <?php
-/* Smart Pool API - đặt file tại thư mục XAMPP/htdocs/pool_api.php */
+/* Smart Pool API - triển khai tại /pool_api/pool_api.php trên Apache. */
 header('Content-Type: application/json; charset=utf-8');
 
 require_once __DIR__ . '/database.php';

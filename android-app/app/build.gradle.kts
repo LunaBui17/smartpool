@@ -36,10 +36,10 @@ android {
         versionCode = 1
         versionName = "1.0"
 
-        buildConfigField("String", "HIVEMQ_USERNAME",
-            javaString(mqttProperties.getProperty("hivemq.username", "")))
-        buildConfigField("String", "HIVEMQ_PASSWORD",
-            javaString(mqttProperties.getProperty("hivemq.password", "")))
+        buildConfigField("String", "MQTT_USERNAME",
+            javaString(mqttProperties.getProperty("mqtt.username", "")))
+        buildConfigField("String", "MQTT_PASSWORD",
+            javaString(mqttProperties.getProperty("mqtt.password", "")))
 
         testInstrumentationRunner =
             "androidx.test.runner.AndroidJUnitRunner"

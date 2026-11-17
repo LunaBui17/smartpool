@@ -12,7 +12,7 @@ import org.json.JSONObject;
  * - Thông tin thiết bị (Device ID, Device Name, Location)
  * - Ngưỡng cảnh báo (Nhiệt độ min/max, Mực nước min/max)
  * - Cấu hình WiFi (SSID, Password)
- * - Cấu hình MQTT Broker (HiveMQ Cloud) & Các Topic chia nhỏ
+ * - Cấu hình MQTT Broker & Các Topic chia nhỏ
  * - Cấu hình HTTP REST API & Polling
  */
 public class AppConfig {
@@ -84,10 +84,9 @@ public class AppConfig {
     public static final String DEFAULT_WIFI_SSID = "";
     public static final String DEFAULT_WIFI_PASS = "";
 
-    // Cố định dùng HiveMQ Cloud qua TLS
     public static final String DEFAULT_MQTT_BROKER =
-            "ssl://24660077a88741378be5ffe7f979f2f3.s1.eu.hivemq.cloud:8883";
-    public static final int DEFAULT_MQTT_PORT = 8883;
+            "wss://division-unlikely-drinking-disks.trycloudflare.com/mqtt";
+    public static final int DEFAULT_MQTT_PORT = 443;
 
     // Các topic chia nhỏ chuyên biệt
     public static final String DEFAULT_TOPIC_CONFIG = "smartpool/config";
@@ -105,6 +104,8 @@ public class AppConfig {
     public static final String DEFAULT_TOPIC_STATUS = "smartpool/status";
     public static final String DEFAULT_TOPIC_CMD_PUMP_IN = "smartpool/cmd/bom_vao";
     public static final String DEFAULT_TOPIC_CMD_PUMP_OUT = "smartpool/cmd/bom_ra";
+    public static final String DEFAULT_TOPIC_CMD_TEMPERATURE_ENABLED = "smartpool/cmd/temperature_enabled";
+    public static final String DEFAULT_TOPIC_CMD_WATER_ENABLED = "smartpool/cmd/water_level_enabled";
 
     public static final String DEFAULT_HTTP_API_URL = "https://division-unlikely-drinking-disks.trycloudflare.com/pool_api/pool_api.php";
     public static final int DEFAULT_HTTP_POLL_INTERVAL = 3;
@@ -369,7 +370,7 @@ public class AppConfig {
     }
 
     public String getMqttUsername() {
-        String fallback = BuildConfig.HIVEMQ_USERNAME != null ? BuildConfig.HIVEMQ_USERNAME : "";
+        String fallback = BuildConfig.MQTT_USERNAME != null ? BuildConfig.MQTT_USERNAME : "";
         return prefs.getString(KEY_MQTT_USER, fallback);
     }
 
@@ -378,7 +379,7 @@ public class AppConfig {
     }
 
     public String getMqttPassword() {
-        String fallback = BuildConfig.HIVEMQ_PASSWORD != null ? BuildConfig.HIVEMQ_PASSWORD : "";
+        String fallback = BuildConfig.MQTT_PASSWORD != null ? BuildConfig.MQTT_PASSWORD : "";
         return prefs.getString(KEY_MQTT_PASS, fallback);
     }
 
@@ -441,6 +442,14 @@ public class AppConfig {
 
     public String getTopicCmdPumpOut() {
         return DEFAULT_TOPIC_CMD_PUMP_OUT;
+    }
+
+    public String getTopicCmdTemperatureEnabled() {
+        return DEFAULT_TOPIC_CMD_TEMPERATURE_ENABLED;
+    }
+
+    public String getTopicCmdWaterEnabled() {
+        return DEFAULT_TOPIC_CMD_WATER_ENABLED;
     }
 
     // ================= HTTP API =================

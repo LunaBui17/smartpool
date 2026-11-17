@@ -17,7 +17,7 @@ if [[ ! -f .env ]]; then
     umask 077
     random_password() { od -An -N24 -tx1 /dev/urandom | tr -d ' \n'; }
     {
-        printf 'PI_BIND_IP=%s\nHTTP_PORT=80\nMQTT_PORT=1883\n' "$pi_ip"
+        printf 'PI_BIND_IP=%s\nHTTP_PORT=80\nMQTT_PORT=1883\nADMINER_PORT=8080\n' "$pi_ip"
         printf 'DB_ROOT_PASSWORD=%s\n' "$(random_password)"
         printf 'DB_PASSWORD=%s\n' "$(random_password)"
         printf 'MQTT_ESP_PASSWORD=%s\n' "$(random_password)"
@@ -26,7 +26,7 @@ if [[ ! -f .env ]]; then
 fi
 chmod 600 .env
 pool_compose config --quiet
-pool_compose up -d --build --wait --wait-timeout 600 db api mqtt-init mqtt
+pool_compose up -d --build --wait --wait-timeout 600 db api mqtt-init mqtt adminer
 bash smoke-test.sh
 echo 'Ready. Create the first API admin:'
 echo '  docker compose exec api php /opt/smartpool/create_admin.php'

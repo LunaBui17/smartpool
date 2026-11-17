@@ -46,7 +46,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="Cấu hình ngưỡng, WiFi, MQTT (HiveMQ) &amp; HTTP"
+                android:text="Cấu hình ngưỡng, WiFi, MQTT &amp; HTTP"
                 android:textColor="@color/text_on_dark_muted"
                 android:textSize="11sp" />
         </LinearLayout>
@@ -913,7 +913,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="22dp"
-                android:text="5. CẤU HÌNH HTTP API &amp; XAMPP"
+                android:text="5. CẤU HÌNH HTTP API"
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp"
                 android:textStyle="bold" />
@@ -929,7 +929,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Đường dẫn HTTP API (XAMPP/Cloud):"
+                    android:text="Đường dẫn HTTP API:"
                     android:textColor="@color/text_primary"
                     android:textSize="13sp"
                     android:textStyle="bold" />

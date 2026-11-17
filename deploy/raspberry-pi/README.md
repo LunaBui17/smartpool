@@ -2,7 +2,7 @@
 
 [Luồng toàn hệ thống ESP → Pi → Android](../../docs/system-flow.md) · [README tổng thể](../../README.md)
 
-Bộ triển khai chạy API PHP/Apache, MariaDB 11.4 và Mosquitto 2 bằng Docker Compose trên **hệ điều hành 64-bit**. Dữ liệu database và MQTT dùng volume bền vững; các dịch vụ tự chạy lại khi Pi khởi động. Không cần XAMPP hoặc HiveMQ Cloud cho cấu hình LAN này.
+Bộ triển khai chạy API PHP/Apache, MariaDB 11.4, Mosquitto 2 và Adminer 5 bằng Docker Compose trên **hệ điều hành 64-bit**. Dữ liệu database và MQTT dùng volume bền vững; các dịch vụ tự chạy lại khi Pi khởi động. API, database và broker MQTT đều chạy trên Pi; Adminer cung cấp giao diện web quản trị database trong LAN.
 
 **Tunnel mặc định hiện là Cloudflare Quick Tunnel**, miễn phí cho thử nghiệm và không cần tài khoản/token. Trên ESP thực tế, HTTPS và MQTT WSS đã kết nối thành công qua Cloudflare. URL ngẫu nhiên tự ghi vào **`~/smartpool-endpoints.txt`**, cập nhật mỗi 10 giây và sau khi tunnel khởi động lại. Xem phần Cloudflare bên dưới.
 
@@ -55,7 +55,7 @@ Script cài Docker dùng repository có chữ ký của Docker cho Debian/Raspbe
 
 `deploy.sh` tự tạo mật khẩu ngẫu nhiên trong `.env` (quyền `600`), tạo database/tables ở lần chạy đầu, khởi động dịch vụ và kiểm tra API cùng MQTT publish/subscribe. Admin API được tạo tương tác, độc lập với tài khoản MQTT. Không dùng `docker compose config` không có `--quiet` khi chia sẻ log vì kết quả có thể chứa mật khẩu.
 
-Chỉ cổng HTTP `80` và MQTT `1883` được mở trên IP LAN đã chỉ định. MariaDB không mở cổng ra mạng. Nếu cổng đã bị dịch vụ khác chiếm, sửa `HTTP_PORT` hoặc `MQTT_PORT` trong `.env`, rồi chạy lại. Nếu IP Pi thay đổi, cập nhật `PI_BIND_IP` và địa chỉ trong app/ESP; nên đặt DHCP reservation trên router.
+Cổng HTTP `80`, MQTT `1883` và Adminer `8080` được mở trên IP LAN đã chỉ định. MariaDB không mở cổng ra mạng. Nếu cổng đã bị dịch vụ khác chiếm, sửa `HTTP_PORT`, `MQTT_PORT` hoặc `ADMINER_PORT` trong `.env`, rồi chạy lại. Cấu hình cũ chưa có `ADMINER_PORT` vẫn dùng mặc định `8080`. Nếu IP Pi thay đổi, cập nhật `PI_BIND_IP` và địa chỉ trong app/ESP; nên đặt DHCP reservation trên router.
 
 ## 3. Chuyển Android và ESP sang Pi
 
@@ -96,9 +96,34 @@ Sao lưu bằng `backup.sh` tạo `backups/pool_db-*.sql.gz`; giữ thêm bản 
 gzip -dc backups/pool_db-YYYYMMDD-HHMMSS.sql.gz | sudo docker compose exec -T db sh -ec 'MYSQL_PWD="$MARIADB_PASSWORD" exec mariadb -u "$MARIADB_USER" "$MARIADB_DATABASE"'
 ```
 
-SQL chỉ tự nhập khi volume database trống. Nếu chuyển dữ liệu từ XAMPP, xuất `pool_db` rồi nhập vào MariaDB trước khi tạo admin mới; dữ liệu phục hồi sẽ thay thế các bảng cùng tên. Không cần một MQTT consumer ghi database vì firmware hiện gửi mẫu đo vào API qua HTTP.
+SQL chỉ tự nhập khi volume database trống. Khi khôi phục từ bản sao lưu, dữ liệu phục hồi sẽ thay thế các bảng cùng tên. Không cần một dịch vụ nhận MQTT để ghi database vì firmware gửi mẫu đo vào API qua HTTP.
 
-Backend cũng chạy được với XAMPP: chép cả `pool_api.php` và `database.php` vào cùng thư mục. Khi không có biến môi trường `POOL_DB_*`, kết nối vẫn dùng `localhost`, `root`, mật khẩu rỗng và `pool_db` như trước.
+### Xem MariaDB qua trình duyệt bằng Adminer
+
+Adminer được khởi động cùng các dịch vụ khi chạy `sudo bash pool.sh up` hoặc `sudo bash deploy.sh`. Sau khi chép cấu hình mới lên Pi, có thể chỉ bật Adminer mà không khởi động lại toàn hệ thống:
+
+```bash
+cd ~/smartpool/deploy/raspberry-pi
+sudo docker compose config --quiet
+sudo docker compose up -d adminer
+sudo docker compose ps adminer
+```
+
+Từ máy tính hoặc điện thoại cùng mạng LAN, mở `http://192.168.60.87:8080` (thay IP và cổng nếu đã đổi), rồi đăng nhập:
+
+| Trường | Giá trị |
+| --- | --- |
+| System | MySQL |
+| Server | `db` |
+| Username | `smartpool` |
+| Password | Giá trị `DB_PASSWORD` trong `.env` trên Pi |
+| Database | `pool_db` |
+
+Đây là tài khoản MariaDB, không phải tài khoản ứng dụng hoặc MQTT. Adminer không được truyền sẵn mật khẩu database; nhập mật khẩu trực tiếp trên trang và không chia sẻ mật khẩu.
+
+Chọn bảng `pool_status` → **Select data** để xem trạng thái gần nhất. Với `pool_history`, sắp xếp `received_at` giảm dần để xem mẫu mới nhất; tải lại trang khi cần cập nhật. Adminer cho phép sửa/xóa dữ liệu và chạy SQL, không chỉ xem. Hạn chế truy cập cho người quản trị, chỉ dùng trên LAN tin cậy; kết nối HTTP này không mã hóa mật khẩu. Không mở cổng quản trị trên router hoặc thêm đường dẫn proxy Adminer vào Apache/Cloudflare. Quick Tunnel hiện chỉ chuyển tiếp tới API, không chuyển tiếp tới Adminer.
+
+Khi không dùng, chạy `sudo docker compose stop adminer`. Lệnh `pool.sh up` sẽ bật lại Adminer cùng hệ thống.
 
 ## 5. Cloudflare Quick Tunnel: miễn phí, URL ngẫu nhiên vào file text
 

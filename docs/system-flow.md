@@ -92,7 +92,7 @@ Nếu gửi HTTP lỗi hoặc còn mẫu cũ chờ gửi, mẫu được xếp v
 
 API dùng `INSERT IGNORE` theo `sample_id` để retry không thêm history trùng. Sự kiện chỉ có trạng thái không tạo dòng history toàn null. `received_at` là lúc MariaDB nhận dữ liệu; hiện không lưu thời điểm đo offline riêng. Trong lúc gửi bù, số đo API có thể đi qua các mẫu cũ trước khi bắt kịp hiện tại.
 
-MainActivity hỏi GET API mặc định mỗi 3 giây lúc đang hiển thị, không lấy cảm biến trực tiếp từ telemetry MQTT; MQTT status cập nhật trạng thái relay. `SensorChartActivity` gọi `?history=1&limit=100` (API chấp nhận 1..500), trả các mẫu gần nhất theo thứ tự thời gian server. `PoolMonitorService` dùng kết nối MQTT riêng subscribe telemetry để đánh giá cảnh báo/thông báo nền khi service hoạt động.
+MainActivity hỏi GET API mặc định mỗi 3 giây lúc đang hiển thị, không lấy cảm biến trực tiếp từ telemetry MQTT; MQTT status cập nhật trạng thái relay và trạng thái bật/tắt cảm biến. Công tắc trên từng thẻ gửi lệnh bật/tắt đo qua MQTT, chờ ESP xác nhận; cảm biến đã tắt không hiển thị số đo cũ hoặc tạo cảnh báo trên màn hình. `SensorChartActivity` gọi `?history=1&limit=100` (API chấp nhận 1..500), trả các mẫu gần nhất theo thứ tự thời gian server. `PoolMonitorService` dùng kết nối MQTT riêng subscribe status và telemetry để đánh giá cảnh báo/thông báo nền khi service hoạt động; nhận trạng thái tắt cảm biến nhiệt độ sẽ hủy thông báo nhiệt độ và ngừng đánh giá đến khi bật lại.
 
 GET API thành công xác nhận đọc được backend, không xác nhận mẫu vừa được đo hoặc ESP đang online. Không dùng `is_app_active` trong DB làm bằng chứng ESP online.
 
@@ -113,7 +113,7 @@ sequenceDiagram
     E->>R: Ghi mức GPIO nếu hợp lệ
     E->>M: retained status với trạng thái relay
     M-->>A: status khớp giá trị yêu cầu
-    A->>A: Kết thúc trạng thái chờ; nếu quá hạn thì báo lỗi
+    A->>A: Kết thúc trạng thái chờ, nếu quá hạn thì báo lỗi
 ```
 
 `MqttControlGate` yêu cầu activity đang hiển thị, broker đã nối và ESP báo online. Sau reconnect, app đợi status ESP trước khi cho điều khiển. Chỉ publish thành công chưa xác nhận ESP đã thực thi; ACK cấu hình và xác nhận bơm là hai cơ chế khác nhau.
@@ -151,7 +151,7 @@ App cho nhập mực nước bằng cm, ánh xạ về ADC trước khi gửi. E
 2. Login gửi POST `action: login` cùng username/password/remember_me tới API. PHP kiểm tra tài khoản đang hoạt động và `password_verify()`, tạo token ngẫu nhiên, lưu hash SHA-256 của token rồi trả username, role, token và expires_in.
 3. Ghi nhớ: server cấp 30 ngày và app lưu token/role/expiry vào SharedPreferences riêng tư. Không ghi nhớ: phiên server 12 giờ, thông tin phiên chỉ giữ trong bộ nhớ tiến trình app.
 4. Các thao tác quản lý guest gửi `Authorization: Bearer TOKEN`. PHP kiểm tra token hash, hạn phiên, tài khoản active và quyền admin; khóa/đổi thông tin theo logic API có thể thu hồi các phiên guest. Logout gọi API để xóa token phía server và xóa phiên local.
-5. Admin có cấu hình/quản lý guest; guest chỉ có giao diện cảm biến, lịch sử và điều khiển hai bơm. Ẩn nút trong app không thay thế kiểm tra quyền tại server/broker.
+5. Admin có cấu hình/quản lý guest; guest có giao diện xem và bật/tắt cảm biến, lịch sử và điều khiển hai bơm. Ẩn nút trong app không thay thế kiểm tra quyền tại server/broker.
 
 | Cơ chế | Bảo vệ hiện có | Giới hạn |
 | --- | --- | --- |

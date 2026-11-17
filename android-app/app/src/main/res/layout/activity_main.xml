@@ -242,6 +242,18 @@
                     android:text="DS18B20 • Đang đợi số liệu"
                     android:textColor="@color/text_muted"
                     android:textSize="10sp" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchTemperatureEnabled"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:enabled="false"
+                    android:minHeight="48dp"
+                    android:text="Chờ thiết bị"
+                    android:contentDescription="Bật hoặc tắt cảm biến nhiệt độ"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
             </LinearLayout>
 
             <Space
@@ -296,6 +308,18 @@
                     android:text="Trạng thái cảm biến"
                     android:textColor="@color/text_muted"
                     android:textSize="10sp" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchWaterEnabled"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:enabled="false"
+                    android:minHeight="48dp"
+                    android:text="Chờ thiết bị"
+                    android:contentDescription="Bật hoặc tắt cảm biến mực nước"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
             </LinearLayout>
         </LinearLayout>
 
@@ -567,7 +591,7 @@
                 android:id="@+id/txtMqttCurrentBroker"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Broker: HiveMQ Cloud (TLS 8883)"
+                android:text="Broker MQTT"
                 android:textColor="@color/text_primary"
                 android:textSize="12sp"
                 android:textStyle="bold" />

@@ -1,4 +1,4 @@
-# Sao chép thành mqtt.properties rồi điền tài khoản HiveMQ Cloud.
+# Sao chép thành mqtt.properties rồi điền tài khoản MQTT của ứng dụng trên Mosquitto.
 # Tệp mqtt.properties không được đưa lên Git.
-hivemq.username=
-hivemq.password=
+mqtt.username=
+mqtt.password=

@@ -75,6 +75,8 @@ public class MainActivity extends AppCompatActivity {
     private TextView txtWater;
     private TextView txtWaterThresholdInfo;
     private TextView txtWaterStatus;
+    private SensorControl temperatureControl;
+    private SensorControl waterControl;
 
     // Điều khiển bơm
     private TextView txtPumpInStatus;
@@ -215,6 +217,12 @@ public class MainActivity extends AppCompatActivity {
         txtWater = findViewById(R.id.txtWater);
         txtWaterThresholdInfo = findViewById(R.id.txtWaterThresholdInfo);
         txtWaterStatus = findViewById(R.id.txtWaterStatus);
+        temperatureControl = new SensorControl(
+                findViewById(R.id.switchTemperatureEnabled), "cảm biến nhiệt độ",
+                config.getTopicCmdTemperatureEnabled());
+        waterControl = new SensorControl(
+                findViewById(R.id.switchWaterEnabled), "cảm biến mực nước",
+                config.getTopicCmdWaterEnabled());
 
         txtPumpInStatus = findViewById(R.id.txtPumpInStatus);
         txtPumpOutStatus = findViewById(R.id.txtPumpOutStatus);
@@ -340,7 +348,7 @@ public class MainActivity extends AppCompatActivity {
 
         updateInterlockUI(config.isInterlockEnabled());
 
-        txtMqttCurrentBroker.setText("Broker: HiveMQ Cloud (TLS 8883)");
+        txtMqttCurrentBroker.setText("Broker: " + config.getMqttBroker());
         txtMqttCurrentTopics.setText(
                 "• Topic Ngưỡng: " + config.getTopicConfigThresholds()
                         + "\n• Topic WiFi: " + config.getTopicConfigWifi()
@@ -383,7 +391,7 @@ public class MainActivity extends AppCompatActivity {
 
         if (isAdmin) {
             if (!mqttConnected) {
-                statusBuilder.append("⚠ Mất kết nối HiveMQ Broker. ");
+                statusBuilder.append("⚠ Mất kết nối MQTT Broker. ");
             } else if (!espOnline) {
                 statusBuilder.append("ℹ MQTT đã kết nối • Chờ ESP32 online. ");
             }
@@ -396,14 +404,20 @@ public class MainActivity extends AppCompatActivity {
         boolean sensorStale = (lastTelemetryTimestampMs > 0
                 && (System.currentTimeMillis() - lastTelemetryTimestampMs > SENSOR_TIMEOUT_MS));
 
-        if (Double.isNaN(currentTemp)) {
+        if (!temperatureControl.isDisabled() && Double.isNaN(currentTemp)) {
             statusBuilder.append("ℹ Chờ dữ liệu cảm biến. ");
         } else if (sensorStale) {
-            statusBuilder.append("⚠ Mất tín hiệu cảm biến (>15s chưa có số liệu mới). ");
-            txtTempStatus.setText("DS18B20 • Mất tín hiệu (>15s)");
-            txtTempStatus.setTextColor(Color.rgb(220, 38, 38));
-            txtWaterStatus.setText("Mực nước • Mất tín hiệu (>15s)");
-            txtWaterStatus.setTextColor(Color.rgb(220, 38, 38));
+            if (!temperatureControl.isDisabled() || !waterControl.isDisabled()) {
+                statusBuilder.append("⚠ Mất tín hiệu cảm biến (>15s chưa có số liệu mới). ");
+            }
+            if (!temperatureControl.isDisabled()) {
+                txtTempStatus.setText("DS18B20 • Mất tín hiệu (>15s)");
+                txtTempStatus.setTextColor(Color.rgb(220, 38, 38));
+            }
+            if (!waterControl.isDisabled()) {
+                txtWaterStatus.setText("Mực nước • Mất tín hiệu (>15s)");
+                txtWaterStatus.setTextColor(Color.rgb(220, 38, 38));
+            }
         }
 
         if (statusBuilder.length() == 0) {
@@ -479,6 +493,7 @@ public class MainActivity extends AppCompatActivity {
         }
         activityVisible = true;
         espOnline = false;
+        resetSensorControls();
         renderPumpStates();
 
         refreshConfigUI();
@@ -501,6 +516,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onPause() {
         activityVisible = false;
         clearPendingPumpCommands();
+        resetSensorControls();
         renderPumpStates();
         handler.removeCallbacks(pollRunnable);
         super.onPause();
@@ -682,6 +698,10 @@ public class MainActivity extends AppCompatActivity {
                 String reportedIpAddress = network == null ? "" : network.optString("ip", "").trim();
                 final String ipAddress = isValidIpv4Address(reportedIpAddress) ? reportedIpAddress : "";
                 final String httpApiUrl = network == null ? "" : network.optString("http_api_url", "").trim();
+                final Boolean temperatureEnabled = readSensorEnabled(json, "temperature_enabled");
+                final Boolean waterEnabled = readSensorEnabled(json, "water_level_enabled");
+                final boolean temperatureSupported = json.optBoolean("temperature_supported", false);
+                final boolean waterSupported = json.optBoolean("water_supported", false);
 
                 handler.post(() -> {
                     if (statusSession != mqttSession.get() || !mqttConnected) return;
@@ -691,7 +711,13 @@ public class MainActivity extends AppCompatActivity {
                     if (online && !ipAddress.isEmpty()) {
                         config.setEspLocalIpAddress(ipAddress);
                     }
-                    if (!online) clearPendingPumpCommands();
+                    if (!online) {
+                        clearPendingPumpCommands();
+                        resetSensorControls();
+                    } else {
+                        temperatureControl.update(temperatureSupported, temperatureEnabled);
+                        waterControl.update(waterSupported, waterEnabled);
+                    }
 
                     // DOUBLE CHECK BƠM CẤP
                     if (pumpInPending) {
@@ -731,6 +757,122 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private Boolean readSensorEnabled(JSONObject json, String key) throws org.json.JSONException {
+        if (!json.has(key)) return null;
+        int value = json.getInt(key);
+        if (value != 0 && value != 1) {
+            throw new org.json.JSONException("Invalid sensor state: " + key);
+        }
+        return value == 1;
+    }
+
+    private void resetSensorControls() {
+        if (temperatureControl != null) temperatureControl.reset();
+        if (waterControl != null) waterControl.reset();
+    }
+
+    private final class SensorControl {
+        private final androidx.appcompat.widget.SwitchCompat toggle;
+        private final String name;
+        private final String topic;
+        private Boolean enabled;
+        private Boolean pendingTarget;
+        private boolean supported;
+        private boolean updatingUi;
+        private int commandId;
+        private final Runnable timeout = () -> fail("Quá thời gian chờ ESP32 xác nhận ");
+
+        SensorControl(androidx.appcompat.widget.SwitchCompat toggle, String name, String topic) {
+            this.toggle = toggle;
+            this.name = name;
+            this.topic = topic;
+            toggle.setOnCheckedChangeListener((button, checked) -> {
+                if (!updatingUi) send(checked);
+            });
+        }
+
+        boolean isDisabled() {
+            return Boolean.FALSE.equals(enabled);
+        }
+
+        void update(boolean supported, Boolean enabled) {
+            this.supported = supported;
+            this.enabled = enabled;
+            if (pendingTarget != null && pendingTarget.equals(enabled)) {
+                handler.removeCallbacks(timeout);
+                pendingTarget = null;
+                showActionFeedback("ESP32 đã xác nhận " + name
+                        + (enabled ? " đang bật." : " đã tắt."), false);
+            }
+        }
+
+        void reset() {
+            handler.removeCallbacks(timeout);
+            commandId++;
+            if (pendingTarget != null && activityVisible) {
+                showActionFeedback("Chưa xác nhận thay đổi " + name
+                        + " do kết nối thiết bị thay đổi.", true);
+            }
+            pendingTarget = null;
+            supported = false;
+        }
+
+        void render() {
+            updatingUi = true;
+            toggle.setChecked(Boolean.TRUE.equals(enabled));
+            updatingUi = false;
+            toggle.setEnabled(canControlDevice() && supported
+                    && enabled != null && pendingTarget == null);
+            toggle.setText(!canControlDevice() || enabled == null ? "Chờ thiết bị"
+                    : !supported ? "Không hỗ trợ"
+                    : pendingTarget != null ? "Đang chờ xác nhận..."
+                    : enabled ? "Đang bật" : "Đã tắt");
+        }
+
+        private void send(boolean target) {
+            if (!requireMqttControl() || !supported || enabled == null || pendingTarget != null) {
+                render();
+                return;
+            }
+            pendingTarget = target;
+            final int requestId = ++commandId;
+            final long session = mqttSession.get();
+            render();
+            showActionFeedback("Đang " + (target ? "bật " : "tắt ") + name + "...", false);
+            handler.postDelayed(timeout, PUMP_ACK_TIMEOUT_MS);
+            try {
+                mqttClient.publish(topic, (target ? "1" : "0").getBytes(StandardCharsets.UTF_8),
+                        1, false, null, new IMqttActionListener() {
+                            @Override
+                            public void onSuccess(IMqttToken token) {
+                                // Chờ trạng thái từ ESP32, không coi PUBACK là xác nhận cảm biến.
+                            }
+
+                            @Override
+                            public void onFailure(IMqttToken token, Throwable error) {
+                                Log.e(TAG, "Không gửi được lệnh cho " + name, error);
+                                handler.post(() -> {
+                                    if (requestId == commandId && session == mqttSession.get()) {
+                                        fail("Không gửi được lệnh cho ");
+                                    }
+                                });
+                            }
+                        });
+            } catch (MqttException e) {
+                Log.e(TAG, "Không gửi được lệnh cho " + name, e);
+                fail("Không gửi được lệnh cho ");
+            }
+        }
+
+        private void fail(String message) {
+            if (pendingTarget == null) return;
+            handler.removeCallbacks(timeout);
+            pendingTarget = null;
+            render();
+            showActionFeedback(message + name + ".", true);
+        }
+    }
+
     // ==================== ĐIỀU KHIỂN MÁY BƠM ====================
 
     private void sendPumpCommand(boolean pumpIn, boolean turnOn) {
@@ -762,7 +904,7 @@ public class MainActivity extends AppCompatActivity {
                         @Override
                         public void onSuccess(IMqttToken token) {
                             handler.post(() -> {
-                                Log.i(TAG, "Đã gửi lệnh tới HiveMQ Broker, đang đợi ESP32 kích hoạt Relay...");
+                                Log.i(TAG, "Đã gửi lệnh tới MQTT Broker, đang đợi ESP32 kích hoạt Relay...");
                             });
                         }
 
@@ -803,6 +945,7 @@ public class MainActivity extends AppCompatActivity {
         mqttConnected = false;
         espOnline = false;
         clearPendingPumpCommands();
+        resetSensorControls();
         renderPumpStates();
         if (mqttClient == null) {
             return;
@@ -825,10 +968,11 @@ public class MainActivity extends AppCompatActivity {
     private void updateMqttStatus() {
         if (!mqttConnected || !espOnline) {
             clearPendingPumpCommands();
+            resetSensorControls();
         }
         renderPumpStates();
         if (!mqttConnected) {
-            txtMqttBadge.setText("MQTT: Mất kết nối HiveMQ Broker");
+            txtMqttBadge.setText("MQTT: Mất kết nối Broker");
             txtMqttBadge.setTextColor(Color.rgb(220, 38, 38));
         } else if (!espOnline) {
             txtMqttBadge.setText("MQTT: Đã kết nối Broker • Chờ ESP32 online");
@@ -933,7 +1077,7 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
-    // ==================== HTTP / XAMPP ====================
+    // ==================== HTTP API ====================
 
     private void getSensorData() {
         if (polling || requestQueue == null) {
@@ -1003,6 +1147,12 @@ public class MainActivity extends AppCompatActivity {
     // ==================== HIỂN THỊ CẢM BIẾN & CẢNH BÁO ====================
 
     private void updateWaterLevel(int water, int waterRaw) {
+        if (waterControl.isDisabled()) {
+            txtWater.setText("Đã tắt");
+            txtWater.setTextColor(Color.rgb(100, 116, 139));
+            txtWaterStatus.setText("Cảm biến mực nước đang tắt");
+            return;
+        }
         boolean withinMeasuredRange = config.isWaterAdcWithinCalibration(waterRaw);
         if (withinMeasuredRange) {
             txtWater.setText(String.format(Locale.getDefault(), "%.1f cm",
@@ -1034,6 +1184,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateTemperature(double temp) {
+        if (temperatureControl.isDisabled()) {
+            txtTemp.setText("Đã tắt");
+            txtTemp.setTextColor(Color.rgb(100, 116, 139));
+            txtTempStatus.setText("Cảm biến nhiệt độ đang tắt");
+            return;
+        }
         if (Double.isNaN(temp) || Double.isInfinite(temp)) {
             return;
         }
@@ -1062,7 +1218,7 @@ public class MainActivity extends AppCompatActivity {
         boolean tempAlert = false;
         StringBuilder alertMsg = new StringBuilder();
 
-        if (!Double.isNaN(currentTemp)) {
+        if (!temperatureControl.isDisabled() && !Double.isNaN(currentTemp)) {
             if (currentTemp > tempMax) {
                 tempAlert = true;
                 alertMsg.append(String.format(Locale.getDefault(),
@@ -1074,10 +1230,10 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        if (currentWaterLevel == 0) {
+        if (!waterControl.isDisabled() && currentWaterLevel == 0) {
             tempAlert = true;
             alertMsg.append("⚠ Mực nước cạn nguy hiểm, cần cấp nước!");
-        } else if (currentWaterLevel == 2) {
+        } else if (!waterControl.isDisabled() && currentWaterLevel == 2) {
             tempAlert = true;
             alertMsg.append("⚠ Mực nước vượt ngưỡng cao đã cài đặt; kiểm tra cảm biến!");
         }
@@ -1137,6 +1293,12 @@ public class MainActivity extends AppCompatActivity {
         if (btnPumpIn == null || btnPumpOut == null) {
             return;
         }
+
+        temperatureControl.render();
+        waterControl.render();
+        updateTemperature(currentTemp);
+        updateWaterLevel(currentWaterLevel, currentWaterRaw);
+        evaluateAlerts();
 
         if (switchInterlock != null) switchInterlock.setEnabled(canControlDevice());
         // 1. Bơm cấp nước
