@@ -74,7 +74,7 @@ Mosquitto cục bộ không còn được firmware và ứng dụng sử dụng;
 
 ## Cài đặt máy chủ và ứng dụng
 
-1. Khởi động Apache và MySQL trong XAMPP. Nhập lại `backend/pool_db.sql` bằng phpMyAdmin. Tệp SQL tạo các bảng cảm biến, lệnh bơm, tài khoản và phiên đăng nhập; nhập lại không xóa dữ liệu cũ.
+1. Khởi động Apache và MySQL trong XAMPP. Với cài đặt mới, nhập `backend/pool_db.sql` bằng phpMyAdmin. Với database hiện có, sao lưu trước rồi chạy `backend/migrate_remove_ph_rename_bom_out_control.sql` đúng một lần để bỏ cột `ph` và đổi tên `van_control`; thao tác này xóa dữ liệu pH đã lưu.
 2. Chép `backend/pool_api.php` vào `xampp/htdocs/pool_api/pool_api.php`. Trên điện thoại cùng mạng, mở `http://192.168.10.214/pool_api/pool_api.php` và kiểm tra API trả về JSON.
 3. Tạo admin đầu tiên một lần bằng PHP CLI trên máy chạy MySQL (Windows/XAMPP: `C:\xampp\php\php.exe backend\create_admin.php`). Script chỉ chạy ở CLI, từ chối tạo thêm admin nếu đã có admin, và lưu mật khẩu dạng hash. Đăng nhập app bằng tài khoản đó; vào tab **Người dùng** để quản lý guest. Không có đăng ký công khai hoặc nút tự nâng quyền.
 4. Tạo tài khoản MQTT trên HiveMQ Cloud với quyền đọc và ghi các topic của project. Sao chép `esp-firmware/main/mqtt_credentials.h.example` thành `esp-firmware/main/mqtt_credentials.h`, rồi điền `SMARTPOOL_MQTT_USERNAME` và `SMARTPOOL_MQTT_PASSWORD`. Tệp này được Git bỏ qua. Nếu hai giá trị còn rỗng, ESP vẫn gửi HTTP nhưng không khởi động MQTT.

@@ -103,7 +103,7 @@ if ($method === 'GET') {
         $conn->close();
         exit;
     }
-    $result = $conn->query('SELECT id, is_app_active, nhiet_do, ph, muc_nuoc, bom_control, van_control FROM pool_status WHERE id = 1 LIMIT 1');
+    $result = $conn->query('SELECT id, is_app_active, nhiet_do, muc_nuoc, bom_control, bom_out_control FROM pool_status WHERE id = 1 LIMIT 1');
     if (!$result) {
         http_response_code(500);
         echo json_encode(array('status' => 'error', 'message' => 'Lỗi đọc dữ liệu'));
@@ -128,7 +128,6 @@ if ($method === 'GET') {
         } else {
             $row['nhiet_do'] = (float)$row['nhiet_do'];
         }
-        $row['ph'] = (float)$row['ph'];
         $row['muc_nuoc'] = (int)$row['muc_nuoc'];
         $latestRaw = $conn->query('SELECT muc_nuoc_raw FROM pool_history WHERE muc_nuoc_raw IS NOT NULL '
             . 'ORDER BY received_at DESC, sample_id DESC LIMIT 1');
@@ -136,7 +135,7 @@ if ($method === 'GET') {
         $row['muc_nuoc_raw'] = $rawRow ? (int)$rawRow['muc_nuoc_raw'] : null;
         if ($latestRaw) $latestRaw->free();
         $row['bom_control'] = (int)$row['bom_control'];
-        $row['van_control'] = (int)$row['van_control'];
+        $row['bom_out_control'] = (int)$row['bom_out_control'];
         echo json_encode($row, JSON_UNESCAPED_UNICODE);
     }
     $result->free();
@@ -590,8 +589,8 @@ if ($method === 'POST') {
     }
 
     // Chỉ cho phép các cột được liệt kê dưới đây; không nhận tên cột tùy ý từ client.
-    $integerFields = array('is_app_active', 'muc_nuoc', 'bom_control', 'van_control');
-    $floatFields = array('nhiet_do', 'ph');
+    $integerFields = array('is_app_active', 'muc_nuoc', 'bom_control', 'bom_out_control');
+    $floatFields = array('nhiet_do');
     $updates = array();
 
     foreach ($integerFields as $field) {
@@ -603,7 +602,7 @@ if ($method === 'POST') {
                 exit;
             }
             $value = (int)$data[$field];
-            if ($field === 'is_app_active' || $field === 'bom_control' || $field === 'van_control') {
+            if ($field === 'is_app_active' || $field === 'bom_control' || $field === 'bom_out_control') {
                 $value = ($value === 1) ? 1 : 0;
             }
             if ($field === 'muc_nuoc') {
@@ -626,10 +625,10 @@ if ($method === 'POST') {
         }
     }
 
-    // Fail-safe: khi app đóng/tạm rời màn hình, yêu cầu dừng bơm và đóng van.
+    // Fail-safe: khi app đóng/tạm rời màn hình, yêu cầu dừng cả hai bơm.
     if (isset($data['is_app_active']) && (int)$data['is_app_active'] === 0) {
         $updates[] = '`bom_control` = 0';
-        $updates[] = '`van_control` = 0';
+        $updates[] = '`bom_out_control` = 0';
     }
 
     if (count($updates) === 0) {

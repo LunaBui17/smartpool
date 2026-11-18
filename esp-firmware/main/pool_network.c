@@ -755,7 +755,7 @@ static void sample_to_json(const telemetry_sample_t *sample, char *json, size_t 
         return;
     }
     snprintf(json, capacity,
-             "{\"sample_id\":\"%016" PRIX64 "\"%s%s,\"bom_control\":%d,\"van_control\":%d,"
+             "{\"sample_id\":\"%016" PRIX64 "\"%s%s,\"bom_control\":%d,\"bom_out_control\":%d,"
              "\"temperature_enabled\":%d,\"water_level_enabled\":%d,\"online\":%d}",
              sample->id, temperature_field, water_field,
              !!(sample->flags & TELEMETRY_PUMP_IN), !!(sample->flags & TELEMETRY_PUMP_OUT),

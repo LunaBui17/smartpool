@@ -41,13 +41,16 @@ public class PoolMonitorService extends Service {
     private static final int SERVICE_NOTIFICATION_ID = 1001;
     private static final int ALERT_NOTIFICATION_ID = 1002;
     private static final int RECOVERY_NOTIFICATION_ID = 1003;
+    private static final int WATER_ALERT_NOTIFICATION_ID = 1004;
+    private static final int WATER_RECOVERY_NOTIFICATION_ID = 1005;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private NotificationManager notificationManager;
     private MqttAsyncClient mqttClient;
     private boolean mqttConnecting;
-    private String lastAlertKey = "";
+    private String lastTemperatureAlertKey = "";
+    private String lastWaterAlertKey = "";
 
     private AppConfig config;
     private String currentConnectedBroker = "";
@@ -111,10 +114,10 @@ public class PoolMonitorService extends Service {
 
         NotificationChannel alertChannel = new NotificationChannel(
                 ALERT_CHANNEL_ID,
-                "Cảnh báo nhiệt độ Smart Pool",
+                "Cảnh báo cảm biến Smart Pool",
                 NotificationManager.IMPORTANCE_HIGH
         );
-        alertChannel.setDescription("Cảnh báo khi nhiệt độ bể chính vượt ngưỡng");
+        alertChannel.setDescription("Cảnh báo khi nhiệt độ hoặc mực nước vượt ngưỡng an toàn");
         alertChannel.enableVibration(true);
         alertChannel.setVibrationPattern(new long[]{0, 500, 250, 500, 250, 700});
 
@@ -304,12 +307,19 @@ public class PoolMonitorService extends Service {
         try {
             JSONObject json = new JSONObject(payload);
             double temp = json.optDouble("nhiet_do", Double.NaN);
-
-            if (Double.isNaN(temp) || Double.isInfinite(temp)) {
-                return;
+            if (Double.isFinite(temp)) {
+                checkTemperature(temp);
             }
 
-            checkTemperature(temp);
+            double waterRaw = json.optDouble("muc_nuoc_raw", Double.NaN);
+            if (Double.isFinite(waterRaw) && waterRaw >= 0 && waterRaw <= 4095) {
+                checkWaterLevel(waterRaw);
+            } else if (json.has("muc_nuoc") && !json.isNull("muc_nuoc")) {
+                int waterState = json.optInt("muc_nuoc", -1);
+                if (waterState >= 0 && waterState <= 2) {
+                    checkWaterState(waterState);
+                }
+            }
 
         } catch (Exception e) {
             Log.e(TAG, "Không đọc được telemetry", e);
@@ -343,28 +353,86 @@ public class PoolMonitorService extends Service {
             );
         }
 
-        // Nếu nhiệt độ trở về mức bình thường
+        lastTemperatureAlertKey = updateAlert(
+                key,
+                lastTemperatureAlertKey,
+                ALERT_NOTIFICATION_ID,
+                RECOVERY_NOTIFICATION_ID,
+                message,
+                "Nhiệt độ bể bơi đã trở về khoảng an toàn"
+        );
+    }
+
+    private void checkWaterLevel(double waterRaw) {
+        float waterMin = config.getWaterLevelMin();
+        float waterMax = config.getWaterLevelMax();
+
+        String key = "";
+        String message = "";
+        if (waterRaw < waterMin) {
+            key = "WATER_LOW";
+            message = String.format(
+                    Locale.getDefault(),
+                    "Mực nước thấp: raw %.0f ADC (ngưỡng tối thiểu %.0f ADC)",
+                    waterRaw,
+                    waterMin
+            );
+        } else if (waterRaw > waterMax) {
+            key = "WATER_HIGH";
+            message = String.format(
+                    Locale.getDefault(),
+                    "Mực nước cao: raw %.0f ADC (ngưỡng tối đa %.0f ADC)",
+                    waterRaw,
+                    waterMax
+            );
+        }
+
+        lastWaterAlertKey = updateAlert(
+                key,
+                lastWaterAlertKey,
+                WATER_ALERT_NOTIFICATION_ID,
+                WATER_RECOVERY_NOTIFICATION_ID,
+                message,
+                "Mực nước bể bơi đã trở về khoảng an toàn"
+        );
+    }
+
+    private void checkWaterState(int waterState) {
+        String key = waterState == 0 ? "WATER_LOW" : waterState == 2 ? "WATER_HIGH" : "";
+        String message = waterState == 0
+                ? "Mực nước thấp hơn vùng an toàn"
+                : waterState == 2 ? "Mực nước cao hơn vùng an toàn" : "";
+
+        lastWaterAlertKey = updateAlert(
+                key,
+                lastWaterAlertKey,
+                WATER_ALERT_NOTIFICATION_ID,
+                WATER_RECOVERY_NOTIFICATION_ID,
+                message,
+                "Mực nước bể bơi đã trở về khoảng an toàn"
+        );
+    }
+
+    private String updateAlert(String key, String previousKey, int alertNotificationId,
+                               int recoveryNotificationId, String message, String recoveryMessage) {
         if (key.isEmpty()) {
-            if (!lastAlertKey.isEmpty()) {
-                lastAlertKey = "";
-                notificationManager.cancel(ALERT_NOTIFICATION_ID);
-                showRecoveryNotification();
+            if (!previousKey.isEmpty()) {
+                notificationManager.cancel(alertNotificationId);
+                showRecoveryNotification(recoveryMessage, recoveryNotificationId);
             }
-            return;
+            return "";
+        }
+        if (key.equals(previousKey)) {
+            return previousKey;
         }
 
-        // Tránh gửi thông báo lặp liên tục cùng một cảnh báo
-        if (key.equals(lastAlertKey)) {
-            return;
-        }
-
-        lastAlertKey = key;
-        showSafetyNotification(message);
+        showSafetyNotification(message, alertNotificationId);
+        return key;
     }
 
     // ==================== GỬI THÔNG BÁO CẢNH BÁO ====================
 
-    private void showSafetyNotification(String message) {
+    private void showSafetyNotification(String message, int notificationId) {
         Intent intent = new Intent(this, MainActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
 
@@ -387,7 +455,7 @@ public class PoolMonitorService extends Service {
         Notification notification = builder
                 .setSmallIcon(android.R.drawable.ic_dialog_alert)
                 .setContentTitle("CẢNH BÁO SMART POOL")
-                .setContentText("Nhiệt độ bể bơi vượt ngưỡng an toàn")
+                .setContentText(message)
                 .setStyle(new Notification.BigTextStyle().bigText(message))
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setColor(Color.rgb(198, 40, 40))
@@ -396,16 +464,16 @@ public class PoolMonitorService extends Service {
                 .setOnlyAlertOnce(true)
                 .build();
 
-        notificationManager.notify(ALERT_NOTIFICATION_ID, notification);
+        notificationManager.notify(notificationId, notification);
     }
 
     // ==================== THÔNG BÁO KHI NHIỆT ĐỘ ỔN ĐỊNH ====================
 
-    private void showRecoveryNotification() {
+    private void showRecoveryNotification(String message, int notificationId) {
         Intent intent = new Intent(this, MainActivity.class);
         PendingIntent pending = PendingIntent.getActivity(
                 this,
-                2003,
+                notificationId,
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
@@ -421,13 +489,13 @@ public class PoolMonitorService extends Service {
         Notification notification = builder
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle("SMART POOL")
-                .setContentText("Nhiệt độ bể bơi đã trở về khoảng an toàn")
+                .setContentText(message)
                 .setContentIntent(pending)
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(true)
                 .build();
 
-        notificationManager.notify(RECOVERY_NOTIFICATION_ID, notification);
+        notificationManager.notify(notificationId, notification);
     }
 
     // ==================== ĐÓNG DỊCH VỤ ====================

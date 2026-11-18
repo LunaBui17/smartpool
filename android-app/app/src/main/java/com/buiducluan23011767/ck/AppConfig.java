@@ -106,7 +106,7 @@ public class AppConfig {
     public static final String DEFAULT_TOPIC_CMD_PUMP_IN = "smartpool/cmd/bom_vao";
     public static final String DEFAULT_TOPIC_CMD_PUMP_OUT = "smartpool/cmd/bom_ra";
 
-    public static final String DEFAULT_HTTP_API_URL = "https://division-unlikely-drinking-disks.trycloudflare.com/pool_api/pool_api.php";
+    public static final String DEFAULT_HTTP_API_URL = "https://192.168.10.214/pool_api/pool_api.php";
     public static final int DEFAULT_HTTP_POLL_INTERVAL = 3;
 
     private static AppConfig instance;
