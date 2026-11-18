@@ -24,13 +24,22 @@
             android:textSize="22sp"
             android:textStyle="bold" />
 
+        <TextView style="@style/PoolBody" android:layout_marginTop="8dp"
+            android:text="Quản lý tài khoản toàn hệ thống, không phụ thuộc thiết bị đang chọn. Mã user_code riêng, sửa hồ sơ và lưu trữ/khôi phục đang chờ API; không dùng id nội bộ làm mã tự đặt." />
+
+        <Button android:id="@+id/btnToggleAdminUserForm"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:minHeight="48dp" android:text="Tạo tài khoản mới" />
+
         <LinearLayout
+            android:id="@+id/adminUserCreateForm"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
             android:background="@drawable/bg_card_modern"
             android:orientation="vertical"
-            android:padding="14dp">
+            android:padding="14dp"
+            android:visibility="gone">
 
             <EditText
                 android:id="@+id/edtUserUsername"
@@ -53,11 +62,21 @@
                 android:background="@drawable/bg_input_field"
                 android:hint="Mật khẩu (ít nhất 7 byte; để trống khi sửa nếu giữ nguyên)"
                 android:inputType="textPassword"
+                android:saveEnabled="false"
                 android:paddingStart="10dp"
                 android:paddingEnd="10dp"
                 android:singleLine="true"
                 android:textColor="@color/text_primary"
                 android:textSize="14sp" />
+
+            <EditText
+                android:id="@+id/edtUserStudentCode"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="8dp"
+                android:hint="Mã sinh viên (tùy chọn; không phải user_code)"
+                android:inputType="text"
+                android:singleLine="true" />
 
             <EditText
                 android:id="@+id/edtUserFullName"
@@ -89,7 +108,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Admin được tạo admin khác. Tài khoản admin hiện có chỉ hiển thị, không sửa/xóa tại đây."
+                android:text="Admin có quyền trên mọi thiết bị. User cần được cấp quyền riêng. Không tự khóa tài khoản đang dùng hoặc admin cuối cùng."
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
 
@@ -133,11 +152,21 @@
             android:textSize="16sp"
             android:textStyle="bold" />
 
+        <EditText android:id="@+id/edtAdminUserSearch"
+            android:layout_width="match_parent" android:layout_height="48dp"
+            android:hint="Tìm tài khoản trong danh sách đã tải"
+            android:inputType="text" android:singleLine="true" />
+        <TextView android:id="@+id/txtAdminUsersStatus" style="@style/PoolBody"
+            android:accessibilityLiveRegion="polite" />
+
         <LinearLayout
             android:id="@+id/layoutUserList"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:orientation="vertical" />
+        <Button android:id="@+id/btnMoreAdminUsers"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:minHeight="48dp" android:text="Tải thêm tài khoản" android:enabled="false" />
     </LinearLayout>
 </ScrollView>

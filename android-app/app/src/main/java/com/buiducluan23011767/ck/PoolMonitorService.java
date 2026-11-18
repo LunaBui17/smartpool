@@ -83,8 +83,10 @@ public class PoolMonitorService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         handler.removeCallbacks(pollRunnable);
-        handler.post(pollRunnable);
-        return START_STICKY;
+        Log.i(TAG, "Giám sát nền đang tạm khóa trong giai đoạn tích hợp context v2.");
+        stopForeground(true);
+        stopSelf();
+        return START_NOT_STICKY;
     }
 
     @Override
@@ -357,7 +359,9 @@ public class PoolMonitorService extends Service {
         handler.removeCallbacksAndMessages(null);
 
         apiWorker.shutdownNow();
-
+        notificationManager.cancel(SERVICE_NOTIFICATION_ID);
+        notificationManager.cancel(ALERT_NOTIFICATION_ID);
+        notificationManager.cancel(RECOVERY_NOTIFICATION_ID);
         super.onDestroy();
     }
 }

@@ -1,7 +1,6 @@
 package com.buiducluan23011767.ck;
 
 import android.content.Intent;
-import android.database.sqlite.SQLiteException;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
@@ -10,11 +9,6 @@ import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 
-import com.android.volley.DefaultRetryPolicy;
-import com.android.volley.Request;
-import com.android.volley.RequestQueue;
-import com.android.volley.toolbox.JsonObjectRequest;
-import com.android.volley.toolbox.Volley;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -33,7 +27,8 @@ public class OperationLogActivity extends AppCompatActivity {
     private static final String TAG = "OperationLogActivity";
     private TextView status;
     private LinearLayout entries;
-    private RequestQueue queue;
+    private ApiClient api;
+    private DeviceContext.Selection selectedDevice;
     private boolean loading;
 
     @Override
@@ -41,15 +36,19 @@ public class OperationLogActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         UserSession.restore(this);
         if (!UserSession.isAuthenticated()) {
-            startActivity(new Intent(this, LoginActivity.class));
+            ApiClient.expire(this);
             finish();
+            return;
+        }
+        selectedDevice = DeviceContext.current();
+        if (selectedDevice == null) {
+            openDeviceList();
             return;
         }
         setContentView(R.layout.activity_operation_log);
         ScreenInsets.apply(findViewById(R.id.operationLogRoot));
         status = findViewById(R.id.txtLogStatus);
         entries = findViewById(R.id.layoutOperationLog);
-        queue = Volley.newRequestQueue(getApplicationContext());
         findViewById(R.id.btnLogBack).setOnClickListener(v -> finish());
         findViewById(R.id.btnRefreshLog).setOnClickListener(v -> refresh());
     }
@@ -57,44 +56,42 @@ public class OperationLogActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (queue == null) return;
+        if (entries == null) return;
         if (!UserSession.isAuthenticated()) {
-            startActivity(new Intent(this, LoginActivity.class));
+            ApiClient.expire(this);
             finish();
             return;
         }
+        if (!selectedDevice.isCurrent()) {
+            openDeviceList();
+            return;
+        }
+        api = new ApiClient(this);
         refresh();
     }
 
+    private void openDeviceList() {
+        startActivity(new Intent(this, DeviceListActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
+        finish();
+    }
+
     private void refresh() {
-        if (loading) return;
+        if (loading || api == null) return;
         final Map<String, JSONObject> rows = new HashMap<>();
         final JSONObject body = new JSONObject();
         try {
-            JSONArray local = OperationLog.get(this).readLocal();
-            for (int i = 0; i < local.length(); i++) {
-                JSONObject row = local.getJSONObject(i);
-                rows.put(row.getString("event_id"), row);
-            }
             body.put("action", "list_activity");
-            body.put("device_id", AppConfig.getInstance(this).getDeviceId());
+            body.put("device_id", selectedDevice.id);
             body.put("limit", 100);
-        } catch (SQLiteException | JSONException e) {
-            Log.e(TAG, "Không đọc được nhật ký trên điện thoại", e);
-            status.setText("Không đọc được nhật ký trên điện thoại.");
+        } catch (JSONException e) {
+            Log.e(TAG, "Không tạo được yêu cầu nhật ký", e);
+            status.setText("Không tạo được yêu cầu nhật ký.");
             return;
         }
         render(rows);
-        String apiUrl = AppConfig.getInstance(this).getHttpApiUrl();
-        if (apiUrl.trim().isEmpty()) {
-            status.setText("Đang hiển thị nhật ký cục bộ; chưa cấu hình API.");
-            return;
-        }
-        OperationLog.get(this).sync();
         loading = true;
         status.setText("Đang tải nhật ký từ máy chủ...");
-        final String token = UserSession.getToken();
-        JsonObjectRequest request = new JsonObjectRequest(Request.Method.POST, apiUrl, body,
+        api.post("list_activity", body, selectedDevice,
                 response -> {
                     loading = false;
                     try {
@@ -104,33 +101,27 @@ public class OperationLogActivity extends AppCompatActivity {
                         JSONArray remote = response.getJSONArray("events");
                         for (int i = 0; i < remote.length(); i++) {
                             JSONObject row = remote.getJSONObject(i);
+                            if (!selectedDevice.id.equals(row.getString("device_id")))
+                                throw new JSONException("Nhật ký thuộc thiết bị khác");
                             row.put("synced", true);
                             rows.put(row.getString("event_id"), row);
                         }
                         render(rows);
                         status.setText("Nhật ký thiết bị " + AppConfig.getInstance(this).getDeviceId() + "."
-                                + "\nTối đa 100 sự kiện mới nhất. Nhật ký thao tác cũ chỉ lưu trên điện thoại.");
+                                + "\nTối đa 100 sự kiện mới nhất từ server. Không trộn nhật ký SQLite cũ.");
                     } catch (JSONException e) {
                         Log.e(TAG, "Phản hồi nhật ký không hợp lệ", e);
-                        status.setText("Phản hồi máy chủ không hợp lệ; đang hiển thị bản cục bộ.");
+                        status.setText("Phản hồi nhật ký máy chủ không hợp lệ.");
                     }
                 },
-                error -> {
+                (code, message) -> {
                     loading = false;
-                    Log.w(TAG, "Không tải được nhật ký máy chủ", error);
-                    status.setText("Không tải được nhật ký máy chủ. Đang hiển thị bản cục bộ;"
-                            + " hãy kiểm tra kết nối, phiên đăng nhập và migration database.");
-                }) {
-            @Override
-            public Map<String, String> getHeaders() {
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + token);
-                return headers;
-            }
-        };
-        request.setRetryPolicy(new DefaultRetryPolicy(8000, 0, 1.0f));
-        request.setTag(this);
-        queue.add(request);
+                    status.setText(message);
+                    if (code == 403 || code == 404) {
+                        android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show();
+                        openDeviceList();
+                    }
+                });
     }
 
     private void render(Map<String, JSONObject> rows) {
@@ -192,8 +183,10 @@ public class OperationLogActivity extends AppCompatActivity {
     }
 
     @Override
-    protected void onDestroy() {
-        if (queue != null) queue.cancelAll(this);
-        super.onDestroy();
+    protected void onPause() {
+        if (api != null) api.close();
+        api = null;
+        loading = false;
+        super.onPause();
     }
 }

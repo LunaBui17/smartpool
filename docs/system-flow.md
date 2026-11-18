@@ -1,228 +1,192 @@
-# Luồng xử lý Smart Pool
+# Luồng xử lý Smart Pool v2
 
-Tài liệu hiện tại mô tả **database/API v2 và hợp đồng tích hợp dự kiến**, không khẳng định app/ESP đã chuyển đổi. Chi tiết schema, reset và request nằm trong [database-v2.md](database-v2.md).
+Cập nhật 18/11/2026 theo source hiện tại. Android đã cập nhật nền tảng phiên và UI quản trị
+của [kế hoạch](android-api-v2-plan.md); source mới **chưa build/kiểm thử**.
+Chi tiết chức năng còn chờ và checklist nằm trong
+[README Android](../android-app/README_MQTT_ESP32.md).
 
-## Đăng nhập và chọn thiết bị
+## 1. Kiến trúc
 
 ```mermaid
 flowchart LR
-    A[Admin đăng nhập] --> B[Danh sách mọi thiết bị]
-    B --> C[Đăng ký ID / activate]
-    C --> D[Cấp user theo thiết bị]
-    U[User đăng nhập] --> L[Danh sách thiết bị được cấp]
-    L --> S[Chọn device_id]
-    S --> V[Tổng quan / Điều khiển / Hệ thống]
+    A[Android admin/user] -->|HTTPS + Bearer| T[Cloudflare]
+    T --> P[PHP API]
+    P <--> D[(MariaDB)]
+    D --> W[Worker điều khiển]
+    W -->|Lệnh theo device_id| M[Mosquitto]
+    M --> E[ESP32]
+    E -->|ACK MQTT| M
+    M --> W
+    W -->|Kết quả lệnh| D
+    E -->|HTTP sample/status + device key| T
 ```
 
-API login trả user, session và trang danh sách thiết bị. Admin quản lý registry/membership; user thường có role `user`, không còn role `guest` trong DB mới. API kiểm tra membership và active, không chỉ dựa UI. Android cần thêm màn chọn thiết bị, giữ selected device_id và gửi đúng context trong mọi request.
+Android không dùng credential ESP hoặc DB. Luồng app chính không publish MQTT
+trực tiếp; MQTT kết nối worker với ESP bằng namespace theo thiết bị.
+Worker hiện chuyển lệnh bơm, không đồng bộ cấu hình mong muốn xuống firmware.
 
-## Lưu mẫu và trạng thái
+## 2. Phiên và chọn thiết bị
 
 ```mermaid
-sequenceDiagram
-    participant E as ESP v2 cần tích hợp
-    participant P as PHP API v2
-    participant D as MariaDB
-    participant A as Android cần tích hợp
-    E->>P: upload_sample + device_id + ESP key
-    P->>D: Chống trùng device_id/sample_id, giữ giờ đo và giờ nhận
-    E->>P: report_status live + boot_id + state_sequence
-    P->>D: Lưu trạng thái riêng, không áp lại boot/sequence cũ
-    A->>P: Bearer + get_history/get_status + device_id đã chọn
-    P->>D: Kiểm tra user và membership
-    P-->>A: Chỉ trả dữ liệu thuộc thiết bị được phép
+stateDiagram-v2
+    [*] --> Startup
+    Startup --> Login: Không có phiên đúng server/còn hạn
+    Startup --> Devices: Khôi phục user
+    Startup --> AdminHome: Khôi phục admin
+    Login --> Devices: Login user thành công
+    Login --> AdminHome: Login admin thành công
+    state AdminHome {
+        [*] --> AdminOverview
+        AdminOverview --> AdminDevices
+        AdminDevices --> AdminUsers
+        AdminUsers --> AdminOverview
+    }
+    Devices --> Devices: Tải lại / tải thêm / retry
+    Devices --> Workspace: Chọn ID và get_device xác minh quyền
+    AdminHome --> Workspace: Chọn thiết bị và get_device xác minh
+    state Workspace {
+        [*] --> Overview
+        Overview --> Control
+        Control --> SystemStatus
+        SystemStatus --> Overview
+    }
+    Workspace --> Devices: Đổi thiết bị / mất quyền xem
+    Workspace --> AdminHome: Admin quay về quản trị
+    Workspace --> Chart: Mở biểu đồ
+    Chart --> Workspace: Quay lại
+    Workspace --> History: Mở nhật ký
+    History --> Workspace: Quay lại
+    Workspace --> Settings: Admin mở cài đặt hiện có
+    Settings --> Workspace: Quay lại
+    Workspace --> Login: 401 / logout / đổi server
+    Devices --> Login: 401 / logout
+    AdminHome --> Login: 401 / logout
 ```
 
-Mẫu không biết giờ đo để null, không suy từ giờ nhận. History có time_basis received/measured, khoảng thời gian và cursor. Mẫu gửi bù không ghi đè relay status. ESP hiện tại chưa gửi hợp đồng này; cần đổi payload, credential và layout hàng đợi NVS trong bước firmware tiếp theo.
+- Login trả user, token, expires_in và trang devices/cursor. Role chỉ admin/user.
+- Nhớ đăng nhập lưu phiên private; không nhớ chỉ giữ trong process.
+  Phiên còn gắn với URL API chuẩn hóa và user ID. Phiên legacy không đủ context
+  không được tái sử dụng.
+- Admin vào ba tab quản trị toàn hệ thống mà không cần selected device; user vào
+  danh sách được cấp. Không tự chọn thiết bị đầu tiên. Chưa chọn thì không mở workspace.
+- Tổng quan gốc là thống kê danh mục theo trang đã tải, ghi rõ “còn trang”, không
+  tự xác nhận MQTT/ESP online. Workspace Tổng quan của cả hai role là một thiết bị.
+- Context thiết bị chứa snapshot phiên và identity selection. Mỗi lần chọn lại
+  tạo context khác, kể cả A → B → A. Callback context cũ bị bỏ.
+- Rời màn hình đóng API client, hủy request/timer và ngừng chờ lệnh cục bộ.
+  Không hủy giao dịch đã tới server, không tự gửi OFF.
+- Đổi URL xóa phiên/context và yêu cầu login; token cũ không theo URL mới.
+  API client không tự theo redirect HTTP.
+- Logout bỏ phiên local và thử thu hồi token đúng server cũ; lỗi/offline có thông báo.
 
-## Cấu hình và điều khiển
-
-User có configure → update_config với expected_revision → server lưu revision mới và audit. Đây là cấu hình mong muốn, không phải xác nhận ESP áp dụng. ESP v2 có thể đọc get_device_config và báo reported_config_revision; worker MQTT/BLE chưa làm.
-
-User có control → request_control → server lưu lệnh theo device với TTL và audit, trả not_published_by_api. ACK cần credential đúng thiết bị. API chưa phát lệnh ra Mosquitto; app/firmware hiện vẫn dùng topic chung và chưa tích hợp đường lệnh mới.
-
-## BLE và Wi-Fi
-MainActivity hỏi GET API mặc định mỗi 3 giây lúc đang hiển thị, không lấy cảm biến trực tiếp từ telemetry MQTT; MQTT status cập nhật trạng thái relay và trạng thái bật/tắt cảm biến. Công tắc trong mục Điều khiển gửi lệnh bật/tắt đo qua MQTT, chờ ESP xác nhận; cảm biến đã tắt không hiển thị số đo cũ hoặc tạo cảnh báo trên màn hình. `SensorChartActivity` gọi `?history=1&limit=100` (API chấp nhận 1..500), trả các mẫu gần nhất theo thứ tự thời gian server. `PoolMonitorService` dùng kết nối MQTT riêng subscribe status và telemetry để đánh giá cảnh báo/thông báo nền khi service hoạt động; nhận trạng thái tắt cảm biến nhiệt độ sẽ hủy thông báo nhiệt độ và ngừng đánh giá đến khi bật lại.
-
-BLE sau này giúp admin đọc ID khi đăng ký và giúp user có quyền cấu hình gửi SSID/password trực tiếp khi ở gần ESP. Cách đó có thể phục hồi khi ESP offline. Database không lưu Wi-Fi password; registration_source=ble chỉ là metadata, chưa phải xác minh scan/khoảng cách hay bằng chứng sở hữu.
-
-## Nhật ký và quyền
-
-Backend tự ghi audit khi giao dịch quản trị/config/lệnh commit. Nhật ký client luôn source=client/client_reported; báo cáo ESP source=device/reported. Thành viên có view đọc nhật ký của cả thiết bị, gồm tác nhân thực hiện; không đọc nhật ký thiết bị khác. Gỡ user chỉ gỡ dòng device_users.
-
-Broker đã dùng account/ACL theo thiết bị, xem [MQTT v2](mqtt-v2.md). App/firmware cũ chưa được cập nhật; bridge worker chưa triển khai. Gỡ membership chưa tự thu hồi MQTT account ESP; operator quản lý bằng mqtt-admin.py. Không cấp bridge credential cho app user.
-MQTT vẫn dùng account/topic chung nên revoke membership không tự chặn người giữ credential MQTT. Trước khi tích hợp nhiều ESP, phải đổi namespace topic và ACL/credential hoặc thêm backend kiểm tra quyền trước publish. Không mở rộng nhiều thiết bị trên topic chung hiện tại.
-```mermaid
-sequenceDiagram
-    participant A as MainActivity
-    participant M as Mosquitto
-    participant E as ESP
-    participant R as GPIO relay
-    A->>A: Kiểm tra màn hình hiển thị, broker connected, ESP online
-    A->>M: cmd/bom_vao hoặc cmd/bom_ra, 0/1, QoS 1, retain=false
-    M->>E: Chuyển lệnh
-    E->>E: Kiểm tra kết nối, feature, interlock
-    E->>R: Ghi mức GPIO nếu hợp lệ
-    E->>M: retained status với trạng thái relay
-    M-->>A: status khớp giá trị yêu cầu
-    A->>A: Kết thúc trạng thái chờ, nếu quá hạn thì báo lỗi
-```
-
-`MqttControlGate` yêu cầu activity đang hiển thị, broker đã nối và ESP báo online. Sau reconnect, app đợi status ESP trước khi cho điều khiển. Chỉ publish thành công chưa xác nhận ESP đã thực thi; ACK cấu hình và xác nhận bơm là hai cơ chế khác nhau.
-
-Lệnh bơm chỉ nhận đúng một byte `0`/`1`. Firmware bỏ lệnh ON retained để tránh bật lại từ lệnh cũ. Mỗi topic chỉ thay đổi một kênh; interlock nếu bật sẽ từ chối hai bơm cùng ON. Interlock mặc định firmware OFF, app mặc định ON và có thể đồng bộ qua cấu hình thresholds; phải xem giá trị ESP đang báo. Điều khiển tay làm tạm dừng tự động hóa của kênh đó trong phiên boot.
-
-Trạng thái `bom_vao_control`/`bom_ra_control` xác nhận trạng thái mà firmware điều khiển GPIO; chưa có cảm biến phản hồi motor/tiếp điểm. Việc rời MainActivity dừng polling và khóa thao tác UI, không có nghĩa tự gửi OFF cho mọi bơm.
-
-## 6. Cấu hình và tự động hóa
-
-Settings dùng các gói config có action, timestamp và `req_id` để ESP kiểm tra, lưu NVS rồi phát `smartpool/ack` và status. Kiểm tra timestamp theo từng nhóm giúp từ chối cấu hình cũ. Với thay đổi Wi-Fi, ESP chờ ACK QoS 1 tối đa 3 giây trước khi đổi mạng. Broker/credential có thể đổi qua web local; đổi API trong app không tự thay broker của ESP.
-
-| Topic | Chiều | Nội dung / retained |
-| --- | --- | --- |
-| `smartpool/status` | ESP → app | Online, relay, feature, thresholds, automation, IP LAN, API URL; retained |
-| `smartpool/telemetry` | ESP → app/service | Mẫu đo và trạng thái; không retained |
-| `smartpool/cmd/bom_vao`, `smartpool/cmd/bom_ra` | App → ESP | 0/1; không retained |
-| `smartpool/cmd/temperature_enabled`, `smartpool/cmd/water_level_enabled` | Client → ESP | Bật/tắt đọc cảm biến runtime |
-| `smartpool/config/thresholds` | App → ESP | Nhiệt độ, ngưỡng ADC nước, interlock; retained |
-| `smartpool/config/device`, `smartpool/config/wifi`, `smartpool/config/http` | App → ESP | Thiết bị, Wi-Fi, API/polling metadata; cấu hình retained |
-| `smartpool/config` | App → ESP | Sync All, các nhóm cấu hình; retained |
-| `smartpool/config/automation` | App → ESP | Quy tắc một bơm, bắt buộc không retained |
-| `smartpool/ack` | ESP → app | `req_id`, action, SUCCESS/ERROR; không retained |
-| `smartpool/cmd/wifi_scan`, `smartpool/wifi/scan_result` | App ↔ ESP | Yêu cầu quét và kết quả; không retained |
-
-Quy tắc tự động hóa nằm trên ESP, được lưu trong NVS; không có scheduler bơm trên Pi. Task chạy mỗi 250 ms, dùng mẫu còn mới: tối đa khoảng `2 × chu kỳ lấy mẫu + 2 giây`. Điều kiện khởi động đã bật kết hợp theo OR; dừng theo thời lượng hoặc khi một điều kiện ngưỡng dừng đạt, kèm thời gian tối đa. Firmware kiểm tra dữ liệu cảm biến cần thiết, interlock và trạng thái relay. Sau một lượt hoàn tất/timeout, phải thoát điều kiện khởi động rồi mới được kích hoạt lại, tránh lặp ngay trên cùng một giá trị.
-
-App cho nhập mực nước bằng cm, ánh xạ về ADC trước khi gửi. ESP và DB vẫn lưu giá trị ADC; không diễn giải ADC là cm trực tiếp. Cấu hình hiệu chuẩn app không phải một cột đo cm của database.
-
-## 7. Xác thực và ranh giới quyền
+## 3. Quyền tài khoản và thiết bị
 
 <a id="xac-thuc-va-ranh-gioi-quyen"></a>
 
-1. Splash gọi `UserSession.restore()`: nếu có phiên ghi nhớ chưa hết hạn theo đồng hồ thiết bị thì mở MainActivity, nếu không thì mở LoginActivity. Restore local không gọi server để xác minh token ngay.
-2. Login gửi POST `action: login` cùng username/password/remember_me tới API. PHP kiểm tra tài khoản đang hoạt động và `password_verify()`, tạo token ngẫu nhiên, lưu hash SHA-256 của token rồi trả username, role, token và expires_in.
-3. Ghi nhớ: server cấp 30 ngày và app lưu token/role/expiry vào SharedPreferences riêng tư. Không ghi nhớ: phiên server 12 giờ, thông tin phiên chỉ giữ trong bộ nhớ tiến trình app.
-4. Các thao tác quản lý tài khoản và nhật ký gửi `Authorization: Bearer TOKEN`. PHP kiểm tra token hash, hạn phiên, tài khoản active; quản lý tài khoản cần quyền admin. Logout gọi API để xóa token phía server và xóa phiên local.
-5. Admin có cấu hình/quản lý guest và tạo thêm admin. Tài khoản admin hiện có không sửa/xóa trong tab quản lý. Guest có giao diện xem và bật/tắt cảm biến, lịch sử và điều khiển hai bơm.
-6. API nhật ký lấy người thực hiện từ phiên đăng nhập, không tin username gửi lên. Guest chỉ đọc nhật ký của mình, admin đọc mọi tài khoản. Ẩn nút trong app không thay thế kiểm tra quyền tại server/broker.
-
-| Cơ chế | Bảo vệ hiện có | Giới hạn |
-| --- | --- | --- |
-| App/API session | Login, API quản lý tài khoản và nhật ký | GET số đo/history, POST telemetry và endpoint command cũ chưa yêu cầu token |
-| MQTT | Password + ACL cho `esp32` và `android` | Chưa tách MQTT credential theo user admin/guest; user `android` có quyền ghi config/cmd |
-| MariaDB | User/password trong mạng Docker | App/ESP không dùng credential DB |
-| Web ESP | Wi-Fi AP có mật khẩu; truy cập LAN | Endpoint web local chưa dùng token đăng nhập app |
-
-Cloudflare cung cấp đường HTTPS/WSS, không tự thêm xác thực cho API hoặc web ESP. Mật khẩu triển khai lấy từ `.env`/file credentials riêng trên Pi, không chép vào README. `mqtt_credentials.h` hiện là file được theo dõi trong Git; cần kiểm tra diff trước khi chia sẻ repository chứa credential.
-
-## 8. Mất kết nối và dữ liệu cũ
-
-| Tình huống | Hành vi hiện tại |
-| --- | --- |
-| ESP mất Wi-Fi/MQTT | Dừng kênh bơm thuộc điều khiển từ xa; giữ cách xử lý riêng cho local/automation; Last Will báo offline khi broker phát hiện mất kết nối |
-| Bơm local hoặc automation | Được đánh dấu điều khiển local, có thể tiếp tục khi broker không có; automation vẫn phải đáp ứng điều kiện cảm biến/dừng |
-| API không phản hồi | ESP lưu hàng đợi và gửi bù; MQTT có thể còn hoạt động |
-| MQTT mất nhưng API còn | App có thể đọc DB nhưng không đủ điều kiện điều khiển từ xa |
-| Pi khởi động lại | Volume giữ DB/MQTT; dịch vụ tự chạy nếu chưa bị stop chủ động; Quick Tunnel có thể đổi URL |
-| Đổi URL Quick Tunnel | Cập nhật endpoint ở cả ESP và Android; thay URL source không tự sửa NVS/SharedPreferences |
-| Đọc lại DB khi ESP offline | Có thể thấy mẫu cuối cùng; HTTP 200 không phải heartbeat ESP |
-| Khóa user / thu hồi token | API quản lý tài khoản từ chối token; không tự thu hồi credential MQTT dùng chung hoặc xóa phiên đã restore khỏi UI ngay lập tức |
-
-Backend vẫn giữ `pool_commands`, GET `?commands=1` và POST `command` để tương thích. **Firmware hiện tại không polling lệnh HTTP**. API trả accepted cho command cũ không chứng minh ESP sẽ thực thi; healthcheck dùng `?commands=1` chỉ kiểm tra API/DB.
-
-## 9. Bảng lưu trữ và điểm kiểm tra code
-
-| Nơi lưu | Nội dung |
-| --- | --- |
-| ESP NVS | Wi-Fi, endpoint/credential MQTT, API, cấu hình đã lưu, quy tắc và hàng đợi telemetry |
-| `pool_status` | Bản ghi trạng thái id=1; GET bổ sung ADC nước gần nhất từ history |
-| `pool_history` | Mẫu có sample_id duy nhất, nhiệt độ/ADC nullable, received_at |
-| `pool_activity_log` | Sự kiện app với event_id duy nhất, request_id, tài khoản, thiết bị, thao tác, kết quả và thời gian |
-| `pool_users` | Username, hash mật khẩu, admin/guest, active |
-| `pool_user_sessions` | Hash token, user, hạn phiên |
-| `pool_commands` | Revision/lệnh HTTP cũ; không phải kênh điều khiển firmware hiện tại |
-| Volume Docker | Database, MQTT auth và persistence |
-| Android SharedPreferences | AppConfig, tab Settings/biểu đồ và phiên khi chọn ghi nhớ; endpoint đã lưu ưu tiên mặc định |
-| Android SQLite | Nhật ký thao tác và hàng đợi đồng bộ theo tên tài khoản/URL API |
-
-Muốn thay luồng, bắt đầu từ `main.c` (lấy mẫu), `pool_network.c` (network/ownership/config), `pool_mqtt_protocol.c` (kiểm tra giao thức), `pump_auto.c` (quy tắc), `pool_api.php` (API/SQL), `MainActivity.java` (HTTP/UI/lệnh), `SettingsActivity.java` (config), `PoolMonitorService.java` (cảnh báo) và `UserSession.java` (phiên local).
-
-## 10. Trạng thái ứng dụng điện thoại
-
-### Điều hướng và phiên đăng nhập
-
-```mermaid
-stateDiagram-v2
-    state "Khởi động và nạp phiên" as Startup
-    state "Đăng nhập" as Login
-    state "Màn hình chính" as Main
-    state Main {
-        state "Tổng quan" as Overview
-        state "Điều khiển" as Control
-        state "Lưu đồ hệ thống" as SystemStatus
-        [*] --> Overview
-        Overview --> Control: Chọn Điều khiển
-        Control --> Overview: Chọn Tổng quan
-        Overview --> SystemStatus: Chọn Hệ thống
-        SystemStatus --> Overview: Chọn Tổng quan
-        Control --> SystemStatus: Chọn Hệ thống
-        SystemStatus --> Control: Chọn Điều khiển
-    }
-    state "Cài đặt và quản lý tài khoản" as Settings
-    state "Biểu đồ cảm biến" as Chart
-    state "Nhật ký thao tác" as History
-    [*] --> Startup
-    Startup --> Main: Phiên ghi nhớ còn hạn cục bộ
-    Startup --> Login: Không có phiên hợp lệ
-    Login --> Login: API từ chối hoặc lỗi kết nối
-    Login --> Main: API xác thực thành công
-    Main --> Settings: Admin mở cài đặt
-    Settings --> Main: Quay lại
-    Main --> Chart: Chọn thẻ cảm biến
-    Chart --> Main: Quay lại
-    Main --> History: Mở nhật ký
-    History --> Main: Quay lại
-    Main --> Login: Đăng xuất
-    Main --> Login: Phát hiện phiên hết hạn khi trở lại
+```text
+users ↔ device_users ↔ devices
+        view/control/configure
 ```
 
-Guest không vào Settings. Rời màn hình chính dừng polling HTTP và ngừng chờ lệnh trên màn hình; không đồng nghĩa dừng dịch vụ giám sát MQTT hoặc gửi OFF cho bơm. Khi quay lại, app kết nối/nhận lại trạng thái thiết bị trước khi mở điều khiển.
+Admin quản trị toàn hệ thống; user có thể thuộc nhiều thiết bị và nhiều user
+cùng một thiết bị. `owner_user_id` là metadata, không thay membership.
+Gỡ membership không xóa tài khoản/quyền trên thiết bị khác.
 
-Ba mục Tổng quan/Điều khiển/Hệ thống nằm trong cùng MainActivity với thanh điều hướng dưới cố định: chuyển mục không dừng polling hoặc kết nối MQTT. Nhật ký và Cài đặt mở từ thanh trên; Cài đặt vẫn chỉ dành cho admin. Các nhóm biểu mẫu Thiết bị mở/thu gọn mà không tự gửi dữ liệu. Lưu đồ lấy trạng thái linh kiện/quy tắc từ status ESP, không suy ra từ cấu hình cục bộ. API và MQTT là hai nhánh độc lập; MariaDB chỉ được xác nhận gián tiếp qua truy vấn API hợp lệ. Không liên lạc được thiết bị thì trạng thái phần cứng là chưa rõ, không phải tắt. Thời gian hiển thị là lúc nhận phản hồi, status MQTT có thể là retained.
+Backend kiểm tra quyền thật ở mỗi action. `get_device` tải lại quyền trên Main
+định kỳ; mất view hoặc user không được xem thiết bị inactive thì về danh sách.
+Admin vẫn xem được inactive, nhưng không control/configure.
+`401` không phải `403`; xung đột `409` không được tự biến thành ghi thành công.
 
-### Vòng đời yêu cầu điều khiển bơm và cảm biến
+Giới hạn hiện tại: Settings vẫn admin-only. User có can_configure chưa có UI
+lưu cấu hình; user xem thành viên bị backend chặn vì list_device_members vẫn
+admin-only. Trang admin đã có đăng ký manual, active/inactive và thêm/sửa/gỡ
+membership theo API. Tạo user/admin, khóa/mở và đặt lại mật khẩu ở tab Người dùng.
+Gán quyền từ user chọn từng thiết bị và đọc membership trước khi sửa; không
+suy ra quyền từ owner hoặc dựng danh sách “đã gán” khi API chưa có truy vấn đó.
+
+Mã user_code tùy chỉnh/duy nhất, sửa hồ sơ/metadata, lưu trữ và khôi phục đang chờ
+hợp đồng API/database. Khóa không phải lưu trữ; vô hiệu hóa không phải xóa hoặc
+lệnh tắt relay. Không tự cấp membership khi tạo user/đăng ký thiết bị.
+
+Serial phần cứng dự kiến lấy MAC nhà máy eFuse, tách khỏi Device ID nghiệp vụ và
+device key xác thực. Chưa có cột/liên kết serial, API claim phần cứng hoặc firmware
+tự nhận Device ID. BLE chưa triển khai; không dùng MAC quét BLE thay cho đọc định danh
+nhà máy một cách tường minh.
+
+## 4. Số đo, trạng thái và cấu hình
 
 ```mermaid
-stateDiagram-v2
-    state "Chưa đủ điều kiện điều khiển" as Blocked
-    state "Sẵn sàng" as Ready
-    state "Đã ghi yêu cầu, chờ ESP32" as Pending
-    state "Đã xác nhận trạng thái" as Confirmed
-    state "Gửi lỗi" as Failed
-    state "Hết thời gian chờ" as TimedOut
-    state "Ngừng chờ xác nhận" as Interrupted
-    [*] --> Blocked
-    Blocked --> Ready: Màn hình hiện, MQTT nối, ESP online
-    Ready --> Blocked: Mất điều kiện điều khiển
-    Ready --> Pending: Ghi SQLite và gửi lệnh
-    Pending --> Confirmed: Trạng thái ESP khớp yêu cầu
-    Pending --> Failed: Gửi MQTT lỗi
-    Pending --> TimedOut: Không nhận trạng thái khớp đúng hạn
-    Pending --> Interrupted: Rời màn hình hoặc mất kết nối
-    Confirmed --> Ready: Cập nhật giao diện
-    Failed --> Ready: Còn đủ điều kiện
-    TimedOut --> Ready: Còn đủ điều kiện
-    Interrupted --> Blocked: Chờ kết nối và trạng thái mới
+sequenceDiagram
+    participant E as ESP32
+    participant P as API
+    participant D as MariaDB
+    participant A as Android
+    E->>P: upload_sample(device_id, sample_id, device key)
+    P->>D: sensor_samples; chống trùng ID trong thiết bị
+    E->>P: report_status(boot_id, state_sequence)
+    P->>D: device_status của thiết bị
+    A->>P: Bearer + get_device/get_config/get_status
+    P-->>A: Quyền, cấu hình và báo cáo đúng thiết bị
+    A->>P: get_history(device_id)
+    P-->>A: Lịch sử của thiết bị
 ```
 
-Cảm biến còn yêu cầu firmware báo hỗ trợ tính năng. Xác nhận là trạng thái do ESP32 báo, không phải cảm biến phản hồi cơ khí. Cấu hình trong Settings dùng ACK khớp `req_id` và `action`; không dùng broker PUBACK làm xác nhận đã lưu ESP32. Khóa liên động trên màn hình chính chỉ ghi kết quả gửi tới broker.
+`latest_measured_sample` khác `last_received_sample`. Không biết giờ đo thì
+measured_at_ms=null, không đổi giờ nhận thành giờ đo. Source Main hiện còn dùng
+mẫu nhận cuối và mốc kiểm tra trên điện thoại; hoàn thiện cách trình bày thời gian,
+độ cũ mẫu, bộ lọc time_basis/cursor thuộc giai đoạn 2.
 
-### Nhật ký và khôi phục
+Main đọc `get_config` trước khi mở điều khiển, cache hiệu chuẩn/ngưỡng/interlock
+theo server + user ID + device ID. Không nhập preferences legacy toàn cục.
+Backend có update_config với expected_revision và trả delivery=stored_only;
+chưa có biểu mẫu lưu v2 trên app hoặc đường xác nhận ESP áp dụng đầy đủ.
 
-App ghi các sự kiện bất biến vào SQLite: yêu cầu và kết quả là hai sự kiện cùng `request_id`. Mỗi sự kiện có `event_id` riêng; API chèn lại cùng ID không tạo bản sao. Đồng bộ theo từng lô tối đa 20 sự kiện, chỉ đánh dấu đã gửi khi API xác nhận. Mất mạng giữ bản cục bộ; không buộc API phải online để gửi điều khiển MQTT.
+Lưu đồ Hệ thống phản ánh app → API, độ mới báo cáo HTTP, cờ cảm biến và relay
+do ESP báo. is_recent_report không chứng minh MQTT online hay motor đang chạy.
+Không có báo cáo là chưa xác minh, không tự đồng nghĩa OFF.
 
-Sự kiện gắn với tên tài khoản/URL API lúc phát sinh. Nếu đổi tên tài khoản hoặc URL, hàng đợi cũ không tự chuyển sang danh tính/máy chủ mới. Màn hình nhật ký hợp nhất bản cục bộ và máy chủ theo `event_id`, hiển thị tối đa 100 mục. Thời gian sự kiện theo đồng hồ điện thoại, `received_at` trong bảng nhật ký theo máy chủ.
+## 5. Điều khiển
 
-Đây là nhật ký do app báo cáo, không ghi nhận đầy đủ thao tác từ web ESP hoặc mọi client MQTT khác. Không lưu mật khẩu, token hoặc payload cấu hình vào sự kiện. Tiến trình bị dừng đột ngột có thể để lại yêu cầu chưa có kết quả; app không tự gán thành công hoặc gửi lại lệnh bơm.
+```mermaid
+sequenceDiagram
+    participant A as Android
+    participant P as API
+    participant D as MariaDB
+    participant W as Worker
+    participant M as MQTT
+    participant E as ESP32
+    A->>P: request_control(device_id, request_id, target, enabled)
+    P->>D: Kiểm tra quyền, lưu pending + TTL + audit
+    P-->>A: Đã ghi nhận; not_published_by_api
+    W->>D: Đọc lệnh còn hạn, kiểm tra lại quyền và báo cáo
+    W->>M: smartpool/devices/ID/cmd/pump
+    M->>E: Lệnh không retained
+    E->>M: smartpool/devices/ID/ack/command
+    M->>W: applied / rejected
+    W->>D: Cập nhật kết quả
+    A->>P: get_command + get_status
+    P-->>A: Kết quả lệnh và trạng thái relay được báo
+```
 
-App giữ cấu hình đã lưu qua SharedPreferences, khôi phục tab Settings và lựa chọn cảm biến biểu đồ. Trạng thái relay/cảm biến lấy lại từ ESP32, không phát lại lệnh ON đã dùng trước đó. Trục X biểu đồ dùng `received_at_ms` từ MariaDB, đúng khoảng thời gian và theo múi giờ điện thoại; timestamp này là thời điểm tiếp nhận, không phải thời điểm đo offline.
+Worker có code và container có thể đang chạy, nhưng cần người dùng kiểm tra đầu cuối.
+Pending không phải bơm đã bật. Applied là ESP xác nhận, không phải phản hồi cơ khí.
+Expired/rejected/cancelled không được hiển thị là thành công. Đóng app không hủy
+lệnh server; API chưa có cancel_command.
+
+## 6. Nhật ký, lưu trữ và các phần tạm khóa
+
+- Server lưu audit với actor/source backend, client hoặc device. Client_reported
+  không nâng thành xác nhận backend/phần cứng.
+- Màn nhật ký chỉ lấy list_activity của context hiện tại, tối đa trang 100 sự kiện.
+  Không trộn hoặc đồng bộ SQLite legacy; typed outbox/phân trang còn chờ.
+- Preferences phiên/thiết bị và SQLite bị loại khỏi backup/transfer. Không lưu
+  password/token/device key trong nhật ký; Gradle không nhúng credential MQTT.
+- Giám sát nền tạm dừng: Main không tự start; service nhận start tự dừng và xóa
+  notification cũ. Chờ cơ chế admin bật/tắt và context giám sát v2.
+- Các nút MQTT/config/hiệu chuẩn legacy bị khóa; không dùng topic chung làm fallback.
+- BLE chưa triển khai. Web/AP cục bộ của ESP không được gọi là BLE provisioning;
+  đổi API URL của điện thoại không tự đổi NVS hoặc Wi-Fi của ESP.
+
+Các bảng chính: users, user_sessions, devices, device_users, device_configs,
+device_credentials, device_status, sensor_samples, device_commands, activity_logs.
+Xem [schema/API v2](database-v2.md) và [triển khai Pi](../deploy/raspberry-pi-v2/README.md).

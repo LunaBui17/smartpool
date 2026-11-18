@@ -63,9 +63,6 @@ public class AppConfig {
     private static final String KEY_TOPIC_CMD_PUMP_OUT = "mqtt_topic_cmd_pump_out";
 
     private static final String KEY_HTTP_API_URL = "http_api_url";
-    private static final String KEY_HTTP_API_URL_MIGRATED = "http_api_url_migrated_cloudflare_v1";
-    private static final String KEY_TUNNEL_V2_MIGRATED = "tunnel_v2_migrated_20261118";
-    private static final String KEY_DEVICE_V2_MIGRATED = "device_v2_migrated_20261118";
     private static final String KEY_HTTP_POLL_INTERVAL = "http_poll_interval";
     private static final String KEY_CONTROL_MODE = "control_mode";
     private static final String KEY_INTERLOCK_ENABLED = "interlock_enabled";
@@ -75,7 +72,7 @@ public class AppConfig {
 
     // Default values
     public static final boolean DEFAULT_INTERLOCK_ENABLED = true;
-    public static final String DEFAULT_DEVICE_ID = "SmartPool";
+    public static final String DEFAULT_DEVICE_ID = "";
     public static final String DEFAULT_DEVICE_NAME = "Hệ thống Bể bơi Thông minh";
     public static final String DEFAULT_DEVICE_LOCATION = "Bể bơi sân vườn";
 
@@ -88,8 +85,7 @@ public class AppConfig {
     public static final String DEFAULT_WIFI_SSID = "";
     public static final String DEFAULT_WIFI_PASS = "";
 
-    public static final String DEFAULT_MQTT_BROKER =
-            "wss://mysterious-witness-crown-glasgow.trycloudflare.com/mqtt";
+    public static final String DEFAULT_MQTT_BROKER = "";
     public static final int DEFAULT_MQTT_PORT = 443;
 
     // Các topic chia nhỏ chuyên biệt
@@ -111,53 +107,37 @@ public class AppConfig {
     public static final String DEFAULT_TOPIC_CMD_TEMPERATURE_ENABLED = "smartpool/cmd/temperature_enabled";
     public static final String DEFAULT_TOPIC_CMD_WATER_ENABLED = "smartpool/cmd/water_level_enabled";
 
-    public static final String DEFAULT_HTTP_API_URL = "https://mysterious-witness-crown-glasgow.trycloudflare.com/pool_api/pool_api.php";
+    public static final String DEFAULT_HTTP_API_URL = "";
     public static final int DEFAULT_HTTP_POLL_INTERVAL = 3;
 
     private static AppConfig instance;
     private final SharedPreferences prefs;
+    private final Context context;
+    private DeviceContext.Selection preferenceScope;
+    private SharedPreferences scopedPrefs;
 
     private AppConfig(Context context) {
-        prefs = context.getApplicationContext()
-                .getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
-        if (!prefs.getBoolean(KEY_HTTP_API_URL_MIGRATED, false)) {
-            SharedPreferences.Editor edit = prefs.edit();
-            String savedUrl = prefs.getString(KEY_HTTP_API_URL, "").trim();
-            if (savedUrl.isEmpty()
-                    || "http://192.168.10.214/pool_api/pool_api.php".equals(savedUrl)
-                    || "http://192.168.10.165/pool_api/pool_api.php".equals(savedUrl)
-                    || "https://karma-unpleased-stoppage.ngrok-free.dev/pool_api/pool_api.php".equals(savedUrl)) {
-                edit.putString(KEY_HTTP_API_URL, DEFAULT_HTTP_API_URL);
+        this.context = context.getApplicationContext();
+        prefs = this.context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+    }
+
+    private synchronized SharedPreferences devicePrefs() {
+        DeviceContext.Selection selection = DeviceContext.current();
+        if (scopedPrefs == null || preferenceScope != selection) {
+            String scope = selection == null ? "unselected"
+                    : selection.session.server + "\n" + selection.session.userId + "\n" + selection.id;
+            try {
+                byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                        .digest(scope.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                String key = android.util.Base64.encodeToString(digest,
+                        android.util.Base64.NO_WRAP | android.util.Base64.URL_SAFE);
+                scopedPrefs = context.getSharedPreferences("smartpool_device_" + key, Context.MODE_PRIVATE);
+                preferenceScope = selection;
+            } catch (java.security.NoSuchAlgorithmException error) {
+                throw new IllegalStateException("Không thể tạo vùng lưu cấu hình thiết bị.", error);
             }
-            edit.putBoolean(KEY_HTTP_API_URL_MIGRATED, true).apply();
         }
-        if (!prefs.getBoolean(KEY_TUNNEL_V2_MIGRATED, false)) {
-            SharedPreferences.Editor edit = prefs.edit();
-            String httpUrl = prefs.getString(KEY_HTTP_API_URL, "").trim();
-            if (httpUrl.isEmpty() || "https://division-unlikely-drinking-disks.trycloudflare.com/pool_api/pool_api.php".equals(httpUrl)) {
-                edit.putString(KEY_HTTP_API_URL, DEFAULT_HTTP_API_URL);
-            }
-            String mqttBroker = prefs.getString(KEY_MQTT_BROKER, "").trim();
-            if (mqttBroker.isEmpty() || "wss://division-unlikely-drinking-disks.trycloudflare.com/mqtt".equals(mqttBroker)) {
-                edit.putString(KEY_MQTT_BROKER, DEFAULT_MQTT_BROKER);
-            }
-            edit.putBoolean(KEY_TUNNEL_V2_MIGRATED, true).apply();
-        }
-        if (!prefs.getBoolean(KEY_DEVICE_V2_MIGRATED, false)) {
-            SharedPreferences.Editor edit = prefs.edit();
-            if ("ESP32S3_SMARTPOOL_01".equals(prefs.getString(KEY_DEVICE_ID, ""))) {
-                edit.putString(KEY_DEVICE_ID, DEFAULT_DEVICE_ID);
-            }
-            edit.putBoolean(KEY_DEVICE_V2_MIGRATED, true).apply();
-        }
-        // Older app versions saved the percent-style defaults 20/85 as ADC limits.
-        if (prefs.contains(KEY_WATER_MIN) && prefs.contains(KEY_WATER_MAX)
-                && prefs.getFloat(KEY_WATER_MIN, 0) == 20.0f
-                && prefs.getFloat(KEY_WATER_MAX, 0) == 85.0f) {
-            prefs.edit().putFloat(KEY_WATER_MIN, DEFAULT_WATER_MIN)
-                    .putFloat(KEY_WATER_MAX, DEFAULT_WATER_MAX).apply();
-        }
-        migrateWaterCalibration();
+        return scopedPrefs;
     }
 
     public static synchronized AppConfig getInstance(Context context) {
@@ -167,82 +147,112 @@ public class AppConfig {
         return instance;
     }
 
+    void applyServerConfig(JSONObject config) throws JSONException {
+        if (!getDeviceId().equals(config.getString("device_id")))
+            throw new JSONException("Cấu hình thuộc thiết bị khác");
+        long revision = config.getLong("revision");
+        double tempMin = config.getDouble("temperature_min");
+        double tempMax = config.getDouble("temperature_max");
+        int adcMin = config.getInt("water_adc_min");
+        int adcMax = config.getInt("water_adc_max");
+        double cmMin = config.getDouble("water_cm_min");
+        double cmMax = config.getDouble("water_cm_max");
+        boolean interlock = config.getBoolean("interlock");
+        if (revision <= 0 || !Double.isFinite(tempMin) || !Double.isFinite(tempMax)
+                || tempMin < -55 || tempMax > 125 || tempMin >= tempMax
+                || adcMin < 0 || adcMin >= adcMax || adcMax > 4095
+                || !Double.isFinite(cmMin) || !Double.isFinite(cmMax)
+                || cmMin < 0 || cmMin >= cmMax || cmMax > 100000) {
+            throw new JSONException("Giá trị cấu hình server không hợp lệ");
+        }
+        devicePrefs().edit().putLong("config_revision", revision)
+                .putFloat(KEY_TEMP_MIN, (float) tempMin).putFloat(KEY_TEMP_MAX, (float) tempMax)
+                .putFloat(KEY_WATER_MIN, adcMin).putFloat(KEY_WATER_MAX, adcMax)
+                .putInt(KEY_WATER_CALIBRATION_ADC_START, adcMin)
+                .putInt(KEY_WATER_CALIBRATION_ADC_END, adcMax)
+                .putFloat(KEY_WATER_CALIBRATION_CM_START, (float) cmMin)
+                .putFloat(KEY_WATER_CALIBRATION_CM_END, (float) cmMax)
+                .putBoolean(KEY_INTERLOCK_ENABLED, interlock).apply();
+    }
+
     public String getChartSensor() {
-        return prefs.getString(KEY_CHART_SENSOR, "temperature");
+        return devicePrefs().getString(KEY_CHART_SENSOR, "temperature");
     }
 
     public void setChartSensor(String sensor) {
         if (!"temperature".equals(sensor) && !"adc".equals(sensor)) {
             throw new IllegalArgumentException("Invalid chart sensor");
         }
-        prefs.edit().putString(KEY_CHART_SENSOR, sensor).apply();
+        devicePrefs().edit().putString(KEY_CHART_SENSOR, sensor).apply();
     }
 
     public int getSettingsTab() {
-        return prefs.getInt(KEY_SETTINGS_TAB, 0);
+        return devicePrefs().getInt(KEY_SETTINGS_TAB, 0);
     }
 
     public void setSettingsTab(int tab) {
         if (tab < 0 || tab > 2) throw new IllegalArgumentException("Invalid settings tab");
-        prefs.edit().putInt(KEY_SETTINGS_TAB, tab).apply();
+        devicePrefs().edit().putInt(KEY_SETTINGS_TAB, tab).apply();
     }
 
     // ================= DEVICE INFO =================
     public String getDeviceId() {
-        return prefs.getString(KEY_DEVICE_ID, DEFAULT_DEVICE_ID);
+        DeviceContext.Selection selection = DeviceContext.current();
+        return selection == null ? "" : selection.id;
     }
 
     public void setDeviceId(String value) {
-        prefs.edit().putString(KEY_DEVICE_ID, value).apply();
+        devicePrefs().edit().putString(KEY_DEVICE_ID, value).apply();
     }
 
     public String getDeviceName() {
-        return prefs.getString(KEY_DEVICE_NAME, DEFAULT_DEVICE_NAME);
+        DeviceContext.Selection selection = DeviceContext.current();
+        return selection == null ? "" : selection.name;
     }
 
     public void setDeviceName(String value) {
-        prefs.edit().putString(KEY_DEVICE_NAME, value).apply();
+        devicePrefs().edit().putString(KEY_DEVICE_NAME, value).apply();
     }
 
     public String getDeviceLocation() {
-        return prefs.getString(KEY_DEVICE_LOCATION, DEFAULT_DEVICE_LOCATION);
+        return devicePrefs().getString(KEY_DEVICE_LOCATION, "");
     }
 
     public void setDeviceLocation(String value) {
-        prefs.edit().putString(KEY_DEVICE_LOCATION, value).apply();
+        devicePrefs().edit().putString(KEY_DEVICE_LOCATION, value).apply();
     }
 
     // ================= THRESHOLDS =================
     public float getTempMin() {
-        return prefs.getFloat(KEY_TEMP_MIN, DEFAULT_TEMP_MIN);
+        return devicePrefs().getFloat(KEY_TEMP_MIN, DEFAULT_TEMP_MIN);
     }
 
     public void setTempMin(float value) {
-        prefs.edit().putFloat(KEY_TEMP_MIN, value).apply();
+        devicePrefs().edit().putFloat(KEY_TEMP_MIN, value).apply();
     }
 
     public float getTempMax() {
-        return prefs.getFloat(KEY_TEMP_MAX, DEFAULT_TEMP_MAX);
+        return devicePrefs().getFloat(KEY_TEMP_MAX, DEFAULT_TEMP_MAX);
     }
 
     public void setTempMax(float value) {
-        prefs.edit().putFloat(KEY_TEMP_MAX, value).apply();
+        devicePrefs().edit().putFloat(KEY_TEMP_MAX, value).apply();
     }
 
     public float getWaterLevelMin() {
-        return prefs.getFloat(KEY_WATER_MIN, DEFAULT_WATER_MIN);
+        return devicePrefs().getFloat(KEY_WATER_MIN, DEFAULT_WATER_MIN);
     }
 
     public void setWaterLevelMin(float value) {
-        prefs.edit().putFloat(KEY_WATER_MIN, value).apply();
+        devicePrefs().edit().putFloat(KEY_WATER_MIN, value).apply();
     }
 
     public float getWaterLevelMax() {
-        return prefs.getFloat(KEY_WATER_MAX, DEFAULT_WATER_MAX);
+        return devicePrefs().getFloat(KEY_WATER_MAX, DEFAULT_WATER_MAX);
     }
 
     public void setWaterLevelMax(float value) {
-        prefs.edit().putFloat(KEY_WATER_MAX, value).apply();
+        devicePrefs().edit().putFloat(KEY_WATER_MAX, value).apply();
     }
 
     public float getWaterThresholdDisplayMin() {
@@ -266,17 +276,18 @@ public class AppConfig {
         }
         float minAdc = Math.round(waterCmToAdc(minCm));
         float maxAdc = Math.round(waterCmToAdc(maxCm));
-        prefs.edit()
+        devicePrefs().edit()
                 .putFloat(KEY_WATER_MIN, Math.min(minAdc, maxAdc))
                 .putFloat(KEY_WATER_MAX, Math.max(minAdc, maxAdc))
                 .apply();
     }
 
     public boolean hasWaterLevelCalibration() {
-        if (!prefs.contains(KEY_WATER_CALIBRATION_ADC_START)
-                || !prefs.contains(KEY_WATER_CALIBRATION_CM_START)
-                || !prefs.contains(KEY_WATER_CALIBRATION_ADC_END)
-                || !prefs.contains(KEY_WATER_CALIBRATION_CM_END)) {
+        SharedPreferences device = devicePrefs();
+        if (!device.contains(KEY_WATER_CALIBRATION_ADC_START)
+                || !device.contains(KEY_WATER_CALIBRATION_CM_START)
+                || !device.contains(KEY_WATER_CALIBRATION_ADC_END)
+                || !device.contains(KEY_WATER_CALIBRATION_CM_END)) {
             return false;
         }
         int adcStart = getWaterCalibrationAdcStart();
@@ -311,15 +322,15 @@ public class AppConfig {
     }
 
     public int getWaterCalibrationAdcStart() {
-        return prefs.getInt(KEY_WATER_CALIBRATION_ADC_START, -1);
+        return devicePrefs().getInt(KEY_WATER_CALIBRATION_ADC_START, -1);
     }
 
     public float getWaterCalibrationCmStart() {
-        return prefs.getFloat(KEY_WATER_CALIBRATION_CM_START, Float.NaN);
+        return devicePrefs().getFloat(KEY_WATER_CALIBRATION_CM_START, Float.NaN);
     }
 
     public int getWaterCalibrationAdcEnd() {
-        return prefs.getInt(KEY_WATER_CALIBRATION_ADC_END, -1);
+        return devicePrefs().getInt(KEY_WATER_CALIBRATION_ADC_END, -1);
     }
 
     public boolean isWaterAdcWithinCalibration(double adcRaw) {
@@ -329,11 +340,11 @@ public class AppConfig {
     }
 
     public float getWaterCalibrationCmEnd() {
-        return prefs.getFloat(KEY_WATER_CALIBRATION_CM_END, Float.NaN);
+        return devicePrefs().getFloat(KEY_WATER_CALIBRATION_CM_END, Float.NaN);
     }
 
     public void setWaterLevelCalibration(int adcStart, float cmStart, int adcEnd, float cmEnd) {
-        prefs.edit()
+        devicePrefs().edit()
                 .putInt(KEY_WATER_CALIBRATION_ADC_START, adcStart)
                 .putFloat(KEY_WATER_CALIBRATION_CM_START, cmStart)
                 .putInt(KEY_WATER_CALIBRATION_ADC_END, adcEnd)
@@ -363,71 +374,69 @@ public class AppConfig {
 
     // ================= INTERLOCK (KHÓA LIÊN ĐỘNG 2 BƠM) =================
     public boolean isInterlockEnabled() {
-        return prefs.getBoolean(KEY_INTERLOCK_ENABLED, DEFAULT_INTERLOCK_ENABLED);
+        return devicePrefs().getBoolean(KEY_INTERLOCK_ENABLED, DEFAULT_INTERLOCK_ENABLED);
     }
 
     public void setInterlockEnabled(boolean value) {
-        prefs.edit().putBoolean(KEY_INTERLOCK_ENABLED, value).apply();
+        devicePrefs().edit().putBoolean(KEY_INTERLOCK_ENABLED, value).apply();
     }
 
     public String getEspLocalIpAddress() {
-        return prefs.getString(KEY_ESP_LOCAL_IP_ADDRESS, "");
+        return devicePrefs().getString(KEY_ESP_LOCAL_IP_ADDRESS, "");
     }
 
     public void setEspLocalIpAddress(String value) {
-        prefs.edit().putString(KEY_ESP_LOCAL_IP_ADDRESS, value).apply();
+        devicePrefs().edit().putString(KEY_ESP_LOCAL_IP_ADDRESS, value).apply();
     }
 
     // ================= WIFI =================
     public String getWifiSsid() {
-        return prefs.getString(KEY_WIFI_SSID, DEFAULT_WIFI_SSID);
+        return devicePrefs().getString(KEY_WIFI_SSID, DEFAULT_WIFI_SSID);
     }
 
     public void setWifiSsid(String value) {
-        prefs.edit().putString(KEY_WIFI_SSID, value).apply();
+        devicePrefs().edit().putString(KEY_WIFI_SSID, value).apply();
     }
 
     public String getWifiPassword() {
-        return prefs.getString(KEY_WIFI_PASS, DEFAULT_WIFI_PASS);
+        return devicePrefs().getString(KEY_WIFI_PASS, DEFAULT_WIFI_PASS);
     }
 
     public void setWifiPassword(String value) {
-        prefs.edit().putString(KEY_WIFI_PASS, value).apply();
+        devicePrefs().edit().putString(KEY_WIFI_PASS, value).apply();
     }
 
     // ================= MQTT (BROKER & TÀI KHOẢN CHO PHÉP NGƯỜI DÙNG THAY ĐỔI) =================
     public String getMqttBroker() {
-        return prefs.getString(KEY_MQTT_BROKER, DEFAULT_MQTT_BROKER);
+        return devicePrefs().getString(KEY_MQTT_BROKER, DEFAULT_MQTT_BROKER);
     }
 
     public void setMqttBroker(String value) {
-        prefs.edit().putString(KEY_MQTT_BROKER, value).apply();
+        devicePrefs().edit().putString(KEY_MQTT_BROKER, value).apply();
     }
 
     public int getMqttPort() {
-        return prefs.getInt(KEY_MQTT_PORT, DEFAULT_MQTT_PORT);
+        return devicePrefs().getInt(KEY_MQTT_PORT, DEFAULT_MQTT_PORT);
     }
 
     public void setMqttPort(int value) {
-        prefs.edit().putInt(KEY_MQTT_PORT, value).apply();
+        devicePrefs().edit().putInt(KEY_MQTT_PORT, value).apply();
     }
 
     public String getMqttUsername() {
-        String fallback = BuildConfig.MQTT_USERNAME != null ? BuildConfig.MQTT_USERNAME : "";
-        return prefs.getString(KEY_MQTT_USER, fallback);
+        return devicePrefs().getString(KEY_MQTT_USER, "");
     }
 
     public void setMqttUsername(String value) {
-        prefs.edit().putString(KEY_MQTT_USER, value).apply();
+        devicePrefs().edit().putString(KEY_MQTT_USER, value).apply();
     }
 
     public String getMqttPassword() {
-        String fallback = BuildConfig.MQTT_PASSWORD != null ? BuildConfig.MQTT_PASSWORD : "";
-        return prefs.getString(KEY_MQTT_PASS, fallback);
+        return devicePrefs().getString(KEY_MQTT_PASS, "");
     }
 
     public void setMqttPassword(String value) {
-        prefs.edit().putString(KEY_MQTT_PASS, value).apply();
+        devicePrefs().edit().putString(KEY_MQTT_PASS, value).apply();
     }
 
     public String getMqttClientId() {
@@ -501,6 +510,7 @@ public class AppConfig {
     }
 
     public void setHttpApiUrl(String value) {
+        if (!value.equals(getHttpApiUrl())) UserSession.clear(context);
         prefs.edit().putString(KEY_HTTP_API_URL, value).apply();
     }
 

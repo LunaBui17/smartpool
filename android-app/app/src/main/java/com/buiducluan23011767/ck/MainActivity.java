@@ -26,11 +26,6 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 
-import com.android.volley.DefaultRetryPolicy;
-import com.android.volley.Request;
-import com.android.volley.RequestQueue;
-import com.android.volley.toolbox.JsonObjectRequest;
-import com.android.volley.toolbox.Volley;
 
 import org.eclipse.paho.client.mqttv3.IMqttActionListener;
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
@@ -79,7 +74,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView txtSystemStatusUpdated;
     private TextView txtDevicePicker;
     private JSONArray availableDevices = new JSONArray();
-    private final Map<Integer, String> ownerNames = new HashMap<>();
+    private final Map<Long, String> ownerNames = new HashMap<>();
     private int selectedMainTab;
     private JSONObject reportedSystemStatus;
     private Boolean apiDatabaseOk;
@@ -128,7 +123,12 @@ public class MainActivity extends AppCompatActivity {
 
     private TextView txtUpdated;
 
-    private RequestQueue requestQueue;
+    private ApiClient api;
+    private DeviceContext.Selection selectedDevice;
+    private boolean deviceConfigReady;
+    private boolean selectingDevice;
+    private boolean loadingDeviceConfig;
+    private long lastPermissionRefreshMs;
     private volatile MqttAsyncClient mqttClient;
 
     private ActivityResultLauncher<String> notificationPermissionLauncher;
@@ -185,11 +185,12 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            if (availableDevices.length() > 0) getSensorData();
-            if (isAdmin && selectedMainTab == 0
-                    && System.currentTimeMillis() - lastAdminRefreshMs >= 15000) {
-                loadAllDeviceStatuses();
+            if (!UserSession.isAuthenticated()) {
+                ApiClient.expire(MainActivity.this);
+                return;
             }
+            if (deviceConfigReady) getSensorData();
+            else loadSelectedConfig();
 
             long intervalMs = Math.max(1000L, config.getHttpPollIntervalSec() * 1000L);
             handler.postDelayed(this, intervalMs);
@@ -201,12 +202,16 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         UserSession.restore(this);
         if (!UserSession.isAuthenticated()) {
-            UserSession.clear(this);
-            startActivity(new Intent(this, LoginActivity.class));
+            ApiClient.expire(this);
             finish();
             return;
         }
         isAdmin = UserSession.isAdmin();
+        selectedDevice = DeviceContext.current();
+        if (selectedDevice == null) {
+            openDeviceList();
+            return;
+        }
 
         notificationPermissionLauncher = registerForActivityResult(
                 new ActivityResultContracts.RequestPermission(),
@@ -223,12 +228,10 @@ public class MainActivity extends AppCompatActivity {
         ScreenInsets.apply(findViewById(R.id.mainRoot));
         setupListeners();
 
-        requestQueue = Volley.newRequestQueue(getApplicationContext());
-
         renderPumpStates();
-        selectMainTab(savedInstanceState == null ? 0
+        selectMainTab(savedInstanceState == null ? getIntent().getIntExtra("main_tab", 0)
                 : savedInstanceState.getInt("main_tab", 0));
-        requestNotificationPermissionAndStartService();
+        stopService(new Intent(this, PoolMonitorService.class));
     }
 
     private void initViews() {
@@ -383,46 +386,8 @@ public class MainActivity extends AppCompatActivity {
 
         switchInterlock.setOnCheckedChangeListener((buttonView, isChecked) -> {
             if (updatingInterlockUi) return;
-            if (!requireMqttControl()) {
-                updateInterlockUI(config.isInterlockEnabled());
-                return;
-            }
-            config.setInterlockEnabled(isChecked);
-            updateInterlockUI(isChecked);
-            showActionFeedback(isChecked
-                    ? "Đã bật khóa liên động."
-                    : "Đã tắt khóa liên động.", false);
-
-            // Nếu đang kết nối MQTT, gửi cập nhật cấu hình interlock lên topic thresholds
-            if (mqttClient != null && mqttClient.isConnected()) {
-                final String operation = OperationLog.get(this).begin(
-                        (isChecked ? "Bật" : "Tắt") + " khóa liên động");
-                try {
-                    byte[] payload = config.buildThresholdsJson().toString().getBytes(StandardCharsets.UTF_8);
-                    mqttClient.publish(config.getTopicConfigThresholds(), payload, 1, true,
-                            null, new IMqttActionListener() {
-                                @Override
-                                public void onSuccess(IMqttToken token) {
-                                    handler.post(() -> OperationLog.get(MainActivity.this)
-                                            .finish(operation, "published", ""));
-                                }
-
-                                @Override
-                                public void onFailure(IMqttToken token, Throwable error) {
-                                    Log.e(TAG, "Không gửi được khóa liên động", error);
-                                    handler.post(() -> {
-                                        OperationLog.get(MainActivity.this).finish(operation,
-                                                "failed", "Không gửi được cấu hình MQTT");
-                                        showActionFeedback("Không gửi được khóa liên động.", true);
-                                    });
-                                }
-                            });
-                } catch (MqttException e) {
-                    OperationLog.get(this).finish(operation, "failed", "Lỗi gửi MQTT");
-                    Log.e(TAG, "Lỗi sync interlock sang MQTT", e);
-                    showActionFeedback("Không gửi được khóa liên động.", true);
-                }
-            }
+            updateInterlockUI(config.isInterlockEnabled());
+            showActionFeedback("Chưa hỗ trợ lưu cấu hình v2 tại màn hình này; không gửi MQTT chung.", true);
         });
     }
 
@@ -557,11 +522,20 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (selectedDevice == null || config == null) return;
         if (!UserSession.isAuthenticated()) {
-            logout();
+            ApiClient.expire(this);
             return;
         }
+        if (!selectedDevice.isCurrent()) {
+            openDeviceList();
+            return;
+        }
+        api = new ApiClient(this);
         activityVisible = true;
+        deviceConfigReady = false;
+        loadingDeviceConfig = false;
+        lastPermissionRefreshMs = 0;
         reportedSystemStatus = null;
         lastSystemStatusMs = 0;
         apiDatabaseOk = null;
@@ -574,16 +548,13 @@ public class MainActivity extends AppCompatActivity {
 
         refreshConfigUI();
 
-        // Kiểm tra nếu broker đổi thì ngắt và kết nối lại
-        String targetBroker = config.getMqttBroker();
-        if (!targetBroker.equals(connectedBrokerUri) && mqttClient != null) {
-            closeMqtt();
-        }
+        closeMqtt();
 
         txtMqttBadge.setText("Theo dõi thiết bị qua API v2");
 
         handler.removeCallbacks(pollRunnable);
         loadDeviceList();
+        loadSelectedConfig();
         long intervalMs = Math.max(1000L, config.getHttpPollIntervalSec() * 1000L);
         handler.postDelayed(pollRunnable, intervalMs);
     }
@@ -605,10 +576,18 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         activityVisible = false;
+        if (api != null) api.close();
+        api = null;
+        polling = false;
+        loadingDeviceConfig = false;
+        if (temperatureControl == null) {
+            super.onPause();
+            return;
+        }
         clearPendingPumpCommands();
         resetSensorControls();
         renderPumpStates();
-        handler.removeCallbacks(pollRunnable);
+        handler.removeCallbacksAndMessages(null);
         super.onPause();
     }
 
@@ -617,9 +596,7 @@ public class MainActivity extends AppCompatActivity {
         activityVisible = false;
         handler.removeCallbacksAndMessages(null);
 
-        if (requestQueue != null) {
-            requestQueue.cancelAll(TAG);
-        }
+        if (api != null) api.close();
 
         closeMqtt();
         super.onDestroy();
@@ -628,6 +605,10 @@ public class MainActivity extends AppCompatActivity {
     // ==================== MQTT ====================
 
     private void connectMqtt() {
+        if (selectedDevice != null) {
+            showActionFeedback("Workspace v2 không sử dụng MQTT chung.", true);
+            return;
+        }
         if (!activityVisible || mqttConnecting) {
             return;
         }
@@ -932,6 +913,11 @@ public class MainActivity extends AppCompatActivity {
         }
 
         private void send(boolean target) {
+            if (selectedDevice != null) {
+                showActionFeedback("API v2 chưa có lệnh bật/tắt cảm biến.", true);
+                render();
+                return;
+            }
             if (!requireMqttControl() || !supported || enabled == null || pendingTarget != null) {
                 render();
                 return;
@@ -983,6 +969,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void sendPumpCommand(boolean pumpIn, boolean turnOn) {
         final String deviceId = config.getDeviceId();
+        final DeviceContext.Selection commandDevice = selectedDevice;
         final String requestId = UUID.randomUUID().toString();
         JSONObject body = new JSONObject();
         try {
@@ -996,7 +983,7 @@ public class MainActivity extends AppCompatActivity {
             failPumpRequest(pumpIn, "Không tạo được lệnh điều khiển.");
             return;
         }
-        JsonObjectRequest request = new JsonObjectRequest(Request.Method.POST, config.getHttpApiUrl(), body,
+        api.post("request_control", body, commandDevice,
                 response -> {
                     if (!deviceId.equals(config.getDeviceId()) || !pumpPending(pumpIn)) return;
                     JSONObject command = response.optJSONObject("command");
@@ -1005,41 +992,37 @@ public class MainActivity extends AppCompatActivity {
                         failPumpRequest(pumpIn, "API không trả mã lệnh điều khiển.");
                         return;
                     }
-                    pollPumpCommand(pumpIn, deviceId, commandId);
-                }, error -> {
+                    pollPumpCommand(pumpIn, commandDevice, commandId);
+                }, (code, message) -> {
                     if (!deviceId.equals(config.getDeviceId()) || !pumpPending(pumpIn)) return;
-                    int code = error.networkResponse == null ? 0 : error.networkResponse.statusCode;
                     failPumpRequest(pumpIn, code == 403 ? "Tài khoản không có quyền điều khiển thiết bị này."
                             : code == 409 ? "Bơm đang có lệnh chờ xác nhận."
-                            : "Không gửi được yêu cầu điều khiển tới API.");
-                }) {
-            @Override public Map<String, String> getHeaders() {
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + UserSession.getToken());
-                return headers;
-            }
-        };
-        request.setShouldCache(false);
-        request.setRetryPolicy(new DefaultRetryPolicy(5000, 0, 1.0f));
-        request.setTag(TAG);
-        requestQueue.add(request);
+                            : message);
+                    if (code == 403 || code == 404) {
+                        lastPermissionRefreshMs = 0;
+                        getSensorData();
+                    }
+                });
     }
 
     private boolean pumpPending(boolean pumpIn) {
         return pumpIn ? pumpInPending : pumpOutPending;
     }
 
-    private void pollPumpCommand(boolean pumpIn, String deviceId, String commandId) {
-        if (!deviceId.equals(config.getDeviceId()) || !pumpPending(pumpIn)) return;
+    private void pollPumpCommand(boolean pumpIn, DeviceContext.Selection commandDevice, String commandId) {
+        if (!commandDevice.isCurrent() || !pumpPending(pumpIn) || api == null) return;
         JSONObject body = new JSONObject();
         try {
             body.put("action", "get_command");
-            body.put("device_id", deviceId);
+            body.put("device_id", commandDevice.id);
             body.put("command_id", commandId);
-        } catch (org.json.JSONException e) { return; }
-        JsonObjectRequest request = new JsonObjectRequest(Request.Method.POST, config.getHttpApiUrl(), body,
+        } catch (org.json.JSONException e) {
+            failPumpRequest(pumpIn, "Không tạo được yêu cầu đọc kết quả lệnh.");
+            return;
+        }
+        api.post("get_command", body, commandDevice,
                 response -> {
-                    if (!deviceId.equals(config.getDeviceId()) || !pumpPending(pumpIn)) return;
+                    if (!pumpPending(pumpIn)) return;
                     JSONObject command = response.optJSONObject("command");
                     String result = command == null ? "" : command.optString("effective_status",
                             command.optString("status", ""));
@@ -1051,21 +1034,19 @@ public class MainActivity extends AppCompatActivity {
                             || "expired".equals(result)) {
                         failPumpRequest(pumpIn, "ESP từ chối hoặc lệnh đã hết hạn.");
                     } else {
-                        handler.postDelayed(() -> pollPumpCommand(pumpIn, deviceId, commandId), 1200);
+                        handler.postDelayed(() -> pollPumpCommand(pumpIn, commandDevice, commandId), 1200);
                     }
-                }, error -> {
-                    if (deviceId.equals(config.getDeviceId()) && pumpPending(pumpIn))
-                        handler.postDelayed(() -> pollPumpCommand(pumpIn, deviceId, commandId), 1500);
-                }) {
-            @Override public Map<String, String> getHeaders() {
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + UserSession.getToken());
-                return headers;
-            }
-        };
-        request.setShouldCache(false);
-        request.setTag(TAG);
-        requestQueue.add(request);
+                }, (code, message) -> {
+                    if (!pumpPending(pumpIn)) return;
+                    if (code == 403 || code == 404 || code == 409) {
+                        failPumpRequest(pumpIn, message);
+                        lastPermissionRefreshMs = 0;
+                        getSensorData();
+                    } else {
+                        showActionFeedback("Chưa đọc được kết quả lệnh: " + message, true);
+                        handler.postDelayed(() -> pollPumpCommand(pumpIn, commandDevice, commandId), 1500);
+                    }
+                });
     }
 
     private void failPumpRequest(boolean pumpIn, String message) {
@@ -1176,30 +1157,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void logout() {
-        String token = UserSession.getToken();
-        if (token != null && !token.isEmpty()) {
-            JSONObject body = new JSONObject();
-            try {
-                body.put("action", "logout");
-                JsonObjectRequest request = new JsonObjectRequest(
-                        Request.Method.POST, config.getHttpApiUrl().trim(), body,
-                        response -> { },
-                        error -> Log.w(TAG, "Không thu hồi được phiên đăng nhập trên máy chủ", error)
-                ) {
-                    @Override
-                    public java.util.Map<String, String> getHeaders() {
-                        java.util.Map<String, String> headers = new java.util.HashMap<>();
-                        headers.put("Authorization", "Bearer " + token);
-                        return headers;
-                    }
-                };
-                Volley.newRequestQueue(getApplicationContext()).add(request);
-            } catch (org.json.JSONException e) {
-                Log.e(TAG, "Không tạo được yêu cầu đăng xuất", e);
-            }
-        }
-        UserSession.clear(this);
-        startActivity(new Intent(this, LoginActivity.class));
+        clearPendingPumpCommands();
+        ApiClient.logout(this);
+    }
+
+    private void openDeviceList() {
+        startActivity(new Intent(this, DeviceListActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
         finish();
     }
 
@@ -1222,74 +1186,114 @@ public class MainActivity extends AppCompatActivity {
     // ==================== HTTP API ====================
 
     private void loadDeviceList() {
+        availableDevices = new JSONArray();
+        allDeviceStates.clear();
+        loadDevicePage(null);
+    }
+
+    private void loadDevicePage(String after) {
+        if (api == null) return;
         JSONObject body = new JSONObject();
-        try { body.put("action", "list_devices"); }
-        catch (org.json.JSONException e) { return; }
-        JsonObjectRequest request = new JsonObjectRequest(Request.Method.POST, config.getHttpApiUrl(), body,
-                response -> {
-                    availableDevices = response.optJSONArray("devices");
-                    if (availableDevices == null) availableDevices = new JSONArray();
-                    boolean selectedAllowed = false;
-                    for (int i = 0; i < availableDevices.length(); i++) {
-                        JSONObject device = availableDevices.optJSONObject(i);
-                        if (device != null && config.getDeviceId().equals(device.optString("device_id"))) {
-                            selectedAllowed = true;
-                            break;
-                        }
-                    }
-                    if (!selectedAllowed && availableDevices.length() > 0) {
-                        JSONObject first = availableDevices.optJSONObject(0);
-                        if (first != null) selectDevice(first.optString("device_id"));
-                    }
-                    updateDevicePicker();
-                    refreshConfigUI();
-                    if (isAdmin) {
-                        loadOwnerNames();
-                        loadAllDeviceStatuses();
-                    }
-                    if (availableDevices.length() > 0) getSensorData();
-                },
-                error -> txtDevicePicker.setText("Không tải được danh sách thiết bị. Chạm để thử lại.")) {
-            @Override public Map<String, String> getHeaders() {
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + UserSession.getToken());
-                return headers;
+        try {
+            body.put("limit", 100);
+            if (after != null) body.put("after_device_id", after);
+        } catch (org.json.JSONException error) {
+            showActionFeedback("Không tạo được yêu cầu danh sách thiết bị.", true);
+            return;
+        }
+        api.post("list_devices", body, selectedDevice, response -> {
+            try {
+                JSONArray page = response.getJSONArray("devices");
+                if (!response.has("next_after_device_id"))
+                    throw new org.json.JSONException("Thiếu cursor danh sách");
+                for (int i = 0; i < page.length(); i++)
+                    availableDevices.put(page.getJSONObject(i));
+                String next = response.isNull("next_after_device_id")
+                        ? null : response.getString("next_after_device_id");
+                if (next != null) {
+                    if (page.length() == 0 || next.equals(after)
+                            || !next.equals(page.getJSONObject(page.length() - 1).getString("device_id")))
+                        throw new org.json.JSONException("Cursor danh sách không tiến tới");
+                    loadDevicePage(next);
+                    return;
+                }
+                boolean found = false;
+                for (int i = 0; i < availableDevices.length(); i++)
+                    found |= selectedDevice.id.equals(availableDevices.getJSONObject(i).getString("device_id"));
+                if (!found) {
+                    showActionFeedback("Thiết bị không còn trong danh sách được phép xem.", true);
+                    openDeviceList();
+                    return;
+                }
+                updateDevicePicker();
+                refreshConfigUI();
+                if (isAdmin) {
+                    loadOwnerNames();
+                }
+            } catch (org.json.JSONException error) {
+                showActionFeedback("Danh sách thiết bị không hợp lệ. Hãy quay lại danh sách và tải lại.", true);
             }
-        };
-        request.setShouldCache(false);
-        request.setTag(TAG);
-        requestQueue.add(request);
+        }, (code, message) -> {
+            txtDevicePicker.setText("Không tải được danh sách. Chạm để quay lại và thử lại.");
+            showActionFeedback(message, true);
+        });
+    }
+
+    private void loadSelectedConfig() {
+        if (api == null || loadingDeviceConfig || !activityVisible) return;
+        loadingDeviceConfig = true;
+        api.post("get_config", new JSONObject(), selectedDevice, response -> {
+            loadingDeviceConfig = false;
+            try {
+                config.applyServerConfig(response.getJSONObject("config"));
+                deviceConfigReady = true;
+                refreshConfigUI();
+                getSensorData();
+            } catch (org.json.JSONException error) {
+                deviceConfigReady = false;
+                showActionFeedback("Cấu hình server không hợp lệ; đang khóa điều khiển.", true);
+            }
+        }, (code, message) -> {
+            loadingDeviceConfig = false;
+            deviceConfigReady = false;
+            handleDeviceError(code, message);
+        });
+    }
+
+    private void handleDeviceError(int code, String message) {
+        polling = false;
+        apiDatabaseOk = false;
+        remoteControlReady = false;
+        lastHttpError = message;
+        clearPendingPumpCommands();
+        renderPumpStates();
+        txtConnection.setText(message);
+        if (code == 403 || code == 404) {
+            android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show();
+            openDeviceList();
+        }
     }
 
     private void loadOwnerNames() {
         JSONObject body = new JSONObject();
         try { body.put("action", "list_users"); }
         catch (org.json.JSONException e) { return; }
-        JsonObjectRequest request = new JsonObjectRequest(Request.Method.POST, config.getHttpApiUrl(), body,
+        api.post("list_users", body, selectedDevice,
                 response -> {
                     ownerNames.clear();
                     JSONArray users = response.optJSONArray("users");
                     if (users != null) for (int i = 0; i < users.length(); i++) {
                         JSONObject user = users.optJSONObject(i);
-                        if (user != null) ownerNames.put(user.optInt("id"),
+                        if (user != null) ownerNames.put(user.optLong("id"),
                                 user.optString("username") + " · " + user.optString("full_name"));
                     }
                     updateDevicePicker();
                     renderAdminOverview();
-                }, error -> Log.w(TAG, "Không tải được thông tin chủ thiết bị", error)) {
-            @Override public Map<String, String> getHeaders() {
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + UserSession.getToken());
-                return headers;
-            }
-        };
-        request.setShouldCache(false);
-        request.setTag(TAG);
-        requestQueue.add(request);
+                }, (code, message) -> showActionFeedback("Không tải được tên chủ thiết bị: " + message, true));
     }
 
     private void loadAllDeviceStatuses() {
-        if (!isAdmin || requestQueue == null) return;
+        if (!isAdmin || api == null) return;
         lastAdminRefreshMs = System.currentTimeMillis();
         for (int i = 0; i < availableDevices.length(); i++) {
             JSONObject device = availableDevices.optJSONObject(i);
@@ -1300,23 +1304,20 @@ public class MainActivity extends AppCompatActivity {
                 body.put("action", "get_status");
                 body.put("device_id", deviceId);
             } catch (org.json.JSONException e) { continue; }
-            JsonObjectRequest request = new JsonObjectRequest(Request.Method.POST, config.getHttpApiUrl(), body,
+            api.post("get_status", body, null,
                     response -> {
+                        if (!deviceId.equals(response.optString("device_id"))) {
+                            allDeviceStates.remove(deviceId);
+                            txtAdminOverviewNotice.setText("API trả sai ID khi đọc trạng thái " + deviceId);
+                            return;
+                        }
                         allDeviceStates.put(deviceId, response.optJSONObject("state"));
                         renderAdminOverview();
-                    }, error -> {
+                    }, (code, message) -> {
                         allDeviceStates.remove(deviceId);
                         renderAdminOverview();
-                    }) {
-                @Override public Map<String, String> getHeaders() {
-                    Map<String, String> headers = new HashMap<>();
-                    headers.put("Authorization", "Bearer " + UserSession.getToken());
-                    return headers;
-                }
-            };
-            request.setShouldCache(false);
-            request.setTag(TAG);
-            requestQueue.add(request);
+                        txtAdminOverviewNotice.setText("Không đọc được " + deviceId + ": " + message);
+                    });
         }
         renderAdminOverview();
     }
@@ -1340,11 +1341,11 @@ public class MainActivity extends AppCompatActivity {
         int total = availableDevices.length();
         txtAdminOverviewSummary.setText(total == 0 ? "Chưa có thiết bị trong hệ thống."
                 : total + " thiết bị · " + online + " đang báo trạng thái · "
-                + (total - online) + " chưa online\nChạm thiết bị để xem chi tiết và điều khiển.");
+                + (total - online) + " chưa có báo cáo mới\nChạm thiết bị để xem chi tiết và điều khiển.");
         txtAdminOverviewNotice.setText(total == 0 ? "Thông báo: chưa có thiết bị để theo dõi."
                 : attention.length() > 0 ? "Cần kiểm tra: " + attention + " chưa báo trạng thái từ ESP."
-                : running > 0 ? "Thông báo: có " + running + " thiết bị đang chạy bơm."
-                : "Thông báo: tất cả thiết bị đang kết nối và bơm đang tắt.");
+                : running > 0 ? "Thông báo: có " + running + " thiết bị báo relay bơm đang bật."
+                : "Thông báo: các thiết bị có báo cáo HTTP mới và relay bơm đang tắt.");
         adminDeviceList.removeAllViews();
         String filter = edtAdminDeviceSearch.getText().toString().trim().toLowerCase(Locale.ROOT);
         int shown = 0;
@@ -1369,11 +1370,11 @@ public class MainActivity extends AppCompatActivity {
                     R.color.text_primary, true);
             card.addView(title);
             card.addView(adminLine("Chủ sở hữu: " + ownerNames.getOrDefault(
-                    device.optInt("owner_user_id"), "chưa xác định"), 13,
+                    device.optLong("owner_user_id"), "chưa xác định"), 13,
                     R.color.text_secondary, false));
             String statusText = !device.optBoolean("is_active") ? "Thiết bị đã khóa"
-                    : recent ? "● Đang online" : state == null ? "○ Chưa có báo cáo từ ESP"
-                    : "○ Mất kết nối ESP";
+                    : recent ? "● Báo cáo HTTP mới" : state == null ? "○ Chưa có báo cáo từ ESP"
+                    : "○ Báo cáo HTTP đã cũ";
             card.addView(adminLine(statusText, 14,
                     recent ? R.color.success : R.color.warning, true));
             if (recent) {
@@ -1414,54 +1415,59 @@ public class MainActivity extends AppCompatActivity {
             if (device == null || !config.getDeviceId().equals(device.optString("device_id"))) continue;
             String label = "Thiết bị: " + device.optString("name") + " (" + device.optString("device_id") + ")";
             if (isAdmin) label += "\nChủ sở hữu: " + ownerNames.getOrDefault(
-                    device.optInt("owner_user_id"), "chưa xác định");
+                    device.optLong("owner_user_id"), "chưa xác định");
             txtDevicePicker.setText(label + (availableDevices.length() > 1 ? "  ▾" : ""));
             return;
         }
     }
 
     private void showDevicePicker() {
-        if (availableDevices.length() == 0) { loadDeviceList(); return; }
-        String[] choices = new String[availableDevices.length()];
-        for (int i = 0; i < choices.length; i++) {
-            JSONObject device = availableDevices.optJSONObject(i);
-            if (device == null) continue;
-            choices[i] = device.optString("name") + " (" + device.optString("device_id") + ")";
-            if (isAdmin) choices[i] += "\nChủ sở hữu: " + ownerNames.getOrDefault(
-                    device.optInt("owner_user_id"), "chưa xác định");
-        }
-        new AlertDialog.Builder(this).setTitle("Chọn thiết bị")
-                .setItems(choices, (dialog, which) -> {
-                    JSONObject device = availableDevices.optJSONObject(which);
-                    if (device != null) selectDevice(device.optString("device_id"));
-                }).setNegativeButton("Đóng", null).show();
+        openDeviceList();
     }
 
     private void selectDevice(String deviceId) {
-        if (deviceId.isEmpty() || deviceId.equals(config.getDeviceId())) return;
+        if (deviceId.isEmpty() || selectingDevice || api == null) return;
+        if (deviceId.equals(config.getDeviceId())) {
+            mainNavigation.setSelectedItemId(R.id.navControl);
+            return;
+        }
+        selectingDevice = true;
         clearPendingPumpCommands();
-        config.setDeviceId(deviceId);
-        reportedSystemStatus = null;
-        lastSystemStatusMs = 0;
-        lastSampleId = "";
-        lastTelemetryTimestampMs = 0;
-        currentTemp = Double.NaN;
-        currentWaterLevel = -1;
-        currentWaterRaw = -1;
-        pumpInOn = false;
-        pumpOutOn = false;
-        espOnline = false;
-        remoteControlReady = false;
-        resetSensorControls();
-        updateDevicePicker();
-        refreshConfigUI();
         renderPumpStates();
-        renderSystemStatus();
-        getSensorData();
+        JSONObject body = new JSONObject();
+        try {
+            body.put("device_id", deviceId);
+        } catch (org.json.JSONException error) {
+            selectingDevice = false;
+            showActionFeedback("Không tạo được yêu cầu chọn thiết bị.", true);
+            return;
+        }
+        UserSession.Snapshot session = UserSession.snapshot();
+        api.post("get_device", body, null, response -> {
+            try {
+                JSONObject device = response.getJSONObject("device");
+                if (!deviceId.equals(device.getString("device_id")))
+                    throw new org.json.JSONException("API trả nhầm thiết bị");
+                DeviceContext.select(session, device);
+                startActivity(new Intent(this, MainActivity.class).putExtra("main_tab", 1));
+                finish();
+            } catch (org.json.JSONException error) {
+                selectingDevice = false;
+                showActionFeedback("Thông tin thiết bị không hợp lệ. Hãy tải lại danh sách.", true);
+                renderPumpStates();
+            }
+        }, (code, message) -> {
+            selectingDevice = false;
+            handleDeviceError(code, message);
+        });
     }
 
     private void getSensorData() {
-        if (polling || requestQueue == null) {
+        if (polling || api == null || !activityVisible || !deviceConfigReady || selectingDevice) {
+            return;
+        }
+        if (System.currentTimeMillis() - lastPermissionRefreshMs >= 10000L) {
+            refreshSelectedPermission();
             return;
         }
 
@@ -1484,15 +1490,16 @@ public class MainActivity extends AppCompatActivity {
             body.put("action", "get_status");
             body.put("device_id", requestedDeviceId);
         } catch (org.json.JSONException e) {
-            polling = false;
+            handleDeviceError(0, "Không tạo được yêu cầu trạng thái thiết bị.");
             return;
         }
-        JsonObjectRequest request = new JsonObjectRequest(
-                Request.Method.POST,
-                url,
-                body,
+        api.post("get_status", body, selectedDevice,
                 response -> {
                     polling = false;
+                    if (!requestedDeviceId.equals(response.optString("device_id"))) {
+                        handleDeviceError(0, "API trả trạng thái không đúng thiết bị đang chọn.");
+                        return;
+                    }
                     if (!requestedDeviceId.equals(config.getDeviceId())) { getSensorData(); return; }
                     if (url.equals(config.getHttpApiUrl())) {
                         apiDatabaseOk = "success".equals(response.optString("status"))
@@ -1539,41 +1546,46 @@ public class MainActivity extends AppCompatActivity {
 
                     updateGeneralStatusAndErrors();
                 },
-                error -> {
+                (code, message) -> {
                     polling = false;
                     if (!requestedDeviceId.equals(config.getDeviceId())) { getSensorData(); return; }
-                    if (error.networkResponse != null && error.networkResponse.statusCode == 401) {
-                        UserSession.clear(this);
-                        startActivity(new Intent(this, LoginActivity.class));
-                        finish();
-                        return;
-                    }
-                    if (url.equals(config.getHttpApiUrl())) {
-                        apiDatabaseOk = false;
-                        remoteControlReady = false;
-                        lastApiCheckMs = System.currentTimeMillis();
-                    }
-                    lastHttpError = "Lỗi kết nối";
-                    renderPumpStates();
-                    Log.e(TAG, "Lỗi API v2 get_status: " + error);
-                    txtConnection.setText("HTTP API: Không thể kết nối (" + error.getMessage() + ")");
+                    lastApiCheckMs = System.currentTimeMillis();
+                    handleDeviceError(code, message);
                     txtConnection.setTextColor(Color.rgb(220, 38, 38));
-
                     updateGeneralStatusAndErrors();
-                }
-        ) {
-            @Override
-            public java.util.Map<String, String> getHeaders() {
-                java.util.Map<String, String> headers = new java.util.HashMap<>();
-                headers.put("Authorization", "Bearer " + UserSession.getToken());
-                return headers;
-            }
-        };
+                });
+    }
 
-        request.setShouldCache(false);
-        request.setRetryPolicy(new DefaultRetryPolicy(4000, 0, 1.0f));
-        request.setTag(TAG);
-        requestQueue.add(request);
+    private void refreshSelectedPermission() {
+        polling = true;
+        DeviceContext.Selection previous = selectedDevice;
+        api.post("get_device", new JSONObject(), previous, response -> {
+            polling = false;
+            try {
+                JSONObject device = response.getJSONObject("device");
+                if (!previous.id.equals(device.getString("device_id")))
+                    throw new org.json.JSONException("API trả nhầm thiết bị");
+                if (previous.active != device.getBoolean("is_active")
+                        || previous.canView != device.getBoolean("can_view")
+                        || previous.canControl != (device.getBoolean("is_active") && device.getBoolean("can_control"))
+                        || previous.canConfigure != (device.getBoolean("is_active") && device.getBoolean("can_configure"))
+                        || !previous.name.equals(device.getString("name"))) {
+                    clearPendingPumpCommands();
+                    DeviceContext.select(previous.session, device);
+                    selectedDevice = DeviceContext.current();
+                    loadDeviceList();
+                }
+                for (int i = 0; i < availableDevices.length(); i++) {
+                    if (previous.id.equals(availableDevices.getJSONObject(i).getString("device_id")))
+                        availableDevices.put(i, device);
+                }
+                lastPermissionRefreshMs = System.currentTimeMillis();
+                refreshConfigUI();
+                getSensorData();
+            } catch (org.json.JSONException error) {
+                handleDeviceError(403, "Thông tin quyền thiết bị không hợp lệ. Hãy chọn lại thiết bị.");
+            }
+        }, this::handleDeviceError);
     }
 
     // ==================== HIỂN THỊ CẢM BIẾN & CẢNH BÁO ====================
@@ -1670,7 +1682,7 @@ public class MainActivity extends AppCompatActivity {
             alertMsg.append("⚠ Mực nước vượt ngưỡng cao đã cài đặt; kiểm tra cảm biến!");
         }
 
-        if (tempAlert && !(isAdmin && selectedMainTab == 0)) {
+        if (tempAlert) {
             alertBannerContainer.setVisibility(View.VISIBLE);
             txtAlert.setText(alertMsg.toString());
         } else {
@@ -1685,18 +1697,13 @@ public class MainActivity extends AppCompatActivity {
 
     private void selectMainTab(int tab) {
         selectedMainTab = tab;
-        dashboardContent.setVisibility(tab == 0 && !isAdmin ? View.VISIBLE : View.GONE);
-        adminOverviewContent.setVisibility(tab == 0 && isAdmin ? View.VISIBLE : View.GONE);
-        txtDevicePicker.setVisibility(tab == 0 && isAdmin ? View.GONE : View.VISIBLE);
+        dashboardContent.setVisibility(tab == 0 ? View.VISIBLE : View.GONE);
+        adminOverviewContent.setVisibility(View.GONE);
+        txtDevicePicker.setVisibility(View.VISIBLE);
         controlContent.setVisibility(tab == 1 ? View.VISIBLE : View.GONE);
         systemStatusContent.setVisibility(tab == 2 ? View.VISIBLE : View.GONE);
         int menuId = tab == 0 ? R.id.navOverview : tab == 1 ? R.id.navControl : R.id.navSystem;
         mainNavigation.getMenu().findItem(menuId).setChecked(true);
-        if (tab == 0 && isAdmin) {
-            renderAdminOverview();
-            if (System.currentTimeMillis() - lastAdminRefreshMs >= 15000)
-                loadAllDeviceStatuses();
-        }
         evaluateAlerts();
         renderSystemStatus();
         rootScroll.scrollTo(0, 0);
@@ -1800,13 +1807,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private boolean canControlDevice() {
-        if (!Boolean.TRUE.equals(apiDatabaseOk) || !espOnline || !remoteControlReady) return false;
-        for (int i = 0; i < availableDevices.length(); i++) {
-            JSONObject device = availableDevices.optJSONObject(i);
-            if (device != null && config.getDeviceId().equals(device.optString("device_id")))
-                return device.optBoolean("can_control") && device.optBoolean("is_active");
-        }
-        return false;
+        return activityVisible && !selectingDevice && deviceConfigReady && selectedDevice != null
+                && selectedDevice.isCurrent() && selectedDevice.canControl
+                && Boolean.TRUE.equals(apiDatabaseOk) && espOnline && remoteControlReady;
     }
 
     private boolean requireMqttControl() {

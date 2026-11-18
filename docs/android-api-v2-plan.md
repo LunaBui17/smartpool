@@ -1,6 +1,52 @@
 # Kế hoạch tích hợp Android Smart Pool với API v2
 
-Ngày: 17/11/2026. **Bản đề xuất chờ duyệt, chưa triển khai.**
+Ngày lập: 17/11/2026. Cập nhật tiến độ: 18/11/2026.
+
+## Tiến độ thực hiện
+
+### Bổ sung đã duyệt: quản trị ba tab
+
+Sau đợt nền tảng, người dùng ưu tiên lại phần admin: **Tổng quan / Thiết bị / Người
+dùng** ở trang gốc, không phụ thuộc selected device. Đợt này chỉ sửa Android/tài
+liệu theo API hiện có; không cho phép sửa PHP, SQL, firmware hoặc tự build/test.
+
+- A001 [Plan:A.1]: root theo role, admin mặc định Tổng quan, user giữ danh sách; workspace riêng.
+- A002 [Plan:A.2]: thiết bị có tìm kiếm/phân trang, đăng ký manual, active/inactive và membership.
+- A003 [Plan:A.3]: tài khoản có phân trang, tạo user/admin, khóa/mở, đặt lại mật khẩu.
+- A004 [Plan:A.4]: gán/kiểm tra/sửa/gỡ quyền từ cả phía thiết bị và phía user; đọc grant hiện có.
+- A005 [Plan:A.5]: tài liệu và checklist hai user/hai thiết bị; không đánh dấu đã nghiệm thu runtime.
+
+Các A-task có source triển khai; kiểm tra thủ công/build còn chờ người dùng.
+Đây là phần ưu tiên lại của T005/T006/T016–T019, không phải hoàn thành toàn bộ
+giai đoạn 2–7. Tổng quan danh mục ghi rõ số đã tải/còn trang, không dựng online.
+
+Đã chốt hướng mở rộng sau: mã `user_code` tùy chỉnh và duy nhất, giữ khóa nội bộ tự
+tăng; lưu trữ/xóa mềm có khôi phục; liên kết serial eFuse ESP32 với Device ID.
+API/schema hiện chưa có các hợp đồng này; app không giả lập và không đổi khóa
+thành “xóa”. Sửa hồ sơ/metadata và user xem thành viên vẫn chờ API được duyệt riêng.
+
+### Đợt nền tảng
+
+Người dùng đã cho phép bắt đầu bổ sung phần Android. Đợt này cập nhật source
+giai đoạn 1 (T001–T006) và các call site cần thiết để cách ly phiên/thiết bị.
+**Chưa nghiệm thu giai đoạn 1:** không build, kiểm thử, cài APK hoặc triển khai
+theo yêu cầu người dùng. Checkbox tác vụ bên dưới chưa đánh dấu hoàn thành runtime.
+
+Đã thêm API client có snapshot/guard, phiên gắn server/user ID, context thiết bị,
+màn danh sách có phân trang và xác minh `get_device`; nối login/splash/Main,
+chart/log/quản lý tài khoản vào context. Preferences tách theo server/user/device;
+Main đọc cấu hình server trước điều khiển để không dùng hiệu chuẩn legacy.
+Không nhúng MQTT username/password từ Gradle vào BuildConfig.
+
+**Thay đổi có chủ đích:** tạm dừng service nền, khóa đường cấu hình/MQTT chung,
+không hợp nhất nhật ký SQLite cũ vào màn v2. Chưa mở Settings cho user, chưa có
+biểu mẫu update_config. Registry/membership được bổ sung trong đợt A001–A005 phía trên.
+Xem [trạng thái và checklist hai user/hai thiết bị](../android-app/README_MQTT_ESP32.md).
+
+Các mục “hiện trạng” dưới đây là **bản khảo sát ngày 17/11**, không phải mô tả
+source sau cập nhật: worker điều khiển và firmware v2 đã được bổ sung bởi các
+thay đổi tiếp theo trong repository. Không coi việc code đã có/worker container
+đang chạy là bằng chứng điều khiển đã được kiểm tra đầu cuối.
 
 Phạm vi: Android Java/XML và tài liệu trực tiếp liên quan. Không sửa PHP, SQL, firmware, broker, worker hoặc triển khai. Không build, chạy kiểm thử hay cài công cụ. Các đường dẫn source bên dưới tính từ gốc repository `smartpool`.
 

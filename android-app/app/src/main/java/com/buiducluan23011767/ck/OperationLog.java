@@ -9,11 +9,6 @@ import android.database.sqlite.SQLiteOpenHelper;
 import android.util.Log;
 import android.widget.Toast;
 
-import com.android.volley.DefaultRetryPolicy;
-import com.android.volley.Request;
-import com.android.volley.RequestQueue;
-import com.android.volley.toolbox.JsonObjectRequest;
-import com.android.volley.toolbox.Volley;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -29,7 +24,6 @@ final class OperationLog extends SQLiteOpenHelper {
     private static final String TAG = "OperationLog";
     private static OperationLog instance;
     private final Context context;
-    private final RequestQueue queue;
     private boolean syncing;
 
     static synchronized OperationLog get(Context context) {
@@ -40,7 +34,6 @@ final class OperationLog extends SQLiteOpenHelper {
     private OperationLog(Context context) {
         super(context, "operation_log.db", null, 1);
         this.context = context;
-        queue = Volley.newRequestQueue(context);
     }
 
     @Override

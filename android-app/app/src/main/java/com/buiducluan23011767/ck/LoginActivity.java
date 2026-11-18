@@ -13,11 +13,9 @@ import com.android.volley.DefaultRetryPolicy;
 import com.android.volley.Request;
 import com.android.volley.RequestQueue;
 import com.android.volley.toolbox.JsonObjectRequest;
-import com.android.volley.toolbox.Volley;
 
 import org.json.JSONObject;
 
-import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Locale;
 
@@ -29,6 +27,8 @@ public class LoginActivity extends AppCompatActivity {
     private TextView status;
     private androidx.appcompat.widget.SwitchCompat rememberLogin;
     private RequestQueue requestQueue;
+    private boolean visible;
+    private long loginAttempt;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -43,7 +43,9 @@ public class LoginActivity extends AppCompatActivity {
         status = findViewById(R.id.txtLoginStatus);
         rememberLogin = findViewById(R.id.switchRememberLogin);
         rememberLogin.setChecked(UserSession.isRememberEnabled(this));
-        requestQueue = Volley.newRequestQueue(getApplicationContext());
+        requestQueue = ApiClient.newQueue(this);
+        String notice = getIntent().getStringExtra("session_notice");
+        if (notice != null) status.setText(notice);
         configureApiUrl.setOnClickListener(v -> showApiUrlDialog());
         login.setOnClickListener(v -> submitLogin());
         password.setOnEditorActionListener((view, action, event) -> {
@@ -70,7 +72,7 @@ public class LoginActivity extends AppCompatActivity {
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
                 .setOnClickListener(v -> {
                     try {
-                        String url = normalizeApiUrl(input.getText().toString().trim());
+                        String url = ApiClient.normalizeUrl(input.getText().toString());
                         AppConfig.getInstance(this).setHttpApiUrl(url);
                         status.setText("");
                         dialog.dismiss();
@@ -91,7 +93,7 @@ public class LoginActivity extends AppCompatActivity {
 
         String url;
         try {
-            url = normalizeApiUrl(AppConfig.getInstance(this).getHttpApiUrl().trim());
+            url = ApiClient.normalizeUrl(AppConfig.getInstance(this).getHttpApiUrl());
         } catch (URISyntaxException e) {
             status.setText("URL API không hợp lệ. Nhấn Cấu hình API để cập nhật.");
             return;
@@ -99,15 +101,19 @@ public class LoginActivity extends AppCompatActivity {
         AppConfig.getInstance(this).setHttpApiUrl(url);
 
         login.setEnabled(false);
+        configureApiUrl.setEnabled(false);
+        final long attempt = ++loginAttempt;
+        final boolean remember = rememberLogin.isChecked();
         status.setText("Đang xác thực tài khoản...");
         JSONObject body = new JSONObject();
         try {
             body.put("action", "login");
             body.put("username", enteredUsername);
             body.put("password", enteredPassword);
-            body.put("remember_me", rememberLogin.isChecked());
+            body.put("remember_me", remember);
         } catch (org.json.JSONException e) {
             login.setEnabled(true);
+            configureApiUrl.setEnabled(true);
             status.setText("Không thể tạo yêu cầu đăng nhập.");
             return;
         }
@@ -117,7 +123,13 @@ public class LoginActivity extends AppCompatActivity {
                 url,
                 body,
                 response -> {
+                    if (!visible || attempt != loginAttempt) return;
                     login.setEnabled(true);
+                    configureApiUrl.setEnabled(true);
+                    if (!url.equals(AppConfig.getInstance(this).getHttpApiUrl())) {
+                        status.setText("Máy chủ đã thay đổi. Vui lòng đăng nhập lại.");
+                        return;
+                    }
                     JSONObject user = response.optJSONObject("user");
                     String returnedRole = user == null ? "" : user.optString("role", "");
                     String sessionToken = response.optString("token", "");
@@ -129,18 +141,39 @@ public class LoginActivity extends AppCompatActivity {
                         status.setText("Máy chủ trả về thông tin tài khoản không hợp lệ.");
                         return;
                     }
-                    boolean remembered = UserSession.start(this, accountName, returnedRole,
-                            sessionToken, expiresIn, rememberLogin.isChecked());
+                    if (user == null || user.optLong("id", 0) <= 0
+                            || response.optInt("api_version") != 2
+                            || response.optJSONArray("devices") == null
+                            || !response.has("next_after_device_id")) {
+                        status.setText("Phản hồi đăng nhập thiếu thông tin phiên hoặc danh sách thiết bị v2.");
+                        return;
+                    }
+                    boolean remembered = UserSession.start(this, user.optLong("id"), accountName,
+                            returnedRole, url, sessionToken, expiresIn, remember);
                     if (!remembered) {
                         UserSession.clear(this);
                         status.setText("Không lưu được phiên đăng nhập trên thiết bị.");
                         return;
                     }
-                    startActivity(new Intent(this, MainActivity.class));
+                    password.setText("");
+                    JSONObject firstPage = new JSONObject();
+                    try {
+                        firstPage.put("devices", response.getJSONArray("devices"));
+                        firstPage.put("next_after_device_id", response.get("next_after_device_id"));
+                    } catch (org.json.JSONException error) {
+                        UserSession.clear(this);
+                        status.setText("Danh sách thiết bị trong phản hồi đăng nhập không hợp lệ.");
+                        return;
+                    }
+                    startActivity(new Intent(this, DeviceListActivity.class)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                            .putExtra("login_devices", firstPage.toString()));
                     finish();
                 },
                 error -> {
+                    if (!visible || attempt != loginAttempt) return;
                     login.setEnabled(true);
+                    configureApiUrl.setEnabled(true);
                     int responseCode = error.networkResponse == null
                             ? 0 : error.networkResponse.statusCode;
                     if (responseCode == 401) {
@@ -154,30 +187,32 @@ public class LoginActivity extends AppCompatActivity {
                     }
                 }
         );
+        request.setShouldCache(false);
         request.setRetryPolicy(new DefaultRetryPolicy(8000, 0, 1.0f));
         request.setTag(this);
         requestQueue.add(request);
     }
 
-    private String normalizeApiUrl(String url) throws URISyntaxException {
-        URI uri = new URI(url);
-        if ((!"https".equalsIgnoreCase(uri.getScheme())
-                && !"http".equalsIgnoreCase(uri.getScheme()))
-                || uri.getHost() == null || uri.getUserInfo() != null
-                || uri.getFragment() != null) {
-            throw new URISyntaxException(url, "Invalid API URL");
-        }
-        if (uri.getRawPath() == null || uri.getRawPath().isEmpty()
-                || "/".equals(uri.getRawPath())) {
-            return new URI(uri.getScheme(), uri.getRawAuthority(),
-                    "/pool_api/pool_api.php", null, null).toString();
-        }
-        return uri.toString();
+    @Override protected void onResume() {
+        super.onResume();
+        visible = true;
+    }
+
+    @Override protected void onPause() {
+        visible = false;
+        loginAttempt++;
+        if (requestQueue != null) requestQueue.cancelAll(this);
+        if (login != null) login.setEnabled(true);
+        if (configureApiUrl != null) configureApiUrl.setEnabled(true);
+        super.onPause();
     }
 
     @Override
     protected void onDestroy() {
-        if (requestQueue != null) requestQueue.cancelAll(this);
+        if (requestQueue != null) {
+            requestQueue.cancelAll(this);
+            requestQueue.stop();
+        }
         super.onDestroy();
     }
 }

@@ -13,11 +13,6 @@ import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 
-import com.android.volley.DefaultRetryPolicy;
-import com.android.volley.Request;
-import com.android.volley.RequestQueue;
-import com.android.volley.toolbox.JsonObjectRequest;
-import com.android.volley.toolbox.Volley;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -47,7 +42,8 @@ public class SensorChartActivity extends AppCompatActivity {
     private Button temperatureTab;
     private Button adcTab;
     private FrameLayout chartContainer;
-    private RequestQueue requestQueue;
+    private ApiClient api;
+    private DeviceContext.Selection selectedDevice;
     private String selectedSensor = SENSOR_TEMPERATURE;
     private boolean historyLoaded;
 
@@ -56,9 +52,13 @@ public class SensorChartActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         UserSession.restore(this);
         if (!UserSession.isAuthenticated()) {
-            UserSession.clear(this);
-            startActivity(new android.content.Intent(this, LoginActivity.class));
+            ApiClient.expire(this);
             finish();
+            return;
+        }
+        selectedDevice = DeviceContext.current();
+        if (selectedDevice == null) {
+            openDeviceList();
             return;
         }
         setContentView(R.layout.activity_sensor_chart);
@@ -80,9 +80,28 @@ public class SensorChartActivity extends AppCompatActivity {
         temperatureTab.setOnClickListener(v -> selectSensor(SENSOR_TEMPERATURE));
         adcTab.setOnClickListener(v -> selectSensor(SENSOR_ADC));
 
-        requestQueue = Volley.newRequestQueue(getApplicationContext());
         selectSensor(selectedSensor);
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (chartContainer == null) return;
+        if (!UserSession.isAuthenticated()) {
+            ApiClient.expire(this);
+            return;
+        }
+        if (!selectedDevice.isCurrent()) {
+            openDeviceList();
+            return;
+        }
+        api = new ApiClient(this);
         loadHistory();
+    }
+
+    private void openDeviceList() {
+        startActivity(new android.content.Intent(this, DeviceListActivity.class)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP));
+        finish();
     }
 
     private void selectSensor(String sensor) {
@@ -115,7 +134,7 @@ public class SensorChartActivity extends AppCompatActivity {
         JSONObject body = new JSONObject();
         try {
             body.put("action", "get_history");
-            body.put("device_id", AppConfig.getInstance(this).getDeviceId());
+            body.put("device_id", selectedDevice.id);
             body.put("time_basis", "received");
             body.put("limit", HISTORY_LIMIT);
             body.put("to_ms", System.currentTimeMillis() + 300000L);
@@ -123,31 +142,21 @@ public class SensorChartActivity extends AppCompatActivity {
             status.setText("Không tạo được yêu cầu lịch sử.");
             return;
         }
-        JsonObjectRequest request = new JsonObjectRequest(
-                Request.Method.POST,
-                baseUrl,
-                body,
-                response -> onHistoryLoaded(response.optJSONArray("samples") == null
-                        ? new JSONArray() : response.optJSONArray("samples")),
-                error -> {
-                    Log.e(TAG, "Không tải được lịch sử cảm biến qua HTTP", error);
-                    status.setText(UserSession.isAdmin()
-                            ? "Không tải được lịch sử HTTP: "
-                            + (error.getMessage() == null ? "lỗi kết nối" : error.getMessage())
-                            : "Chưa tải được lịch sử cảm biến. Vui lòng thử lại sau.");
-                }
-        ) {
-            @Override
-            public java.util.Map<String, String> getHeaders() {
-                java.util.Map<String, String> headers = new java.util.HashMap<>();
-                headers.put("Authorization", "Bearer " + UserSession.getToken());
-                return headers;
+        api.post("get_history", body, selectedDevice, response -> {
+            try {
+                if (!selectedDevice.id.equals(response.getString("device_id")))
+                    throw new org.json.JSONException("Lịch sử thuộc thiết bị khác");
+                onHistoryLoaded(response.getJSONArray("samples"));
+            } catch (org.json.JSONException error) {
+                status.setText("Phản hồi lịch sử không hợp lệ.");
             }
-        };
-        request.setShouldCache(false);
-        request.setRetryPolicy(new DefaultRetryPolicy(6000, 1, 1.0f));
-        request.setTag(this);
-        requestQueue.add(request);
+        }, (code, message) -> {
+            status.setText(message);
+            if (code == 403 || code == 404) {
+                android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show();
+                openDeviceList();
+            }
+        });
     }
 
     private void onHistoryLoaded(JSONArray rows) {
@@ -225,9 +234,10 @@ public class SensorChartActivity extends AppCompatActivity {
     }
 
     @Override
-    protected void onDestroy() {
-        if (requestQueue != null) requestQueue.cancelAll(this);
-        super.onDestroy();
+    protected void onPause() {
+        if (api != null) api.close();
+        api = null;
+        super.onPause();
     }
 
     private static final class SensorLineChartView extends View {

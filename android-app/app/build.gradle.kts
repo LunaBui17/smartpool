@@ -1,20 +1,6 @@
-import java.util.Properties
-
 plugins {
     alias(libs.plugins.android.application)
 }
-
-val mqttProperties = Properties()
-val mqttPropertiesFile = rootProject.file("mqtt.properties")
-if (mqttPropertiesFile.isFile) {
-    mqttPropertiesFile.inputStream().use { mqttProperties.load(it) }
-}
-
-fun javaString(value: String): String = "\"" + value
-    .replace("\\", "\\\\")
-    .replace("\"", "\\\"")
-    .replace("\n", "\\n")
-    .replace("\r", "\\r") + "\""
 
 android {
     namespace = "com.buiducluan23011767.ck"
@@ -35,11 +21,6 @@ android {
 
         versionCode = 1
         versionName = "1.0"
-
-        buildConfigField("String", "MQTT_USERNAME",
-            javaString(mqttProperties.getProperty("mqtt.username", "")))
-        buildConfigField("String", "MQTT_PASSWORD",
-            javaString(mqttProperties.getProperty("mqtt.password", "")))
 
         testInstrumentationRunner =
             "androidx.test.runner.AndroidJUnitRunner"
