@@ -218,6 +218,7 @@ static void publish_status_frame(bool retained)
     cJSON_AddBoolToObject(status, "relay2_supported", POOL_RELAY_2_ENABLED);
     cJSON_AddBoolToObject(status, "temperature_supported", POOL_TEMPERATURE_ENABLED);
     cJSON_AddBoolToObject(status, "water_supported", POOL_WATER_ENABLED);
+    cJSON_AddBoolToObject(status, "sensor_simulation", POOL_SENSOR_SIMULATION);
     cJSON_AddNumberToObject(status, "temperature_enabled", s_temperature_enabled ? 1 : 0);
     cJSON_AddNumberToObject(status, "water_level_enabled", s_water_enabled ? 1 : 0);
     cJSON_AddBoolToObject(status, "water_enabled", s_water_enabled);

@@ -1,5 +1,16 @@
 menu "Sensor Sampling"
 
+    config POOL_SENSOR_SIMULATION
+        bool "Simulate temperature and water sensor readings (demo only)"
+        default n
+        help
+            Replace hardware readings with deterministic temperature (24-32 C)
+            and water ADC (500-3500) values. Skip DS18B20 and ADC initialization.
+            Sensor enable flags and sampling intervals still apply.
+            Relays and automation remain real: disconnect pump loads for demos.
+            Use a dedicated demo device ID; HTTP history does not store a
+            simulation marker.
+
     config POOL_SENSOR_IDLE_INTERVAL_MS
         int "Sensor interval when both pumps are OFF (ms)"
         range 1000 3600000

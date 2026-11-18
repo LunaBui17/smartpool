@@ -28,6 +28,42 @@ Nối chung GND giữa ESP32, cảm biến và đầu vào relay. Không cấp �
 
 ## Cấu hình và chạy firmware
 
+### Giả lập cảm biến khi chưa có phần cứng
+
+Trong `idf.py menuconfig` → **Sensor Sampling**, bật
+**Simulate temperature and water sensor readings (demo only)**:
+
+```text
+CONFIG_POOL_SENSOR_SIMULATION=y
+```
+
+Mặc định tùy chọn này **tắt**. Đây là cấu hình khi build firmware, không phải
+nút bật/tắt từ API/Android. Bật thêm DS18B20 và water sensor trong menu tương ứng,
+đồng thời bật các cảm biến trên trang local nếu trước đó đã tắt và lưu trong NVS.
+
+- Bỏ khởi tạo/đọc bus DS18B20 và ADC; không cần nối cảm biến.
+- Nhiệt độ tăng/giảm trong khoảng **24–32 °C**, ADC **500–3500** theo chu kỳ 40 mẫu.
+  Trạng thái nước bình thường/thấp vẫn dùng `CONFIG_WATER_LOW_THRESHOLD`.
+- Giữ chu kỳ lấy mẫu idle/pumping và yêu cầu lấy mẫu hiện có; muốn demo nhanh hơn,
+  giảm interval trong **Sensor Sampling**.
+- Dữ liệu đi qua pipeline HTTP/MQTT, hàng đợi NVS và tự động hóa hiện có.
+  Tắt riêng cảm biến vẫn ngừng cung cấp số đo của cảm biến đó.
+- Log có nhãn `SIMULATED`; MQTT status và `/api/status` local có
+  `sensor_simulation=true`. Trang web local hiển thị cảnh báo riêng.
+
+**Relay/bơm không được giả lập.** Lệnh tay, trạng thái relay lúc khởi động và quy
+tắc tự động hóa đã lưu vẫn có thể tác động phần cứng thật. Ngắt tải bơm khi demo.
+
+API/database hiện chưa lưu nhãn giả lập theo từng mẫu; Android/lịch sử không tự
+phân biệt được mẫu thật và giả. Chỉ dùng Device ID/tài khoản ESP dành riêng cho demo,
+không trộn với dữ liệu thiết bị thật. Không dùng lại hàng đợi của thiết bị thật
+khi đổi ID. Tắt tùy chọn không xóa dữ liệu demo đã lưu hoặc còn chờ gửi trong NVS.
+Không sửa hợp đồng backend hoặc tự xóa hàng đợi trong thay đổi này.
+
+Thay đổi giả lập này chưa được build, chạy kiểm thử hoặc nạp firmware.
+
+### Thiết lập kết nối và nạp firmware
+
 1. Cài đặt môi trường ESP-IDF và mở terminal đã nạp môi trường đó.
 2. Tại thư mục `esp-firmware`, chạy `idf.py menuconfig` để kiểm tra cấu hình phần cứng, điểm truy cập, API và broker MQTT.
 3. Đăng ký `SmartPool` (hoặc ID đã chọn trong `CONFIG_POOL_DEVICE_ID`) trong API v2, kích hoạt thiết bị, cấp `device_key` HTTP và tạo MQTT account bằng `sudo python3 mqtt-admin.py add-device SmartPool` trên Pi. Lưu key một lần vào `main/device_credentials.h` theo file `.example` (file này được Git bỏ qua). MQTT username tự bằng ID; password lấy từ file private `~/smartpool-v2-mqtt/SmartPool.txt` trên Pi và cấu hình trong `main/mqtt_credentials.h` hoặc trang local.

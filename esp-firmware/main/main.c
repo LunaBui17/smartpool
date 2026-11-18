@@ -125,10 +125,36 @@ static void discover_sensors(onewire_bus_handle_t bus, sensor_slot_t *sensors,
     onewire_del_device_iter(iter);
 }
 
+static void simulate_sensor_readings(void)
+{
+    static uint32_t phase;
+    uint32_t level = phase <= 20 ? phase : 40 - phase;
+    phase = (phase + 1) % 40;
+
+    bool has_temperature = pool_network_temperature_enabled();
+    bool has_water = pool_network_water_enabled();
+    float temperature = has_temperature ? 24.0f + 0.4f * level : 0.0f;
+    int water_raw = has_water ? 500 + 150 * (int)level : 0;
+    bool water_normal = has_water && water_raw >= CONFIG_WATER_LOW_THRESHOLD;
+    if (has_temperature) {
+        ESP_LOGI(TAG, "SIMULATED temperature: %.2f C", temperature);
+    }
+    if (has_water) {
+        ESP_LOGI(TAG, "SIMULATED water ADC: %d (%s)", water_raw, water_normal ? "normal" : "low");
+    }
+    pool_network_update_readings(has_temperature, temperature, has_water, water_normal, water_raw);
+}
+
 void app_main(void)
 {
+    if (POOL_SENSOR_SIMULATION) {
+        ESP_LOGW(TAG, "DEMO sensor simulation enabled; readings are NOT hardware measurements");
+        ESP_LOGW(TAG, "Relays and automation remain real; disconnect pump loads for this demo");
+    }
     ESP_ERROR_CHECK(relay_init());
-    ESP_ERROR_CHECK(water_level_init());
+    if (!POOL_SENSOR_SIMULATION) {
+        ESP_ERROR_CHECK(water_level_init());
+    }
     ESP_ERROR_CHECK(pool_network_init());
 
     // install 1-wire bus
@@ -145,9 +171,11 @@ void app_main(void)
     sensor_slot_t sensors[CONFIG_DS18B20_MAX_DEVICES] = {0};
     int active_sensor_count = 0;
     uint8_t conversion_failures = 0;
-    esp_err_t bus_err = POOL_TEMPERATURE_ENABLED
+    esp_err_t bus_err = POOL_TEMPERATURE_ENABLED && !POOL_SENSOR_SIMULATION
         ? onewire_new_bus_rmt(&bus_config, &rmt_config, &bus) : ESP_ERR_NOT_SUPPORTED;
-    if (!POOL_TEMPERATURE_ENABLED) {
+    if (POOL_SENSOR_SIMULATION) {
+        ESP_LOGI(TAG, "DS18B20 and water ADC hardware access skipped for simulated sensors");
+    } else if (!POOL_TEMPERATURE_ENABLED) {
         ESP_LOGI(TAG, "DS18B20 disabled in menuconfig");
     } else if (bus_err != ESP_OK) {
         ESP_LOGW(TAG, "1-Wire bus unavailable: %s; continuing without temperature",
@@ -157,7 +185,9 @@ void app_main(void)
         ESP_LOGI(TAG, "Searching for DS18B20 sensors...");
         discover_sensors(bus, sensors, &active_sensor_count);
     }
-    ESP_LOGI(TAG, "Searching done, %d active DS18B20 device(s)", active_sensor_count);
+    if (!POOL_SENSOR_SIMULATION) {
+        ESP_LOGI(TAG, "Searching done, %d active DS18B20 device(s)", active_sensor_count);
+    }
     if (active_sensor_count == 0 && bus) {
         ESP_LOGW(TAG, "No DS18B20 found on GPIO%d; retrying at the sensor sampling interval",
                  CONFIG_DS18B20_GPIO);
@@ -183,6 +213,11 @@ void app_main(void)
         }
         first_read = false;
         last_read_tick = now;
+
+        if (POOL_SENSOR_SIMULATION) {
+            simulate_sensor_readings();
+            continue;
+        }
 
         if (pool_network_temperature_enabled() && bus && active_sensor_count == 0) {
             int previous_active_count = active_sensor_count;

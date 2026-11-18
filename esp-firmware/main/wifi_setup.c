@@ -121,6 +121,7 @@ static esp_err_t status_get(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "relay2", state.relay_2_on);
     cJSON_AddBoolToObject(root, "temperature_supported", POOL_TEMPERATURE_ENABLED);
     cJSON_AddBoolToObject(root, "water_supported", POOL_WATER_ENABLED);
+    cJSON_AddBoolToObject(root, "sensor_simulation", POOL_SENSOR_SIMULATION);
     cJSON_AddBoolToObject(root, "temperature_enabled", state.temperature_enabled);
     cJSON_AddBoolToObject(root, "water_enabled", state.water_enabled);
     if (state.has_last_temperature) cJSON_AddNumberToObject(root, "temperature", state.temperature);

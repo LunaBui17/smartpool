@@ -28,6 +28,7 @@
     <main id="overview">
       <div class="topline"><span>KHÔNG GIAN CỦA BẠN / HỒ BƠI</span><span class="badge" id="connection"><span class="dot"></span>Đang kết nối…</span></div>
       <p class="eyebrow">SmartPool · Bảng điều khiển</p><h1>Hồ bơi trong tầm tay.</h1><p class="intro">Theo dõi cảm biến, điều khiển thiết bị và kết nối Wi-Fi tại một nơi.</p>
+      <div id="simulation-warning" class="notice error" role="status">CHẾ ĐỘ GIẢ LẬP: nhiệt độ và ADC là dữ liệu demo, không phải số đo thật. Relay và tự động hóa vẫn điều khiển phần cứng thật; ngắt tải bơm khi thử.</div>
       <div id="notice" class="notice" role="status" aria-live="polite"></div>
       <div class="grid">
         <section class="card"><div class="card-head"><div><p class="eyebrow">Cảm biến 01</p><h2>Nhiệt độ nước</h2></div><span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 14.5V5a3 3 0 0 1 6 0v9.5a5 5 0 1 1-6 0Z"/><path d="M12 8v10" stroke-linecap="round"/></svg></span></div><div class="reading"><span id="temperature">—</span><span class="unit">°C</span></div><p class="small" id="temperature-note">Đang chờ dữ liệu cảm biến</p><div class="sensor-footer"><span class="small" id="temperature-label">Đọc nhiệt độ</span><button class="switch" role="switch" aria-label="Đọc cảm biến nhiệt độ" aria-checked="false" data-control="temperature" disabled></button></div></section>
@@ -122,6 +123,7 @@
     automationControls();
     function serviceBadge(id,label,tone=''){const element=$(id);element.textContent=label;element.className='badge'+(tone?' '+tone:'');}
     function renderServices(s){
+      $('simulation-warning').classList.toggle('show',s.sensor_simulation===true);
       const mqttState=!s.mqtt_supported?'disabled':s.mqtt_state||(!s.wifi_connected?'waiting_wifi':s.mqtt_connected?'connected':'connecting');
       const mqttStates={
         disabled:['Đã tắt','Đã tắt MQTT trong cấu hình thiết bị.',''],

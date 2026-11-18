@@ -3,6 +3,12 @@
 #include "sdkconfig.h"
 
 // Kconfig omits disabled bool symbols from sdkconfig.h.
+#ifdef CONFIG_POOL_SENSOR_SIMULATION
+#define POOL_SENSOR_SIMULATION 1
+#else
+#define POOL_SENSOR_SIMULATION 0
+#endif
+
 #ifdef CONFIG_POOL_TEMPERATURE_ENABLED
 #define POOL_TEMPERATURE_ENABLED 1
 #else
