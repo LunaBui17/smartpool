@@ -1,0 +1,708 @@
+{
+  "info": {
+    "name": "Smart Pool runtime 005 - manual isolated fixture",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Chạy từng request thủ công trên device fixture riêng đã đăng ký/active, không dùng ID ESP thật. Không chạy collection này trên thiết bị đang vận hành. Điền user_token/device_key bằng local variables, không export secret. Request report_status mô phỏng OFF và config applied; không chứng minh ESP đã áp dụng. OFF request_control có thể được worker gửi MQTT nếu fixture có presence, không publish MQTT trực tiếp từ Postman. Không tự tạo user/device/key. Xem docs/esp-api-mqtt-runtime.md. Chưa chạy kiểm thử."
+  },
+  "variable": [
+    {
+      "key": "api_url",
+      "value": ""
+    },
+    {
+      "key": "device_id",
+      "value": ""
+    },
+    {
+      "key": "other_device_id",
+      "value": ""
+    },
+    {
+      "key": "desired_revision",
+      "value": "1"
+    },
+    {
+      "key": "expected_revision",
+      "value": "1"
+    },
+    {
+      "key": "command_id",
+      "value": ""
+    },
+    {
+      "key": "boot_id",
+      "value": "0123456789abcdef0123456789abcdef"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 User - status/readiness",
+      "request": {
+        "method": "POST",
+        "url": "{{api_url}}",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{user_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"action\":\"get_status\",\"device_id\":\"{{device_id}}\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "for (const key of [\"api_url\",\"device_id\",\"user_token\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('Runtime readiness fields',()=>{const d=pm.response.json();pm.expect(d.readiness).to.have.keys('ready','reasons','http_report','mqtt_presence','worker');pm.expect(d.remote_control_ready).to.eql(d.readiness.ready);});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 User - read config/revision",
+      "request": {
+        "method": "POST",
+        "url": "{{api_url}}",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{user_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"action\":\"get_config\",\"device_id\":\"{{device_id}}\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "for (const key of [\"api_url\",\"device_id\",\"user_token\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "if(pm.response.code===200){const r=pm.response.json().config.revision;pm.collectionVariables.set('desired_revision',r);pm.collectionVariables.set('expected_revision',r);}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 ESP - get desired config",
+      "request": {
+        "method": "POST",
+        "url": "{{api_url}}",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Pool-Device-Key",
+            "value": "{{device_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"action\":\"get_device_config\",\"device_id\":\"{{device_id}}\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "for (const key of [\"api_url\",\"device_id\",\"device_key\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('Config belongs to fixture',()=>pm.expect(pm.response.json().config.device_id).to.eql(pm.variables.get('device_id')));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 User - store config, not applied confirmation",
+      "request": {
+        "method": "POST",
+        "url": "{{api_url}}",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{user_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"action\":\"update_config\",\"device_id\":\"{{device_id}}\",\"expected_revision\":{{expected_revision}},\"settings\":{\"temperature_min\":20,\"temperature_max\":36}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "for (const key of [\"api_url\",\"device_id\",\"user_token\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "if(pm.response.code===200){pm.test('Stored only',()=>pm.expect(pm.response.json().delivery).to.eql('stored_only'));pm.collectionVariables.set('desired_revision',pm.response.json().config.revision);}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04b User - repeat old expected_revision -> 409",
+      "request": {
+        "method": "POST",
+        "url": "{{api_url}}",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{user_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"action\":\"update_config\",\"device_id\":\"{{device_id}}\",\"expected_revision\":{{expected_revision}},\"settings\":{\"temperature_min\":20,\"temperature_max\":36}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "for (const key of [\"api_url\",\"device_id\",\"user_token\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Stale revision rejected',()=>pm.response.to.have.status(409));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 ESP FIXTURE - report applied (synthetic OFF state)",
+      "request": {
+        "method": "POST",
+        "url": "{{api_url}}",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Pool-Device-Key",
+            "value": "{{device_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"action\":\"report_status\",\"device_id\":\"{{device_id}}\",\"boot_id\":\"{{boot_id}}\",\"state_sequence\":1,\"pump_in\":false,\"pump_out\":false,\"temperature_enabled\":true,\"water_enabled\":true,\"reported_config_revision\":{{desired_revision}},\"config_apply\":{\"attempt_sequence\":1,\"revision\":{{desired_revision}},\"result\":\"applied\"}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "for (const key of [\"api_url\",\"device_id\",\"device_key\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05b ESP FIXTURE - conflicting same apply attempt -> 409",
+      "request": {
+        "method": "POST",
+        "url": "{{api_url}}",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Pool-Device-Key",
+            "value": "{{device_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"action\":\"report_status\",\"device_id\":\"{{device_id}}\",\"boot_id\":\"{{boot_id}}\",\"state_sequence\":2,\"pump_in\":false,\"pump_out\":false,\"temperature_enabled\":true,\"water_enabled\":true,\"reported_config_revision\":{{desired_revision}},\"config_apply\":{\"attempt_sequence\":1,\"revision\":{{desired_revision}},\"result\":\"error\",\"error_code\":\"INVALID_CONFIG\"}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "for (const key of [\"api_url\",\"device_id\",\"device_key\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Conflicting attempt rejected',()=>pm.response.to.have.status(409));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 ESP FIXTURE - synced sample/backfill (send twice)",
+      "request": {
+        "method": "POST",
+        "url": "{{api_url}}",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Pool-Device-Key",
+            "value": "{{device_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"action\":\"upload_sample\",\"device_id\":\"{{device_id}}\",\"sample_id\":\"0000000000000001\",\"measured_at_ms\":1735689600000,\"time_quality\":\"synced\",\"temperature\":25,\"water_adc\":2200,\"is_backfill\":true}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "for (const key of [\"api_url\",\"device_id\",\"device_key\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Sample accepted or duplicate',()=>pm.expect(pm.response.code).to.be.oneOf([200,201]));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 ESP FIXTURE - unknown historical time",
+      "request": {
+        "method": "POST",
+        "url": "{{api_url}}",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Pool-Device-Key",
+            "value": "{{device_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"action\":\"upload_sample\",\"device_id\":\"{{device_id}}\",\"sample_id\":\"0000000000000002\",\"measured_at_ms\":null,\"time_quality\":\"unknown\",\"temperature\":24,\"water_adc\":2100,\"is_backfill\":true}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "for (const key of [\"api_url\",\"device_id\",\"device_key\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Unknown time stays null',()=>{pm.expect(pm.response.code).to.be.oneOf([200,201]);pm.expect(pm.response.json().sample.measured_at_ms).to.eql(null);});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 User - request OFF (may be dispatched by worker)",
+      "request": {
+        "method": "POST",
+        "url": "{{api_url}}",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{user_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"action\":\"request_control\",\"device_id\":\"{{device_id}}\",\"request_id\":\"{{$guid}}\",\"target\":\"pump_in\",\"enabled\":false,\"ttl_seconds\":60}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "for (const key of [\"api_url\",\"device_id\",\"user_token\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "if(pm.response.code===200)pm.collectionVariables.set('command_id',pm.response.json().command.command_id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 User - command result (repeat after MQTT ACK or TTL)",
+      "request": {
+        "method": "POST",
+        "url": "{{api_url}}",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{user_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"action\":\"get_command\",\"device_id\":\"{{device_id}}\",\"command_id\":\"{{command_id}}\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "for (const key of [\"api_url\",\"device_id\",\"user_token\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('Known lifecycle',()=>pm.expect(pm.response.json().command.status).to.be.oneOf(['pending','applied','rejected','expired','cancelled']));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 User - backend/device audit",
+      "request": {
+        "method": "POST",
+        "url": "{{api_url}}",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{user_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"action\":\"list_activity\",\"device_id\":\"{{device_id}}\",\"limit\":100}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "for (const key of [\"api_url\",\"device_id\",\"user_token\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('Events array',()=>pm.expect(pm.response.json().events).to.be.an('array'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 User without membership - other device -> 403",
+      "request": {
+        "method": "POST",
+        "url": "{{api_url}}",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{user_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"action\":\"get_status\",\"device_id\":\"{{other_device_id}}\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "for (const key of [\"api_url\",\"device_id\",\"user_token\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);",
+              "if(!pm.variables.get('other_device_id')) throw new Error('Set other_device_id to fixture B; current user must not be admin or a member of B');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Other device forbidden',()=>pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

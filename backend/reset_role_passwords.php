@@ -4,6 +4,7 @@ if(PHP_SAPI!=='cli'){http_response_code(404);exit;}
 if($argc!==2||$argv[1]!=='--from-stdin'){fwrite(STDERR,"Usage: php reset_role_passwords.php --from-stdin (admin password, then user password, one per line)\n");exit(2);}
 require_once __DIR__.'/migration_lib.php';
 require_once __DIR__.'/api_core.php';
+require_once __DIR__.'/api_runtime.php';
 $db=null;
 try {
     $admin=rtrim((string)fgets(STDIN),"\r\n");$ordinary=rtrim((string)fgets(STDIN),"\r\n");
@@ -16,7 +17,7 @@ try {
         api_log($db,array('username'=>'system'),null,'operator_password_reset',array('user_id'=>(int)$user['id'],'role'=>$user['role']));
     }
     api_query($db,'DELETE FROM user_sessions');
-    api_query($db,"UPDATE device_commands SET status='cancelled' WHERE status='pending'");
+    api_cancel_pending($db,null,null,'password_reset');
     $db->commit();echo 'Role passwords updated; sessions revoked; users preserved: '.count($users).PHP_EOL;
 }catch(Throwable $error){if($db){try{$db->rollback();}catch(Throwable $ignored){}}fwrite(STDERR,"Role password reset failed; check input and database.\n");exit(1);}
 finally{unset($admin,$ordinary);if($db)$db->close();}

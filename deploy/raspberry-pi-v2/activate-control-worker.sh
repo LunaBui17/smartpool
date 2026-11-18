@@ -6,6 +6,9 @@ if [[ "$EUID" -ne 0 ]]; then
     exec sudo bash "$PWD/activate-control-worker.sh"
 fi
 pool_compose build api control-worker
+pool_compose stop control-worker
+# Additive migrations must complete before runtime 005 API/worker starts.
+pool_compose run --rm --no-deps -T api php /opt/smartpool/migrate.php
 pool_compose up -d --no-deps --wait --wait-timeout 120 api control-worker
 pool_compose exec -T api php -l /var/www/html/pool_api/api_data.php
 pool_compose ps api control-worker

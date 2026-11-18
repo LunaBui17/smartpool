@@ -10,9 +10,10 @@ function pool_v2_connect() {
 function pool_v2_lock($db) {
     if((int)$db->query("SELECT GET_LOCK('smartpool_schema_migrate',10)")->fetch_row()[0]!==1)throw new RuntimeException('Migration busy');
 }
-function pool_v2_tables() {
-    return array('users','user_sessions','devices','device_users','device_credentials','device_configs',
+function pool_v2_tables($baseline=false) {
+    $tables=array('users','user_sessions','devices','device_users','device_credentials','device_configs',
         'device_boots','device_status','sensor_samples','device_commands','activity_logs','schema_migrations');
+    return $baseline?$tables:array_merge($tables,array('control_worker_state','device_mqtt_presence','command_dispatch','command_results','config_apply_reports'));
 }
 function pool_legacy_tables() {
     return array('pool_status','pool_history','pool_commands','pool_users','pool_user_sessions','pool_activity_log',
@@ -36,7 +37,7 @@ function pool_v2_apply($db) {
         $db->multi_query($sql);
         do {$result=$db->store_result();if($result)$result->free();if(!$db->more_results())break;}while($db->next_result());
         // DDL commits implicitly; a failed run is retried without dropping completed tables.
-        if($version==='004_multi_device.sql')foreach(pool_v2_tables() as $table)$db->query('SELECT * FROM `'.$table.'` LIMIT 0');
+        if($version==='004_multi_device.sql')foreach(pool_v2_tables(true) as $table)$db->query('SELECT * FROM `'.$table.'` LIMIT 0');
         $save=$db->prepare('INSERT INTO schema_migrations(version,checksum) VALUES (?,?)');$save->bind_param('ss',$version,$hash);$save->execute();$save->close();
         echo "Applied: $version\n";
     }

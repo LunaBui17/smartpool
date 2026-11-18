@@ -1,5 +1,7 @@
 # Smart Pool – bộ triển khai v2 tách biệt
 
+**Source runtime 005, chưa triển khai:** nâng cấp giữ dữ liệu bằng migrate.php trước khi mở API/worker mới; không reset hoặc down -v. Xem [thứ tự nâng cấp, quay lui, giới hạn MQTT và checklist Android](../../docs/esp-api-mqtt-runtime.md). Source mới chưa build/test trong đợt này.
+
 Bộ đang hoạt động: `deploy/raspberry-pi-v2` trong repository; trên Pi là `/home/qnm/smartpool-v2/deploy/raspberry-pi-v2`. Project Docker `smartpool-v2`, network/container và volume riêng. Stack Docker cũ đã được xóa khi cài mới ngày 18/11/2026; không chạy đồng thời hai stack vì dùng chung cổng LAN 80/1883/8080.
 
 Sau khi xóa volume cũ và cài mới ngày 18/11/2026, DB root, DB user và các account MQTT dùng mật khẩu mặc định `luanbui`. Secret runtime nằm trong file private trên Pi. Tài khoản admin API ban đầu là `admin`, mật khẩu `luanbui`:

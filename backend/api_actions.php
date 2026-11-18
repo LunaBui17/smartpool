@@ -151,9 +151,10 @@ function api_dispatch_action($db,$data) {
         $measured=api_query($db,'SELECT * FROM sensor_samples WHERE device_id=? AND measured_at_ms IS NOT NULL ORDER BY measured_at_ms DESC,id DESC LIMIT 1','s',array($device));
         $received=api_query($db,'SELECT * FROM sensor_samples WHERE device_id=? ORDER BY received_at DESC,id DESC LIMIT 1','s',array($device));
         $revision=(int)api_query($db,'SELECT revision FROM device_configs WHERE device_id=?','s',array($device))[0]['revision'];
-        $heartbeat='/run/smartpool-control/heartbeat';
-        $controlReady=is_file($heartbeat)&&(@filemtime($heartbeat) ?: 0)>time()-10;
-        return array('device_id'=>$device,'state'=>$status,'remote_control_ready'=>$controlReady,
+        $readiness=api_readiness($db,$user,api_device($db,$device),$status);
+        $apply=api_query($db,'SELECT boot_id,attempt_sequence,revision,result,error_code,received_at FROM config_apply_reports WHERE device_id=? ORDER BY id DESC LIMIT 1','s',array($device));
+        return array('device_id'=>$device,'state'=>$status,'remote_control_ready'=>$readiness['ready'],'readiness'=>$readiness,
+            'config_apply'=>$apply?api_public($apply[0]):null,
             'latest_measured_sample'=>$measured?api_public($measured[0]):null,
             'last_received_sample'=>$received?api_public($received[0]):null,'desired_config_revision'=>$revision,
             'config_revision_reported_matching'=>$status!==null&&$status['reported_config_revision']!==null&&$status['reported_config_revision']===$revision);
@@ -207,12 +208,13 @@ function api_admin_action($db,$user,$action,$data) {
         api_query($db,'UPDATE users SET is_active=? WHERE id=?','ii',array($active,$target));
         if(!$active) {
             api_query($db,'DELETE FROM user_sessions WHERE user_id=?','i',array($target));
-            api_query($db,"UPDATE device_commands SET status='cancelled' WHERE requested_by=? AND status='pending'",'i',array($target));
+            api_cancel_pending($db,null,$target,'account_locked');
         }
         api_log($db,$user,null,'user_active_changed',array('user_id'=>$target,'is_active'=>(bool)$active));
     } else {
         $hash=api_password_hash($data,$rows[0]['role']);api_query($db,'UPDATE users SET password_hash=? WHERE id=?','si',array($hash,$target));
         api_query($db,'DELETE FROM user_sessions WHERE user_id=?','i',array($target));
+        api_cancel_pending($db,null,$target,'password_changed');
         api_log($db,$user,null,'user_password_changed',array('user_id'=>$target));
     }
     return array('user_id'=>$target);
@@ -237,7 +239,7 @@ function api_registry_action($db,$user,$device,$action,$data) {
     $changes=array();$extra=array();
     if($action==='set_device_active') {
         $active=api_bool($data,'is_active');api_query($db,'UPDATE devices SET is_active=? WHERE device_id=?','is',array($active,$device));
-        if(!$active)api_query($db,"UPDATE device_commands SET status='cancelled' WHERE device_id=? AND status='pending'",'s',array($device));
+        if(!$active)api_cancel_pending($db,$device,null,'device_inactive');
         $changes=array('before'=>(bool)$row['is_active'],'is_active'=>(bool)$active);
     } elseif($action==='set_device_owner') {
         $owner=api_int($data,'owner_user_id');api_active_user($db,$owner);
@@ -252,12 +254,12 @@ function api_registry_action($db,$user,$device,$action,$data) {
         api_query($db,'INSERT INTO device_users(device_id,user_id,can_view,can_control,can_configure,granted_by) VALUES (?,?,?,?,?,?) '
             . 'ON DUPLICATE KEY UPDATE can_view=VALUES(can_view),can_control=VALUES(can_control),can_configure=VALUES(can_configure),granted_by=VALUES(granted_by)',
             'siiiii',array($device,$target,$view,$control,$configure,$user['id']));
-        if(!$control)api_query($db,"UPDATE device_commands SET status='cancelled' WHERE device_id=? AND requested_by=? AND status='pending'",'si',array($device,$target));
+        if(!$control)api_cancel_pending($db,$device,$target,'control_revoked');
         $changes=array('user_id'=>$target,'before'=>$old?$old[0]:null,'can_view'=>true,'can_control'=>(bool)$control,'can_configure'=>(bool)$configure);
     } elseif($action==='remove_device_member') {
         $target=api_int($data,'user_id');
         api_query($db,'DELETE FROM device_users WHERE device_id=? AND user_id=?','si',array($device,$target));
-        api_query($db,"UPDATE device_commands SET status='cancelled' WHERE device_id=? AND requested_by=? AND status='pending'",'si',array($device,$target));
+        api_cancel_pending($db,$device,$target,'membership_removed');
         $changes=array('user_id'=>$target,'removed'=>true);
     } elseif($action==='create_device_credential') {
         if(!(int)$row['is_active'])api_fail(409,'Kích hoạt thiết bị trước');

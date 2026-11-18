@@ -49,8 +49,10 @@ function api_uuid() {
 }
 function api_json($value) { return json_encode($value, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR); }
 function api_log($db, $actor, $device, $action, $changes = array(), $source = 'backend', $result = 'committed') {
+    $event=api_uuid();
     api_query($db, 'INSERT INTO activity_logs (event_id,device_id,actor_user_id,actor_username,source,action,result,changes_json) VALUES (?,?,?,?,?,?,?,?)',
-        'ssisssss', array(api_uuid(), $device, $actor['id'] ?? null, $actor['username'], $source, $action, $result, api_json($changes)));
+        'ssisssss', array($event, $device, $actor['id'] ?? null, $actor['username'], $source, $action, $result, api_json($changes)));
+    return $event;
 }
 function api_user($db) {
     $auth = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
@@ -93,7 +95,7 @@ function api_active_user($db, $id) {
     return $rows[0];
 }
 function api_public($row) {
-    foreach (array('id','user_id','actor_user_id','owner_user_id','registered_by','granted_by','revision','state_sequence','reported_config_revision','measured_at_ms','received_at_ms','reported_at_ms') as $field) {
+    foreach (array('id','user_id','actor_user_id','owner_user_id','registered_by','granted_by','revision','attempt_sequence','state_sequence','reported_config_revision','measured_at_ms','received_at_ms','reported_at_ms') as $field) {
         if (isset($row[$field])) $row[$field] = (int)$row[$field];
     }
     foreach (array('is_active','can_view','can_control','can_configure','pump_in','pump_out','temperature_enabled','water_enabled','interlock','is_backfill','enabled') as $field) {

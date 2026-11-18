@@ -1,5 +1,7 @@
 # Kiểm tra Smart Pool API v2 bằng Postman
 
+Runtime 005 có [collection thủ công riêng](SmartPool.runtime.postman_collection.json) và [checklist ESP/API/MQTT Web + Android](../../docs/esp-api-mqtt-runtime.md). Chỉ dùng fixture riêng. Chưa chạy collection runtime. Lần chạy collection v2 ngày 17/11/2026 có lỗi auth và lỗi dây chuyền; cần xác nhận token local trước khi tiếp tục, không xem là đạt. Không xuất response chứa secret.
+
 Import [SmartPool.v2.postman_collection.json](SmartPool.v2.postman_collection.json). Các collection v1 đã bỏ vì schema và API không còn tương thích.
 
 1. Người vận hành áp dụng database v2, tạo admin mới theo [hướng dẫn đầy đủ](../../docs/database-v2.md).

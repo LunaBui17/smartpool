@@ -61,7 +61,12 @@ function api_esp_action($db,$device,$action,$data) {
     $configRevision=isset($data['reported_config_revision'])?api_int($data,'reported_config_revision'):null;
     $desired=api_query($db,'SELECT revision FROM device_configs WHERE device_id=?','s',array($device))[0];
     if($configRevision!==null&&$configRevision>(int)$desired['revision'])api_fail(400,'Revision báo cáo lớn hơn cấu hình server');
-    $digest=hash('sha256',api_json(array($boot,$seq,$state,$ssid,$ip,$reported,$configRevision)));
+    $apply=$data['config_apply']??null;
+    if($apply!==null&&!is_array($apply))api_fail(400,'config_apply không hợp lệ');
+    if($apply!==null&&($apply['result']??null)==='applied'&&($apply['revision']??null)!==$configRevision)api_fail(400,'Revision applied phải khớp reported_config_revision');
+    $digestFields=array($boot,$seq,$state,$ssid,$ip,$reported,$configRevision);
+    if($apply!==null)$digestFields[]=$apply; // Preserve pre-005 digests when the optional report is absent.
+    $digest=hash('sha256',api_json($digestFields));
     $old=api_query($db,'SELECT * FROM device_status WHERE device_id=? FOR UPDATE','s',array($device));
     $known=api_query($db,'SELECT boot_id FROM device_boots WHERE device_id=? AND boot_id=?','ss',array($device,$boot));
     if($old) {
@@ -74,6 +79,9 @@ function api_esp_action($db,$device,$action,$data) {
         } elseif($known)api_fail(409,'Không khôi phục trạng thái từ phiên boot cũ');
     }
     if(!$known)api_query($db,'INSERT INTO device_boots(device_id,boot_id) VALUES (?,?)','ss',array($device,$boot));
+    if($apply!==null)api_config_report($db,$device,$boot,$apply);
+    // Old clients omitting reported revision must not erase the last known revision in the same boot.
+    if($configRevision===null&&$old&&$old[0]['boot_id']===$boot)$configRevision=$old[0]['reported_config_revision'];
     api_query($db,'INSERT INTO device_status(device_id,boot_id,state_sequence,pump_in,pump_out,temperature_enabled,water_enabled,wifi_ssid,lan_ip,reported_config_revision,reported_at_ms,payload_hash) '
         . 'VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE boot_id=VALUES(boot_id),state_sequence=VALUES(state_sequence),pump_in=VALUES(pump_in),pump_out=VALUES(pump_out),'
         . 'temperature_enabled=VALUES(temperature_enabled),water_enabled=VALUES(water_enabled),wifi_ssid=VALUES(wifi_ssid),lan_ip=VALUES(lan_ip),'
@@ -123,12 +131,12 @@ function api_command($db,$user,$device,$action,$data) {
         $target=api_text($data,'target',8);
         if(!in_array($target,array('pump_in','pump_out'),true))api_fail(400,'Target bơm không hợp lệ');
         $on=api_bool($data,'enabled');$ttl=api_int($data,'ttl_seconds',30,1,60);
+        api_expire_pending($db,$device);
         $old=api_query($db,'SELECT * FROM device_commands WHERE device_id=? AND request_id=? FOR UPDATE','ss',array($device,$request));
         if($old) {
             if((int)$old[0]['requested_by']!==(int)$user['id']||$old[0]['target']!==$target||(int)$old[0]['enabled']!==$on)api_fail(409,'request_id xung đột');
             return array('command'=>api_public($old[0]),'duplicate'=>true,'delivery'=>'not_published_by_api');
         }
-        api_query($db,"UPDATE device_commands SET status='expired' WHERE device_id=? AND target=? AND status='pending' AND expires_at<=UTC_TIMESTAMP(3)",'ss',array($device,$target));
         $pending=api_query($db,"SELECT command_id FROM device_commands WHERE device_id=? AND target=? AND status='pending' FOR UPDATE",'ss',array($device,$target));
         if($pending)api_fail(409,'Bơm đang có lệnh chờ xác nhận');
         $id=api_uuid();
@@ -141,7 +149,8 @@ function api_command($db,$user,$device,$action,$data) {
     $id=api_text($data,'command_id',36,'/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/D');
     $rows=api_query($db,'SELECT * FROM device_commands WHERE command_id=? AND device_id=?','ss',array($id,$device));
     if(!$rows)api_fail(404,'Không tìm thấy lệnh của thiết bị');
-    $row=$rows[0];
+    api_expire_pending($db,$device);
+    $row=api_query($db,'SELECT * FROM device_commands WHERE command_id=? AND device_id=?','ss',array($id,$device))[0];
     $row['effective_status']=$row['status']==='pending'&&strtotime($row['expires_at'].' UTC')<microtime(true)?'expired':$row['status'];
     return array('command'=>api_public($row));
 }
@@ -149,12 +158,25 @@ function api_command_ack($db,$device,$data) {
     $id=api_text($data,'command_id',36,'/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/D');
     $result=api_text($data,'result',8);
     if(!in_array($result,array('applied','rejected'),true))api_fail(400,'Kết quả ACK không hợp lệ');
-    $rows=api_query($db,'SELECT *,expires_at<UTC_TIMESTAMP(3) AS has_expired FROM device_commands WHERE device_id=? AND command_id=? FOR UPDATE','ss',array($device,$id));
+    $rows=api_query($db,'SELECT *,expires_at<=UTC_TIMESTAMP(3) AS has_expired FROM device_commands WHERE device_id=? AND command_id=? FOR UPDATE','ss',array($device,$id));
     if(!$rows)api_fail(404,'Lệnh không thuộc thiết bị');
     $row=$rows[0];
     if($row['status']===$result)return array('duplicate'=>true);
-    if($row['status']!=='pending'||(int)$row['has_expired'])api_fail(409,'Lệnh đã kết thúc hoặc hết hạn');
-    api_query($db,'UPDATE device_commands SET status=?,acknowledged_at=UTC_TIMESTAMP(3) WHERE command_id=?','ss',array($result,$id));
-    api_log($db,array('username'=>$device),$device,'command_acknowledged',array('command_id'=>$id,'result'=>$result),'device','reported');
+    if($row['status']!=='pending')api_fail(409,'Lệnh đã kết thúc');
+    if((int)$row['has_expired']) {
+        api_runtime_transition($db,$row,'expired','backend','ttl_elapsed');
+        return array('duplicate'=>false,'accepted'=>false,'command_id'=>$id,'result'=>'expired');
+    }
+    $requester=api_query($db,'SELECT role,is_active FROM users WHERE id=? FOR UPDATE','i',array($row['requested_by']));
+    $allowed=$requester&&(bool)$requester[0]['is_active'];
+    if($allowed&&$requester[0]['role']!=='admin') {
+        $grants=api_query($db,'SELECT can_view,can_control FROM device_users WHERE device_id=? AND user_id=? FOR UPDATE','si',array($device,$row['requested_by']));
+        $allowed=$grants&&(bool)$grants[0]['can_view']&&(bool)$grants[0]['can_control'];
+    }
+    if(!$allowed) {
+        api_runtime_transition($db,$row,'cancelled','backend','access_revoked');
+        return array('duplicate'=>false,'accepted'=>false,'command_id'=>$id,'result'=>'cancelled');
+    }
+    api_runtime_transition($db,$row,$result,'http');
     return array('duplicate'=>false,'command_id'=>$id,'result'=>$result);
 }

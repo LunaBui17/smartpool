@@ -5,6 +5,7 @@ require_once __DIR__ . '/database.php';
 require_once __DIR__ . '/api_core.php';
 require_once __DIR__ . '/api_actions.php';
 require_once __DIR__ . '/api_data.php';
+require_once __DIR__ . '/api_runtime.php';
 $db = null;
 try {
     $db = pool_database_connect();
@@ -16,7 +17,12 @@ try {
     if ($method === 'GET' && ($_GET['action'] ?? '') === 'health') {
         $db->query('SELECT device_id FROM devices LIMIT 1');
         $db->query('SELECT id FROM users LIMIT 1');
-        echo api_json(array('status'=>'success','api_version'=>2,'schema_baseline'=>4));
+        $db->query('SELECT command_id FROM command_results LIMIT 1');
+        $db->query('SELECT worker_id FROM control_worker_state LIMIT 1');
+        $db->query('SELECT device_id FROM device_mqtt_presence LIMIT 1');
+        $db->query('SELECT command_id FROM command_dispatch LIMIT 1');
+        $db->query('SELECT id FROM config_apply_reports LIMIT 1');
+        echo api_json(array('status'=>'success','api_version'=>2,'schema_baseline'=>4,'schema_runtime'=>5));
         exit;
     }
     if ($method !== 'POST') { header('Allow: POST, GET'); api_fail(405,'API v2 dùng POST JSON; GET chỉ hỗ trợ action=health'); }
