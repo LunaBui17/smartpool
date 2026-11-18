@@ -1,6 +1,6 @@
 # Firmware ESP32-S3 Smart Pool
 
-**Backend v2:** firmware gửi mẫu đo và trạng thái live vào API v2, dùng MQTT account theo `device_id` và topic riêng của thiết bị. Firmware nhận `cmd/pump` theo ID, kiểm tra hạn lệnh, lưu ID chống lặp và gửi `ack/command`; worker trên Pi phát lệnh khi đã kiểm tra quyền API. Giờ đo của mẫu NVS hiện gửi là `unknown`; đồng bộ cấu hình revision và BLE chưa triển khai. Xem [hợp đồng v2](../docs/database-v2.md).
+**Backend v2, runtime 005:** firmware gửi mẫu/status bằng HTTP device key, nhận `cmd/pump` theo device_id, kiểm tra TTL và chống lặp bằng sổ NVS. Task riêng poll `get_device_config`, lưu snapshot rồi báo revision/kết quả áp dụng; MQTT có heartbeat live 30 giây. Queue v3 giữ giờ đo khi đồng hồ hợp lệ; mẫu v1/v2 chuyển đổi vẫn unknown. Source mới chưa build/test/flash trong đợt này; BLE chưa triển khai. Xem [hợp đồng runtime, nâng cấp và quay lui NVS](../docs/esp-api-mqtt-runtime.md).
 
 [Hướng dẫn tổng thể](../README.md) · [Luồng toàn hệ thống](../docs/system-flow.md) · [Giao thức MQTT v2](../docs/mqtt-v2.md) · [Triển khai Raspberry Pi v2](../deploy/raspberry-pi-v2/README.md)
 

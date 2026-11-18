@@ -5,6 +5,8 @@ của [kế hoạch](android-api-v2-plan.md); source mới **chưa build/kiểm 
 Chi tiết chức năng còn chờ và checklist nằm trong
 [README Android](../android-app/README_MQTT_ESP32.md).
 
+Phần ESP/API/worker mới được mô tả tại [runtime 005](esp-api-mqtt-runtime.md): config HTTP + báo cáo áp dụng, giờ đo NVS, ACK/audit giao dịch và readiness HTTP/MQTT/worker. Bản này chưa build/test/triển khai; Android chưa sửa trong đợt này, checklist riêng ở tài liệu runtime.
+
 ## 1. Kiến trúc
 
 ```mermaid
@@ -23,7 +25,7 @@ flowchart LR
 
 Android không dùng credential ESP hoặc DB. Luồng app chính không publish MQTT
 trực tiếp; MQTT kết nối worker với ESP bằng namespace theo thiết bị.
-Worker hiện chuyển lệnh bơm, không đồng bộ cấu hình mong muốn xuống firmware.
+Worker chuyển lệnh bơm và theo dõi MQTT presence. ESP tự tải cấu hình bằng HTTP; worker không publish config/desired.
 
 ## 2. Phiên và chọn thiết bị
 
@@ -139,7 +141,7 @@ mẫu nhận cuối và mốc kiểm tra trên điện thoại; hoàn thiện c�
 Main đọc `get_config` trước khi mở điều khiển, cache hiệu chuẩn/ngưỡng/interlock
 theo server + user ID + device ID. Không nhập preferences legacy toàn cục.
 Backend có update_config với expected_revision và trả delivery=stored_only;
-chưa có biểu mẫu lưu v2 trên app hoặc đường xác nhận ESP áp dụng đầy đủ.
+biểu mẫu lưu v2 trên app còn cần hoàn thiện. Firmware runtime 005 đã có đường tải/lưu cấu hình và báo config_apply/reported_config_revision qua HTTP; xem giới hạn và checklist ở tài liệu runtime.
 
 Lưu đồ Hệ thống phản ánh app → API, độ mới báo cáo HTTP, cờ cảm biến và relay
 do ESP báo. is_recent_report không chứng minh MQTT online hay motor đang chạy.

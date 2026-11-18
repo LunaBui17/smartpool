@@ -1,5 +1,7 @@
 # Smart Pool database và API v2 – nhiều thiết bị
 
+**Cập nhật source 18/11/2026:** [runtime 005](esp-api-mqtt-runtime.md) bổ sung 5 bảng bằng migration cộng thêm, ESP sync cấu hình HTTP, giờ đo NVS và worker ACK/audit/readiness. Không cần reset database 004; phần reset bên dưới chỉ dành cho cài đặt lại có chủ đích. Bản mới chưa build/test/migrate/triển khai; lần chạy collection Postman v2 trước đó có lỗi. Các ghi nhận triển khai baseline bên dưới là lịch sử, không mô tả trạng thái runtime mới trên Pi.
+
 ## Phạm vi đã triển khai trong source
 
 Database/API được tái cấu trúc cho admin quản lý nhiều thiết bị và nhiều user cùng quản lý một thiết bị. Đây là bản không tương thích API một thiết bị trước đây. **Đã reset và triển khai baseline 004 trên Pi `192.168.60.87` ngày 17/11/2026 theo yêu cầu.** Health LAN/Cloudflare trả HTTP 200; DB có 12 bảng, một admin, chưa có thiết bị hoặc mẫu đo. Chưa chạy collection Postman hoặc kiểm thử nghiệp vụ. Các bước bên dưới dành cho lần cài đặt/reset tiếp theo, không cần chạy lại trên Pi vừa triển khai.

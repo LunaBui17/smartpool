@@ -1,5 +1,7 @@
 # Broker MQTT v2 theo từng thiết bị
 
+**Source runtime 005, chưa build/test/triển khai:** worker có giao dịch ACK + audit, quét TTL/quyền và presence theo phiên kết nối; ESP poll config qua HTTP, heartbeat live 30 giây, sổ lệnh NVS 32 entry. Chi tiết tại [hợp đồng runtime và MQTT Web](esp-api-mqtt-runtime.md). ACL hiện có giữ nguyên; phần ghi nhận triển khai broker bên dưới là lịch sử.
+
 Broker trên Pi `192.168.60.87` đã cập nhật ngày 17/11/2026. Không thay database, API, firmware hoặc Android trong đợt này. Hai tài khoản chung `esp32`/`android` không được giữ trong file xác thực mới. ESP/app cũ sẽ không kết nối được bằng credential cũ.
 
 ## Mô hình quyền
@@ -23,12 +25,12 @@ Prefix là `smartpool/devices/{device_id}`:
 | `status` | Write | Read | Retained online/relay/boot/sequence/device_id; LWT offline |
 | `telemetry` | Write | Read | Mẫu có device_id/sample_id/thời gian; không retained |
 | `ack/command` | Write | Read | command_id/result, không retained |
-| `ack/config` | Write | Read | revision/result, không retained |
+| `ack/config` | Write | Read | Chỉ còn trong ACL; runtime 005 báo config_apply qua HTTP |
 | `cmd/pump` | Read | Write | command_id, target pump_in/pump_out, enabled, expires_at_ms; QoS 1, không retained |
-| `config/desired` | Read | Write | device_id, revision và settings; cấu hình mong muốn có thể retained |
+| `config/desired` | Read | Write | Chỉ còn trong ACL; runtime 005 tải get_device_config bằng HTTP |
 | `diagnostics/probe` | Read/write | Không mặc định | Chẩn đoán riêng của account thiết bị |
 
-Firmware publish status/telemetry và LWT sang namespace theo `device_id`, dùng account cùng tên ID. Firmware subscribe `cmd/pump`, kiểm tra `device_id`, thời hạn và ID lệnh, lưu ID lệnh cuối của từng bơm trong NVS để chống lặp và gửi `ack/command` sau khi áp dụng. `config/desired` và đồng bộ revision chưa triển khai.
+Firmware publish status/telemetry và LWT theo `device_id`, dùng account cùng tên ID. Firmware subscribe `cmd/pump`, kiểm tra ID/TTL, reserve và ghi kết quả vào sổ NVS để chống lặp rồi gửi `ack/command`. Runtime 005 đồng bộ revision qua `get_device_config`/`report_status` HTTP, không dùng `config/desired`/`ack/config` dù ACL còn cấp các topic này. Status có boot_id/presence_sequence; snapshot retained khi subscribe không chứng minh online. User đọc readiness qua API, không dùng credential bridge.
 
 Không cấp topic cấu hình Wi-Fi, topic đổi ID hoặc topic global cũ. Wi-Fi qua BLE và khôi phục offline vẫn chưa làm; không gửi password Wi-Fi lên retained MQTT.
 

@@ -21,6 +21,7 @@ typedef struct {
     int16_t water_raw;
     uint8_t flags;
     uint8_t status_valid; // Uses v1 padding; historical v1 samples have no state.
+    int64_t measured_at_ms; // Zero means unknown at acquisition, including migrated v1/v2 data.
 } telemetry_sample_t;
 
 esp_err_t telemetry_queue_init(void);

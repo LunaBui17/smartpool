@@ -1,12 +1,26 @@
 #include "telemetry_queue.h"
 
 #include <string.h>
+#include <stdlib.h>
 
 #include "nvs.h"
 
-#define QUEUE_VERSION 2
+#define QUEUE_VERSION 3
 
-_Static_assert(sizeof(telemetry_sample_t) == 16, "Keep the persisted v1 sample layout");
+typedef struct {
+    uint64_t id;
+    float temperature;
+    int16_t water_raw;
+    uint8_t flags;
+    uint8_t status_valid;
+} legacy_sample_t;
+_Static_assert(sizeof(legacy_sample_t) == 16, "Persisted v1/v2 layout");
+_Static_assert(sizeof(telemetry_sample_t) == 24, "Persisted v3 layout");
+typedef struct {
+    uint32_t version;
+    uint16_t head, count;
+    legacy_sample_t samples[TELEMETRY_QUEUE_CAPACITY];
+} legacy_queue_t;
 
 typedef struct {
     uint32_t version;
@@ -31,28 +45,47 @@ esp_err_t telemetry_queue_init(void)
     esp_err_t err = nvs_open("poolq", NVS_READWRITE, &s_nvs);
     if (err != ESP_OK) return err;
 
-    size_t size = sizeof(s_queue);
-    err = nvs_get_blob(s_nvs, "queue", &s_queue, &size);
+    size_t size = 0;
+    err = nvs_get_blob(s_nvs, "queue", NULL, &size);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
         memset(&s_queue, 0, sizeof(s_queue));
         s_queue.version = QUEUE_VERSION;
-    } else if (err != ESP_OK || size != sizeof(s_queue) ||
-               (s_queue.version != 1 && s_queue.version != QUEUE_VERSION) ||
-               s_queue.head >= TELEMETRY_QUEUE_CAPACITY ||
-               s_queue.count > TELEMETRY_QUEUE_CAPACITY) {
+    } else if (err == ESP_OK && size == sizeof(legacy_queue_t)) {
+        legacy_queue_t *old = calloc(1, sizeof(*old));
+        if (!old) { nvs_close(s_nvs); return ESP_ERR_NO_MEM; }
+        err = nvs_get_blob(s_nvs, "queue", old, &size);
+        if (err == ESP_OK && (old->version == 1 || old->version == 2) &&
+            old->head < TELEMETRY_QUEUE_CAPACITY && old->count <= TELEMETRY_QUEUE_CAPACITY) {
+            memset(&s_queue, 0, sizeof(s_queue));
+            s_queue.version = QUEUE_VERSION;
+            s_queue.head = old->head;
+            s_queue.count = old->count;
+            for (unsigned int i = 0; i < TELEMETRY_QUEUE_CAPACITY; i++) {
+                s_queue.samples[i].id = old->samples[i].id;
+                s_queue.samples[i].temperature = old->samples[i].temperature;
+                s_queue.samples[i].water_raw = old->samples[i].water_raw;
+                s_queue.samples[i].flags = old->samples[i].flags;
+                s_queue.samples[i].status_valid = old->version == 1 ? 0 : old->samples[i].status_valid;
+            }
+            err = save_queue();
+        } else if (err == ESP_OK) err = ESP_ERR_INVALID_STATE;
+        free(old);
+        if (err != ESP_OK) { nvs_close(s_nvs); return err; }
+    } else if (err == ESP_OK && size == sizeof(s_queue)) {
+        err = nvs_get_blob(s_nvs, "queue", &s_queue, &size);
+    } else {
         nvs_close(s_nvs);
         return err == ESP_OK ? ESP_ERR_INVALID_STATE : err;
     }
-    if (s_queue.version == 1) {
-        for (unsigned int i = 0; i < TELEMETRY_QUEUE_CAPACITY; i++) {
-            s_queue.samples[i].status_valid = 0;
-        }
-        s_queue.version = QUEUE_VERSION;
-        err = save_queue();
-        if (err != ESP_OK) {
-            nvs_close(s_nvs);
-            return err;
-        }
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        nvs_close(s_nvs);
+        return err;
+    }
+    if (s_queue.version != QUEUE_VERSION ||
+               s_queue.head >= TELEMETRY_QUEUE_CAPACITY ||
+               s_queue.count > TELEMETRY_QUEUE_CAPACITY) {
+        nvs_close(s_nvs);
+        return ESP_ERR_INVALID_STATE;
     }
     s_ready = true;
     return ESP_OK;

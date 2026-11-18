@@ -4,7 +4,7 @@ Deployment đang dùng: [deploy/raspberry-pi-v2](deploy/raspberry-pi-v2/README.m
 
 Hệ thống ESP32-S3, Raspberry Pi 4 B và Android cho giám sát/điều khiển bể bơi. Pi chạy PHP/Apache, MariaDB và Mosquitto bằng Docker Compose; Cloudflare Quick Tunnel cung cấp HTTPS/WSS.
 
-**Database/API hiện là v2 nhiều thiết bị, không tương thích client một thiết bị cũ.** Đã triển khai baseline 004 trên Pi `192.168.60.87` ngày 17/11/2026, xác nhận health LAN/Cloudflare; chưa chạy collection Postman. Android/firmware đang trong repository chưa tích hợp v2, BLE chưa triển khai và firmware/app vẫn dùng MQTT cũ; broker đã chuyển policy theo thiết bị.
+**Database/API là v2 nhiều thiết bị.** Migration 005 và API/worker mới đã [triển khai Pi ngày 18/11/2026](docs/deployment-runtime-005.md), xác nhận health LAN/Cloudflare và heartbeat worker. Source ESP có đồng bộ cấu hình HTTP, thời điểm đo trong queue NVS và chống lặp lệnh; chưa build/flash hoặc xác nhận đầu cuối. Các việc Android cần cập nhật được [ghi riêng](docs/esp-api-mqtt-runtime.md#các-việc-cần-làm-trên-android-chưa-sửa-code). BLE chưa triển khai. Lần chạy collection Postman v2 trước đó thất bại; chưa chạy lại collection trong lần triển khai này.
 
 ## Tài liệu chính
 
@@ -12,6 +12,7 @@ Hệ thống ESP32-S3, Raspberry Pi 4 B và Android cho giám sát/điều khi�
 - [Luồng xử lý và phần tích hợp còn lại](docs/system-flow.md).
 - [Triển khai Pi và quản lý Docker](deploy/raspberry-pi-v2/README.md).
 - [Collection Postman v2](backend/postman/SmartPool.v2.postman_collection.json).
+- [Runtime ESP/API/MQTT 005, nâng cấp, quay lui và checklist Android/Postman/MQTT Web](docs/esp-api-mqtt-runtime.md).
 - [Firmware hiện tại](esp-firmware/README.md) và [giao thức MQTT hiện tại](README_MQTT_ESP32.md).
 
 ## Mô hình mới

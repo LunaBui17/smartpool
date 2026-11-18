@@ -1,5 +1,6 @@
 #include "pool_network.h"
 #include "pool_mqtt_protocol.h"
+#include "pool_server_config.h"
 #include "cJSON.h"
 #include <stdlib.h>
 
@@ -8,6 +9,7 @@
 #include <stdatomic.h>
 #include <inttypes.h>
 #include <stdint.h>
+#include <math.h>
 #include <time.h>
 #include <sys/time.h>
 
@@ -95,6 +97,21 @@ static _Atomic bool s_mqtt_connected;
 static _Atomic bool s_status_pending;
 static char s_boot_id[33];
 static uint32_t s_state_sequence;
+static uint32_t s_presence_sequence;
+static pool_server_config_t s_server_config;
+static bool s_server_config_valid;
+// Only control_http_task changes the apply report after initialization.
+static uint32_t s_config_attempt;
+static uint64_t s_attempt_revision;
+static const char *s_config_error;
+static bool s_config_report_pending;
+static _Atomic bool s_config_poll_requested;
+static void control_http_task(void *arg);
+static const char *apply_server_config(const pool_server_config_t *next, bool persist);
+typedef struct { char *data; size_t used; bool overflow; } config_response_t;
+#define CONFIG_RESPONSE_LIMIT 8192
+static esp_err_t config_http_event(esp_http_client_event_t *event);
+static cJSON *api_response_success(const config_response_t *response);
 static _Atomic bool s_pump_in = POOL_RELAY_INITIAL_1_ON;
 static _Atomic bool s_pump_out = POOL_RELAY_INITIAL_2_ON;
 static _Atomic bool s_temperature_enabled = POOL_TEMPERATURE_ENABLED;
@@ -170,9 +187,8 @@ static uint32_t s_boot_nonce;
 static uint32_t s_sample_counter;
 static SemaphoreHandle_t s_relay_lock;
 
-static void publish_status(void)
+static void publish_status_frame(bool retained)
 {
-    s_status_pending = true;
     if (!s_mqtt_connected) {
         return;
     }
@@ -192,6 +208,8 @@ static void publish_status(void)
     cJSON_AddBoolToObject(status, "online", true);
     cJSON_AddStringToObject(status, "device_id", CONFIG_POOL_DEVICE_ID);
     cJSON_AddStringToObject(status, "boot_id", s_boot_id);
+    cJSON_AddNumberToObject(status, "presence_sequence", ++s_presence_sequence);
+    if (s_server_config_valid) cJSON_AddNumberToObject(status, "reported_config_revision", s_server_config.revision);
     cJSON_AddBoolToObject(status, "pump_in", s_pump_in);
     cJSON_AddBoolToObject(status, "pump_out", s_pump_out);
     cJSON_AddNumberToObject(status, "bom_vao_control", s_pump_in ? 1 : 0);
@@ -256,9 +274,15 @@ static void publish_status(void)
     }
     xSemaphoreGive(s_relay_lock);
     char *json = cJSON_PrintUnformatted(status);
-    if (json) esp_mqtt_client_enqueue(s_mqtt, TOPIC_STATUS, json, 0, 1, 1, true);
+    if (json) esp_mqtt_client_enqueue(s_mqtt, TOPIC_STATUS, json, 0, 1, retained, true);
     free(json);
     cJSON_Delete(status);
+}
+
+static void publish_status(void)
+{
+    s_status_pending = true;
+    publish_status_frame(true);
 }
 
 // Only MQTT-originated commands require this gate; AP/local control remains independent.
@@ -335,8 +359,10 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
         s_mqtt_phase = MQTT_PHASE_CONNECTED;
         s_mqtt_connected = true;
         esp_mqtt_client_subscribe(s_mqtt, TOPIC_CMD_PUMP, 1);
+        s_config_poll_requested = true;
         s_sample_requested = true;
         publish_status();
+        publish_status_frame(false);
         pool_network_send_telemetry(false, 0, false, false, 0);
         ESP_LOGI(TAG, "MQTT connected");
         break;
@@ -485,6 +511,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t event_i
         s_wifi_connected = true;
         s_wifi_failures = 0;
         s_sntp_start_requested = true;
+        s_config_poll_requested = true;
         const ip_event_got_ip_t *ip_event = data;
         ESP_LOGI(TAG, "Wi-Fi got IP: " IPSTR, IP2STR(&ip_event->ip_info.ip));
         // Keep the local AP available while the router connection is online.
@@ -494,6 +521,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t event_i
 
 static esp_err_t load_auto_rules(void)
 {
+    size_t managed_size = 0;
+    bool managed = nvs_get_blob(s_network_nvs, "server_cfg", NULL, &managed_size) == ESP_OK;
     union { stored_auto_rules_t current; old_auto_rules_t old; } stored = {0};
     size_t size = sizeof(stored);
     esp_err_t err = nvs_get_blob(s_network_nvs, "auto_rules", &stored, &size);
@@ -515,8 +544,9 @@ static esp_err_t load_auto_rules(void)
     }
     for (int i = 0; i < 2; i++) {
         pump_auto_reset(&s_auto_runtime[i]);
+        if (managed) s_auto_config[i].enabled = false;
         if (!automation_available(i, &s_auto_config[i])) s_auto_config[i].enabled = false;
-        bool initial_on = !s_auto_config[i].enabled &&
+        bool initial_on = !managed && !s_auto_config[i].enabled &&
             (i == 0 ? POOL_RELAY_INITIAL_1_ON : POOL_RELAY_INITIAL_2_ON);
         // A saved interlock takes precedence over the BOTH_ON boot setting.
         if (s_mqtt_settings.interlock && POOL_RELAY_INITIAL_1_ON && POOL_RELAY_INITIAL_2_ON) initial_on = false;
@@ -648,6 +678,17 @@ esp_err_t pool_network_init(void)
     }
     err = load_auto_rules();
     if (err != ESP_OK) return err;
+    pool_server_config_t stored_server;
+    err = pool_server_config_load(s_network_nvs, &stored_server);
+    if (err == ESP_OK) {
+        s_config_error = apply_server_config(&stored_server, false);
+        s_attempt_revision = stored_server.revision;
+        s_config_attempt = 1;
+        s_config_report_pending = true;
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        // Do not claim a revision when its complete snapshot cannot be restored.
+        ESP_LOGW(TAG, "Server config snapshot unavailable: %s", esp_err_to_name(err));
+    }
     if (POOL_HTTP_ENABLED) {
         err = telemetry_queue_init();
         if (err != ESP_OK) ESP_LOGE(TAG, "Persistent telemetry queue unavailable: %s", esp_err_to_name(err));
@@ -659,7 +700,7 @@ esp_err_t pool_network_init(void)
     if (err != ESP_OK) return err;
     if (!esp_netif_create_default_wifi_sta()) return ESP_FAIL;
     if (!esp_netif_create_default_wifi_ap()) return ESP_FAIL;
-    if (POOL_MQTT_ENABLED) {
+    if (POOL_MQTT_ENABLED || POOL_HTTP_ENABLED) {
         esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG(CONFIG_POOL_NTP_SERVER);
         sntp_config.start = false;
         sntp_config.sync_cb = time_synchronized;
@@ -745,6 +786,8 @@ esp_err_t pool_network_init(void)
         xTaskCreate(telemetry_task, "telemetry_http", 6144, NULL, 4, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
+    if ((POOL_HTTP_ENABLED || POOL_MQTT_ENABLED) &&
+        xTaskCreate(control_http_task, "control_http", 8192, NULL, 4, NULL) != pdPASS) return ESP_ERR_NO_MEM;
     if (POOL_MQTT_ENABLED && xTaskCreate(mqtt_command_task, "mqtt_commands", 8192, NULL, 4, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
@@ -769,6 +812,8 @@ static void sample_to_json(const telemetry_sample_t *sample, char *json, size_t 
 {
     char temperature_field[64] = "";
     char water_field[80] = "";
+    char measured[32] = "null";
+    if (sample->measured_at_ms) snprintf(measured, sizeof(measured), "%" PRId64, sample->measured_at_ms);
     if (sample->flags & TELEMETRY_HAS_TEMPERATURE) {
         snprintf(temperature_field, sizeof(temperature_field),
                  ",\"temperature\":%.2f", sample->temperature);
@@ -782,8 +827,9 @@ static void sample_to_json(const telemetry_sample_t *sample, char *json, size_t 
     }
     snprintf(json, capacity,
              "{\"action\":\"upload_sample\",\"device_id\":\"%s\",\"sample_id\":\"%016" PRIX64
-             "\",\"measured_at_ms\":null,\"time_quality\":\"unknown\",\"is_backfill\":%s%s%s}",
-             CONFIG_POOL_DEVICE_ID, sample->id, backfill ? "true" : "false", temperature_field, water_field);
+             "\",\"measured_at_ms\":%s,\"time_quality\":\"%s\",\"is_backfill\":%s%s%s}",
+             CONFIG_POOL_DEVICE_ID, sample->id, measured, sample->measured_at_ms ? "synced" : "unknown",
+             backfill ? "true" : "false", temperature_field, water_field);
 }
 
 static void record_http_result(esp_err_t error, int status_code)
@@ -812,10 +858,14 @@ static bool post_sample(const telemetry_sample_t *sample, bool backfill)
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
     memcpy(api_url, s_mqtt_settings.api_url, sizeof(api_url));
     xSemaphoreGive(s_relay_lock);
+    config_response_t response = {.data = calloc(1, CONFIG_RESPONSE_LIMIT + 1)};
+    if (!response.data) { record_http_result(ESP_ERR_NO_MEM, 0); return false; }
     esp_http_client_config_t http_config = {
         .url = api_url,
         .timeout_ms = 10000,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .alpn_protos = s_http_alpn, .disable_auto_redirect = true,
+        .event_handler = config_http_event, .user_data = &response,
     };
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
     s_http_status.sending = true;
@@ -824,6 +874,7 @@ static bool post_sample(const telemetry_sample_t *sample, bool backfill)
     if (!http) {
         record_http_result(ESP_ERR_NO_MEM, 0);
         ESP_LOGE(TAG, "Cannot create HTTP client");
+        free(response.data);
         return false;
     }
     esp_http_client_set_method(http, HTTP_METHOD_POST);
@@ -832,7 +883,17 @@ static bool post_sample(const telemetry_sample_t *sample, bool backfill)
     esp_http_client_set_post_field(http, json, strlen(json));
     esp_err_t err = esp_http_client_perform(http);
     int status = esp_http_client_get_status_code(http);
-    bool success = err == ESP_OK && (status == 200 || status == 201);
+    cJSON *reply = err == ESP_OK && (status == 200 || status == 201) ? api_response_success(&response) : NULL;
+    const cJSON *received = cJSON_GetObjectItemCaseSensitive(reply, "sample");
+    const cJSON *received_id = cJSON_GetObjectItemCaseSensitive(received, "sample_id");
+    const cJSON *received_device = cJSON_GetObjectItemCaseSensitive(received, "device_id");
+    char sample_id[17];
+    snprintf(sample_id, sizeof(sample_id), "%016" PRIX64, sample->id);
+    bool success = cJSON_IsString(received_id) && strcmp(received_id->valuestring, sample_id) == 0 &&
+        cJSON_IsString(received_device) && strcmp(received_device->valuestring, CONFIG_POOL_DEVICE_ID) == 0;
+    cJSON_Delete(reply);
+    free(response.data);
+    if (!success && err == ESP_OK) err = ESP_ERR_INVALID_RESPONSE;
     record_http_result(err, status);
     if (success) {
         ESP_LOGI(TAG, "HTTP POST OK: sample=%016" PRIX64 ", status=%d",
@@ -1025,6 +1086,12 @@ static void send_sample(bool has_temperature, float temperature, bool has_water,
                  (s_water_enabled ? TELEMETRY_WATER_ENABLED : 0) |
                  (s_wifi_connected ? TELEMETRY_ONLINE : 0),
     };
+    // Capture before enqueue; clock synchronization later must never rewrite this time.
+    if (measurement && clock_ready()) {
+        struct timeval now;
+        gettimeofday(&now, NULL);
+        sample.measured_at_ms = (int64_t)now.tv_sec * 1000 + now.tv_usec / 1000;
+    }
     xSemaphoreGive(s_relay_lock);
     if (!POOL_HTTP_ENABLED && !POOL_MQTT_ENABLED) return;
     network_sample_t work = {.sample = sample, .measurement = measurement};
@@ -1042,6 +1109,10 @@ esp_err_t pool_network_configure_pump(int channel, const pump_auto_config_t *con
 {
     if (channel < 0 || channel > 1 || !pump_auto_config_valid(config)) return ESP_ERR_INVALID_ARG;
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+    if (s_server_config_valid) {
+        xSemaphoreGive(s_relay_lock);
+        return ESP_ERR_INVALID_STATE; // Edit managed automation through update_config.
+    }
     if (config->enabled && !automation_available(channel, config)) {
         xSemaphoreGive(s_relay_lock);
         return ESP_ERR_NOT_SUPPORTED;
@@ -1143,6 +1214,15 @@ static void mqtt_v2_pump_ack(const char *command_id, const char *result)
     cJSON_Delete(ack);
 }
 
+#define COMMAND_LEDGER_SIZE 32
+typedef struct {
+    int64_t expires_at_ms;
+    char id[37];
+    uint8_t result; // 0 reserved/uncertain, 1 applied, 2 rejected
+    bool inlet, enabled;
+} command_record_t;
+typedef struct { uint32_t version; command_record_t records[COMMAND_LEDGER_SIZE]; } command_ledger_t;
+
 static void mqtt_v2_pump_command(const pool_mqtt_rx_t *rx)
 {
     if (rx->retained) return;
@@ -1163,31 +1243,79 @@ static void mqtt_v2_pump_command(const pool_mqtt_rx_t *rx)
     }
     char command_id[37];
     memcpy(command_id, id->valuestring, sizeof(command_id));
-    bool inlet = strcmp(target->valuestring, "pump_in") == 0;
-    const char *nvs_key = inlet ? "cmd_pump_in" : "cmd_pump_out";
-    char previous[37] = {0};
-    size_t previous_size = sizeof(previous);
-    if (nvs_get_str(s_network_nvs, nvs_key, previous, &previous_size) == ESP_OK &&
-        strcmp(previous, command_id) == 0) {
-        mqtt_v2_pump_ack(command_id, "applied");
-        cJSON_Delete(root);
-        return;
+    for (int i = 0; i < 36; i++) {
+        bool dash = i == 8 || i == 13 || i == 18 || i == 23;
+        char ch = command_id[i];
+        if (dash ? ch != '-' : !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'))) {
+            cJSON_Delete(root);
+            return;
+        }
     }
+    bool inlet = strcmp(target->valuestring, "pump_in") == 0;
     struct timeval now;
     gettimeofday(&now, NULL);
     int64_t now_ms = (int64_t)now.tv_sec * 1000 + now.tv_usec / 1000;
-    if (!clock_ready() || expiry->valuedouble <= (double)now_ms ||
+    if (!isfinite(expiry->valuedouble) || floor(expiry->valuedouble) != expiry->valuedouble ||
+        !clock_ready() || expiry->valuedouble <= (double)now_ms ||
         expiry->valuedouble > (double)now_ms + 60000) {
         mqtt_v2_pump_ack(command_id, "rejected");
         cJSON_Delete(root);
         return;
     }
     bool on = cJSON_IsTrue(enabled);
-    esp_err_t err = set_pumps(inlet && on, !inlet && on, false, false, inlet ? 1 : 2);
+    // Reserve durably before actuation. After a crash, an uncertain reservation
+    // replays as rejected, never as another relay transition.
+    xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+    command_ledger_t ledger = {0};
+    size_t size = sizeof(ledger);
+    esp_err_t err = nvs_get_blob(s_network_nvs, "cmd_log", &ledger, &size);
+    if (err == ESP_ERR_NVS_NOT_FOUND) { ledger.version = 1; err = ESP_OK; }
+    if (err != ESP_OK || ledger.version != 1 || size != sizeof(ledger)) {
+        xSemaphoreGive(s_relay_lock);
+        mqtt_v2_pump_ack(command_id, "rejected");
+        cJSON_Delete(root);
+        return;
+    }
+    int slot = -1;
+    for (int i = 0; i < COMMAND_LEDGER_SIZE; i++) {
+        command_record_t *record = &ledger.records[i];
+        if (memcmp(record->id, command_id, sizeof(record->id)) == 0) {
+            bool same = record->inlet == inlet && record->enabled == on &&
+                record->expires_at_ms == (int64_t)expiry->valuedouble;
+            const char *result = same && record->result == 1 ? "applied" : "rejected";
+            xSemaphoreGive(s_relay_lock);
+            mqtt_v2_pump_ack(command_id, result);
+            cJSON_Delete(root);
+            return;
+        }
+        if (slot < 0 && (!record->id[0] || record->expires_at_ms <= now_ms)) slot = i;
+    }
+    if (slot < 0) {
+        xSemaphoreGive(s_relay_lock);
+        mqtt_v2_pump_ack(command_id, "rejected"); // Never evict an unexpired command.
+        cJSON_Delete(root);
+        return;
+    }
+    command_record_t *record = &ledger.records[slot];
+    memset(record, 0, sizeof(*record));
+    memcpy(record->id, command_id, sizeof(record->id));
+    record->inlet = inlet;
+    record->enabled = on;
+    record->expires_at_ms = (int64_t)expiry->valuedouble;
+    err = nvs_set_blob(s_network_nvs, "cmd_log", &ledger, sizeof(ledger));
+    if (err == ESP_OK) err = nvs_commit(s_network_nvs);
+    xSemaphoreGive(s_relay_lock);
     if (err == ESP_OK) {
-        err = nvs_set_str(s_network_nvs, nvs_key, command_id);
-        if (err == ESP_OK) err = nvs_commit(s_network_nvs);
-        if (err != ESP_OK && on) set_pumps(false, false, false, true, inlet ? 1 : 2);
+        err = set_pumps(inlet && on, !inlet && on, false, false, inlet ? 1 : 2);
+        record->result = err == ESP_OK ? 1 : 2;
+        xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+        esp_err_t saved = nvs_set_blob(s_network_nvs, "cmd_log", &ledger, sizeof(ledger));
+        if (saved == ESP_OK) saved = nvs_commit(s_network_nvs);
+        xSemaphoreGive(s_relay_lock);
+        if (saved != ESP_OK) {
+            err = saved;
+            if (on) set_pumps(false, false, false, true, 0);
+        }
     }
     mqtt_v2_pump_ack(command_id, err == ESP_OK ? "applied" : "rejected");
     cJSON_Delete(root);
@@ -1204,6 +1332,8 @@ static void mqtt_receive(esp_mqtt_event_handle_t event)
         event->data_len, event->total_data_len, event->current_data_offset, event->retain);
     if (result < 0) { ESP_LOGW(TAG, "Rejected invalid/oversized MQTT frame"); return; }
     if (result == 0) return;
+    // API v2 is the only configuration authority. Never execute global legacy topics.
+    if (strcmp(s_mqtt_rx.topic, TOPIC_CMD_PUMP) != 0) return;
     if (strcmp(s_mqtt_rx.topic, TOPIC_CMD_PUMP) == 0) {
         mqtt_v2_pump_command(&s_mqtt_rx);
         return;
@@ -1423,18 +1553,38 @@ static bool post_live_status(void)
     cJSON_AddBoolToObject(body, "pump_out", pump_out);
     cJSON_AddBoolToObject(body, "temperature_enabled", temperature_enabled);
     cJSON_AddBoolToObject(body, "water_enabled", water_enabled);
+    xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+    if (s_server_config_valid) cJSON_AddNumberToObject(body, "reported_config_revision", s_server_config.revision);
+    xSemaphoreGive(s_relay_lock);
+    if (clock_ready()) {
+        struct timeval now;
+        gettimeofday(&now, NULL);
+        cJSON_AddNumberToObject(body, "reported_at_ms", (double)now.tv_sec * 1000 + now.tv_usec / 1000);
+    }
+    if (s_config_report_pending) {
+        cJSON *apply = cJSON_AddObjectToObject(body, "config_apply");
+        if (!apply) { cJSON_Delete(body); return false; }
+        cJSON_AddNumberToObject(apply, "attempt_sequence", s_config_attempt);
+        cJSON_AddNumberToObject(apply, "revision", s_attempt_revision);
+        cJSON_AddStringToObject(apply, "result", s_config_error ? "error" : "applied");
+        if (s_config_error) cJSON_AddStringToObject(apply, "error_code", s_config_error);
+    }
     if (ssid[0]) cJSON_AddStringToObject(body, "wifi_ssid", ssid);
     if (ip_text[0]) cJSON_AddStringToObject(body, "lan_ip", ip_text);
     char *json = cJSON_PrintUnformatted(body);
     cJSON_Delete(body);
     if (!json) return false;
+    config_response_t response = {.data = calloc(1, CONFIG_RESPONSE_LIMIT + 1)};
+    if (!response.data) { free(json); return false; }
     esp_http_client_config_t config = {
         .url = api_url,
         .timeout_ms = 10000,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .alpn_protos = s_http_alpn, .disable_auto_redirect = true,
+        .event_handler = config_http_event, .user_data = &response,
     };
     esp_http_client_handle_t http = esp_http_client_init(&config);
-    if (!http) { free(json); return false; }
+    if (!http) { free(json); free(response.data); return false; }
     esp_http_client_set_method(http, HTTP_METHOD_POST);
     esp_http_client_set_header(http, "Content-Type", "application/json");
     esp_http_client_set_header(http, "X-Pool-Device-Key", SMARTPOOL_DEVICE_KEY);
@@ -1443,7 +1593,17 @@ static bool post_live_status(void)
     int status = esp_http_client_get_status_code(http);
     esp_http_client_cleanup(http);
     free(json);
-    if (err != ESP_OK || status != 200) {
+    cJSON *reply = err == ESP_OK && status == 200 ? api_response_success(&response) : NULL;
+    const cJSON *state = cJSON_GetObjectItemCaseSensitive(reply, "state");
+    const cJSON *device = cJSON_GetObjectItemCaseSensitive(state, "device_id");
+    const cJSON *boot = cJSON_GetObjectItemCaseSensitive(state, "boot_id");
+    const cJSON *sequence = cJSON_GetObjectItemCaseSensitive(state, "state_sequence");
+    bool accepted = cJSON_IsString(device) && !strcmp(device->valuestring, CONFIG_POOL_DEVICE_ID) &&
+        cJSON_IsString(boot) && !strcmp(boot->valuestring, s_boot_id) &&
+        cJSON_IsNumber(sequence) && sequence->valuedouble == s_state_sequence;
+    cJSON_Delete(reply);
+    free(response.data);
+    if (!accepted) {
         ESP_LOGW(TAG, "HTTP status report failed: %s, status=%d", esp_err_to_name(err), status);
         return false;
     }
@@ -1452,7 +1612,6 @@ static bool post_live_status(void)
 
 static void telemetry_task(void *arg)
 {
-    int64_t last_status_us = 0;
     while (1) {
         network_sample_t work;
         if (xQueueReceive(s_pending_samples, &work, pdMS_TO_TICKS(1000)) == pdTRUE) {
@@ -1491,12 +1650,164 @@ static void telemetry_task(void *arg)
             }
         }
         if (POOL_HTTP_ENABLED && s_wifi_connected) flush_queued_samples();
-        int64_t now_us = esp_timer_get_time();
-        if (POOL_HTTP_ENABLED && s_wifi_connected &&
-            (atomic_exchange(&s_status_pending, false) ||
-             !last_status_us || now_us - last_status_us >= 30000000)) {
-            last_status_us = now_us;
-            post_live_status();
+    }
+}
+
+// Stop and persist as one managed configuration transition. No HTTP under the relay lock.
+static const char *apply_server_config(const pool_server_config_t *next, bool persist)
+{
+    const char *error = NULL;
+    xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+    if (s_server_config_valid && next->revision < s_server_config.revision) error = "REVISION_CONFLICT";
+    if (!error && s_server_config_valid && next->revision == s_server_config.revision) {
+        bool same = pool_server_config_equal(next, &s_server_config);
+        xSemaphoreGive(s_relay_lock);
+        return same ? NULL : "REVISION_CONFLICT";
+    }
+    for (int i = 0; !error && i < 2; i++) {
+        if (next->automation[i].enabled && !automation_available(i, &next->automation[i]))
+            error = "FEATURE_UNAVAILABLE";
+    }
+    if (!error) {
+        esp_err_t first = relay_set(RELAY_1, false);
+        esp_err_t second = relay_set(RELAY_2, false);
+        if (first == ESP_OK) { s_pump_in = false; s_local_pump_in = false; }
+        if (second == ESP_OK) { s_pump_out = false; s_local_pump_out = false; }
+        for (int i = 0; i < 2; i++) pump_auto_pause(&s_auto_runtime[i]);
+        if (first != ESP_OK || second != ESP_OK) error = "RELAY_STOP_FAILED";
+    }
+    if (!error && persist && pool_server_config_save(s_network_nvs, next) != ESP_OK) error = "NVS_WRITE_FAILED";
+    if (!error) {
+        s_server_config = *next;
+        s_server_config_valid = true;
+        s_mqtt_settings.temp_min = next->temperature_min;
+        s_mqtt_settings.temp_max = next->temperature_max;
+        s_mqtt_settings.water_min = next->water_adc_min;
+        s_mqtt_settings.water_max = next->water_adc_max;
+        s_mqtt_settings.interlock = next->interlock;
+        memcpy(s_auto_config, next->automation, sizeof(s_auto_config));
+        for (int i = 0; i < 2; i++) {
+            pump_auto_reset(&s_auto_runtime[i]);
+            s_auto_wait_after_us[i] = s_last_sample_us; // Wait for a fresh measurement.
         }
+    }
+    xSemaphoreGive(s_relay_lock);
+    s_sample_requested = true;
+    s_status_pending = true;
+    return error;
+}
+
+static esp_err_t config_http_event(esp_http_client_event_t *event)
+{
+    config_response_t *response = event->user_data;
+    if (event->event_id != HTTP_EVENT_ON_DATA || !response || event->data_len <= 0) return ESP_OK;
+    if (response->used + (size_t)event->data_len > CONFIG_RESPONSE_LIMIT) {
+        response->overflow = true;
+        return ESP_FAIL;
+    }
+    memcpy(response->data + response->used, event->data, event->data_len);
+    response->used += event->data_len;
+    response->data[response->used] = 0;
+    return ESP_OK;
+}
+
+static cJSON *api_response_success(const config_response_t *response)
+{
+    cJSON *root = !response->overflow ? cJSON_ParseWithLength(response->data, response->used) : NULL;
+    const cJSON *status = cJSON_GetObjectItemCaseSensitive(root, "status");
+    const cJSON *version = cJSON_GetObjectItemCaseSensitive(root, "api_version");
+    if (cJSON_IsString(status) && !strcmp(status->valuestring, "success") &&
+        cJSON_IsNumber(version) && version->valuedouble == 2) return root;
+    cJSON_Delete(root);
+    return NULL;
+}
+
+static void poll_server_config(void)
+{
+    if (!SMARTPOOL_DEVICE_KEY[0]) return;
+    char api_url[257];
+    xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+    snprintf(api_url, sizeof(api_url), "%s", s_mqtt_settings.api_url);
+    xSemaphoreGive(s_relay_lock);
+    config_response_t response = {.data = calloc(1, CONFIG_RESPONSE_LIMIT + 1)};
+    if (!response.data) return;
+    char request[160];
+    snprintf(request, sizeof(request), "{\"action\":\"get_device_config\",\"device_id\":\"%s\"}", CONFIG_POOL_DEVICE_ID);
+    esp_http_client_config_t config = {
+        .url = api_url, .timeout_ms = 10000, .crt_bundle_attach = esp_crt_bundle_attach,
+        .alpn_protos = s_http_alpn, .disable_auto_redirect = true,
+        .event_handler = config_http_event, .user_data = &response,
+    };
+    esp_http_client_handle_t http = esp_http_client_init(&config);
+    if (!http) { free(response.data); return; }
+    esp_http_client_set_method(http, HTTP_METHOD_POST);
+    esp_http_client_set_header(http, "Content-Type", "application/json");
+    esp_http_client_set_header(http, "X-Pool-Device-Key", SMARTPOOL_DEVICE_KEY);
+    esp_http_client_set_post_field(http, request, strlen(request));
+    esp_err_t result = esp_http_client_perform(http);
+    int status = esp_http_client_get_status_code(http);
+    esp_http_client_cleanup(http);
+    cJSON *root = result == ESP_OK && status == 200 ? api_response_success(&response) : NULL;
+    const cJSON *success = cJSON_GetObjectItemCaseSensitive(root, "status");
+    const cJSON *object = cJSON_GetObjectItemCaseSensitive(root, "config");
+    pool_server_config_t next;
+    if (cJSON_IsString(success) && strcmp(success->valuestring, "success") == 0 && cJSON_IsObject(object)) {
+        bool valid = pool_server_config_parse(object, CONFIG_POOL_DEVICE_ID, &next);
+        const cJSON *revision = cJSON_GetObjectItemCaseSensitive(object, "revision");
+        const cJSON *id = cJSON_GetObjectItemCaseSensitive(object, "device_id");
+        if (cJSON_IsString(id) && strcmp(id->valuestring, CONFIG_POOL_DEVICE_ID) == 0 &&
+            cJSON_IsNumber(revision) && isfinite(revision->valuedouble) &&
+            revision->valuedouble >= 1 && revision->valuedouble <= 9007199254740991.0 &&
+            floor(revision->valuedouble) == revision->valuedouble) {
+            xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+            bool already = valid && s_server_config_valid && pool_server_config_equal(&next, &s_server_config);
+            xSemaphoreGive(s_relay_lock);
+            if (!already) {
+                s_config_error = valid ? apply_server_config(&next, true) : "INVALID_CONFIG";
+                s_attempt_revision = (uint64_t)revision->valuedouble;
+                ++s_config_attempt;
+                s_config_report_pending = true;
+                s_status_pending = true;
+                publish_status();
+            }
+        }
+    } else {
+        // Never log response bodies: credentials or proxy diagnostics may be included.
+        ESP_LOGW(TAG, "Config fetch unavailable: %s, status=%d", esp_err_to_name(result), status);
+    }
+    cJSON_Delete(root);
+    free(response.data);
+}
+
+static void control_http_task(void *arg)
+{
+    int64_t last_status = 0, last_config = 0, last_presence = 0;
+    bool had_wifi = false;
+    while (1) {
+        int64_t now = esp_timer_get_time();
+        if (s_mqtt_connected && (!last_presence || now - last_presence >= 30000000)) {
+            publish_status_frame(false);
+            last_presence = now;
+        }
+        if (!s_mqtt_connected) last_presence = 0;
+        if (POOL_HTTP_ENABLED && s_wifi_connected) {
+            if (!had_wifi) { s_config_poll_requested = true; s_status_pending = true; }
+            // Keep retrying the same apply attempt until the API commits its report.
+            if (!s_config_report_pending && (atomic_exchange(&s_config_poll_requested, false) ||
+                !last_config || now - last_config >= 30000000)) {
+                last_config = now;
+                poll_server_config();
+            }
+            now = esp_timer_get_time();
+            if ((!last_status || now - last_status >= 30000000 || s_status_pending) &&
+                (!last_status || now - last_status >= 5000000)) {
+                atomic_exchange(&s_status_pending, false);
+                last_status = now;
+                if (post_live_status()) s_config_report_pending = false;
+                else s_status_pending = true;
+            }
+        }
+        had_wifi = s_wifi_connected;
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
