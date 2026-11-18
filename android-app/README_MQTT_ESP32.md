@@ -1,98 +1,26 @@
-# Ứng dụng Android Smart Pool
+# Ứng dụng Android Smart Pool với backend v2
 
-**Tương thích backend:** app hiện tại chưa tích hợp API v2, role user, danh sách/chọn thiết bị và context device_id. Các hành vi admin/guest bên dưới mô tả client cũ; không dùng làm bằng chứng tương thích backend mới. Xem [hợp đồng v2](../docs/database-v2.md). BLE chưa triển khai.
+App dùng HTTPS API v2 qua Cloudflare Quick Tunnel. ESP kết nối MQTT WSS và HTTP với Pi; app không đăng nhập trực tiếp vào broker. Broker v2 không có tài khoản `android` hay quyền publish các topic điều khiển cũ.
 
-[Hướng dẫn tổng thể](../README.md) · [Giao thức MQTT](../README_MQTT_ESP32.md) · [Luồng toàn hệ thống](../docs/system-flow.md) · [Triển khai Raspberry Pi](../deploy/raspberry-pi/README.md)
+## Chức năng đã tích hợp
 
-Ứng dụng đăng nhập và đọc số đo/lịch sử qua HTTPS API; điều khiển bơm, nhận trạng thái ESP32 và cấu hình thiết bị qua MQTT. Dịch vụ nền nhận telemetry để phát cảnh báo. Admin có thể tạo tài khoản admin/guest và quản lý guest; người dùng có thể xem biểu đồ và nhật ký thao tác.
+- Đăng nhập bằng `login`, lưu Bearer token và vai trò `admin` hoặc `user`; đăng xuất bằng `logout`.
+- Theo dõi thiết bị `SmartPool` bằng `get_status`, gồm trạng thái relay, cảm biến, IP LAN và mẫu đo gần nhất.
+- Xem biểu đồ bằng `get_history` theo thời điểm Pi nhận dữ liệu. Nếu chưa hiệu chuẩn mực nước, biểu đồ hiển thị ADC thô.
+- Xem nhật ký thiết bị bằng `list_activity`.
+- Admin xem `list_users`, tạo tài khoản bằng `create_user`, đổi mật khẩu bằng `set_user_password`, khóa/mở bằng `set_user_active`. User mới được cấp quyền xem `SmartPool` bằng `set_device_member`.
+- Dịch vụ nền đọc API v2 mỗi 30 giây để cảnh báo nhiệt độ khi thiết bị và mẫu đo còn mới.
 
-## Bố cục và điều hướng
+`device_id` mặc định là `SmartPool`. Admin có thể sửa ID trong phần cài đặt; user cần được cấp quyền xem thiết bị tương ứng. Tài khoản đăng nhập app là tài khoản API, không phải tài khoản MQTT hay MariaDB.
 
-Giao diện sáng dùng màu navy–cyan, thẻ bo góc và thanh điều hướng dưới cố định:
+## Giới hạn hiện tại
 
-| Mục | Nội dung |
-| --- | --- |
-| **Tổng quan** | Tên/ID thiết bị, hai số đo đồng thời, cảnh báo, thời gian cập nhật; chạm số đo để xem biểu đồ |
-| **Điều khiển** | Bật/tắt hai bơm, kích hoạt cảm biến và khóa liên động theo quyền hiện có |
-| **Hệ thống** | Lưu đồ trạng thái; thông tin kết nối chi tiết dành cho admin |
+Admin có trang Tổng quan riêng: danh sách thiết bị, chủ sở hữu, trạng thái online, bơm và ô tìm theo ID. User chỉ nhận thiết bị được cấp quyền qua `list_devices`. Nút bơm gọi `request_control`; worker trên Pi kiểm tra quyền rồi phát lệnh MQTT theo `device_id`, ESP gửi ACK và trạng thái mới. Nút chỉ bật khi thiết bị online và worker báo sẵn sàng. Cấu hình cảm biến và interlock từ xa vẫn khóa. Nhật ký thao tác cũ trong SQLite chỉ lưu trên điện thoại; API v2 dùng một định dạng `record_activity` mới.
 
-Biểu tượng **Nhật ký** và **Cài đặt** ở thanh trên. Guest không thấy Cài đặt, vẫn dùng ba mục chính và nhật ký của mình. Đăng xuất nằm dưới tên ứng dụng. Chuyển mục không ngắt MQTT, không dừng polling và không phát lại lệnh.
+App dùng URL mặc định của tunnel đang chạy khi build. Quick Tunnel có thể đổi URL sau khi khởi động lại. Lấy `android_http_api_url` từ `~/smartpool-v2-endpoints.txt` trên Pi và nhập ở **Cấu hình API** trên màn hình đăng nhập hoặc phần cài đặt của app. URL hiện tại không phải địa chỉ cố định lâu dài.
 
-Trong **Cài đặt**, ba tab là **Thiết bị / Tự động / Tài khoản**. Tab Thiết bị chia thành năm nhóm có thể mở/thu gọn: ngưỡng và hiệu chuẩn, Wi-Fi, thông tin thiết bị, MQTT, HTTP. Các nhóm mặc định thu gọn; mở nhóm không tự lưu hay gửi cấu hình. Nhóm đang mở và mục điều hướng được giữ khi tái tạo màn hình.
+## Build và kiểm tra
 
-Đăng nhập có nhãn nhập liệu và nút hiện/ẩn mật khẩu; cấu hình API vẫn chỉ là dòng **Cấu hình API**, mở hộp cập nhật khi nhấn. Biểu đồ có vùng cuộn để giữ các nút và chú thích dễ tiếp cận trên màn hình nhỏ. Nhật ký trình bày từng sự kiện thành thẻ, tách thời gian, thao tác, kết quả và trạng thái đồng bộ.
+Trong `android-app`, chạy `./gradlew assembleDebug` trên Linux/macOS hoặc `.\gradlew.bat assembleDebug` trên Windows. APK debug nằm tại `app/build/outputs/apk/debug/app-debug.apk`.
 
-## Nhật ký thao tác
-
-Nhấn biểu tượng **Nhật ký** ở thanh trên để xem tối đa 100 sự kiện mới nhất: thời gian, tài khoản, ID thiết bị, thao tác và kết quả. Guest xem nhật ký của mình; admin xem nhật ký các tài khoản.
-
-- Ghi nhận lệnh bơm, bật/tắt cảm biến, khóa liên động, gửi cấu hình/tự động hóa, lưu kết nối MQTT, hiệu chuẩn, khôi phục mặc định và quản lý tài khoản.
-- Lệnh bơm/cảm biến chỉ được ghi **Đã xác nhận** khi nhận trạng thái ESP32 khớp yêu cầu. Gửi cấu hình cần ACK khớp `req_id` và `action`. Khóa liên động chỉ ghi broker đã nhận, không khẳng định thiết bị đã áp dụng.
-- Sự kiện lưu trước vào SQLite trên điện thoại; tự gửi qua API khi thêm sự kiện, trở lại màn hình chính, đọc API thành công hoặc mở nhật ký. Lỗi mạng không chặn điều khiển MQTT và không xóa sự kiện chưa đồng bộ.
-- Hàng đợi gắn với tài khoản và URL API lúc thao tác. Chỉ gửi khi đăng nhập đúng tên tài khoản và dùng lại URL đó, không tự chuyển nhật ký sang máy chủ khác khi đổi URL.
-- Nhật ký không chứa mật khẩu, token hoặc payload cấu hình. Đây là nhật ký do app báo cáo, không phải bằng chứng kiểm toán độc lập từ broker hay phản hồi vật lý của bơm.
-
-Mục **Chưa đồng bộ** vẫn nằm trên điện thoại; nhấn **Đồng bộ và tải lại** để cập nhật. Nếu ứng dụng bị hệ điều hành dừng trước khi nhận kết quả, bản ghi yêu cầu chưa xác nhận được giữ nguyên, không suy đoán thành công. Gỡ app/xóa dữ liệu app sẽ xóa nhật ký cục bộ chưa gửi.
-
-## Tab Trạng thái hệ thống
-
-Chọn **Hệ thống** trên thanh điều hướng dưới, dùng được cho cả admin và guest. Màn hình vẽ lưu đồ có các khối và mũi tên:
-
-- Android → API trên Raspberry Pi → MariaDB.
-- Android → MQTT/Mosquitto → ESP32-S3.
-- ESP32 → cảm biến nhiệt độ/mực nước, hai bơm/relay, khóa liên động, Wi-Fi và quy tắc tự động của từng bơm.
-
-Mỗi khối hiển thị trạng thái bằng chữ và màu: bật/Enabled, tắt/Disabled, không hỗ trợ, chờ xác nhận, lỗi kết nối hoặc chưa rõ. Trạng thái cập nhật từ cùng kết nối API/MQTT của màn hình giám sát, không tạo thêm kết nối và không gửi lệnh khi chuyển tab. Giữ tab đang chọn khi tái tạo màn hình.
-
-MariaDB chỉ được đánh dấu truy vấn thành công khi app đọc được phản hồi API hợp lệ; API lỗi không đủ để kết luận database đã tắt. Khi mất liên lạc ESP hoặc chưa có trường dữ liệu, phần cứng hiển thị **Chưa rõ**, không suy đoán tắt. Khóa liên động dùng giá trị ESP báo, không dùng công tắc đã lưu cục bộ. Wi-Fi chỉ xác nhận ESP báo có IP LAN. Trạng thái bơm phản ánh relay do firmware báo, không xác minh motor thực sự quay.
-
-Phần đầu hiển thị ID ESP báo khi đang liên lạc, nếu chưa có thì ghi rõ ID cấu hình trên app; có thời gian nhận status và kiểm tra API. Bản tin MQTT có thể là retained, thời gian nhận không phải thời gian đo/heartbeat mới. Tab không kiểm tra trực tiếp tiến trình Docker, Cloudflare hoặc tình trạng hệ điều hành Pi.
-
-## Biểu đồ và khôi phục cấu hình
-
-Trục X dùng `received_at_ms` từ API, hiển thị ngày/giờ theo múi giờ điện thoại. Khoảng cách điểm tương ứng thời gian thực tế, không phải thứ tự mẫu; một mẫu vẫn được vẽ bằng chấm. Đây là **thời điểm máy chủ nhận dữ liệu**, không phải thời điểm đo khi ESP gửi bù sau mất mạng. Mẫu thiếu timestamp bị bỏ qua kèm thông báo cập nhật API.
-
-Cấu hình đã lưu trong app được giữ qua lần mở lại: kết nối API/MQTT, thông tin thiết bị, ngưỡng, hiệu chuẩn, khóa liên động, tab Settings và cảm biến đang xem biểu đồ. Khi mở biểu đồ từ thẻ cảm biến, thẻ được chọn có ưu tiên; khi tái tạo màn hình, giữ lựa chọn đang xem. Nội dung mới nhập chưa lưu không được bảo đảm khôi phục.
-
-App **không tự gửi lại lệnh bật bơm** khi mở lại. Trạng thái bơm và cảm biến lấy từ ESP32; chờ MQTT kết nối và ESP online trước khi điều khiển. Phiên đăng nhập chỉ giữ qua lần kết thúc tiến trình khi chọn ghi nhớ và token còn hạn.
-
-Để tự kiểm tra: lưu cấu hình/hiệu chuẩn, chọn tab, đóng rồi mở lại app mà không xóa dữ liệu; đối chiếu giá trị đã lưu và chờ trạng thái ESP32. Thử nhật ký khi API mất kết nối nhưng MQTT còn hoạt động, sau đó phục hồi API và tải lại nhật ký.
-
-## Admin tạo admin khác
-
-Trong **Cài đặt → Tài khoản**, nhập tên/mật khẩu, chọn vai trò **Guest** hoặc **Admin**, rồi nhấn **Tạo tài khoản**. Mặc định là Guest. Admin mới có thể đăng nhập và quản lý như admin hiện có; API kiểm tra quyền admin của người tạo.
-
-Danh sách hiển thị cả hai vai trò. Admin hiện có chỉ đọc, không sửa/xóa tại đây. Khi sửa guest, vai trò giữ nguyên guest, không dùng biểu mẫu sửa để nâng quyền. Admin đầu tiên vẫn được tạo bằng công cụ CLI trên Pi.
-
-## Bật/tắt cảm biến
-
-Trong **Điều khiển → Cảm biến**, mỗi cảm biến có công tắc bật/tắt đo trên ESP32. Công tắc chỉ thao tác được khi MQTT đã kết nối, ESP32 trực tuyến và firmware hỗ trợ cảm biến đó. Ứng dụng chờ trạng thái ESP32 xác nhận; nếu gửi lỗi hoặc quá thời gian chờ sẽ báo lỗi, không coi việc broker nhận lệnh là thành công.
-
-Khi cảm biến tắt, thẻ hiển thị “Đã tắt” và không tạo cảnh báo trên màn hình từ số đo cũ của cảm biến đó. Thao tác này dừng đo, không ngắt nguồn điện cảm biến; không xóa lịch sử đã lưu. Có thể bật lại từ app hoặc web ESP32; trạng thái được đồng bộ qua MQTT. Việc tắt cảm biến cũng có thể ảnh hưởng các quy tắc tự động hóa đang dùng cảm biến đó.
-
-## Tạo APK
-
-Cần cài Android SDK và JDK theo cấu hình Gradle. Trên Linux hoặc macOS, chạy từ thư mục `android-app`:
-
-```bash
-./gradlew assembleDebug
-```
-
-Trên Windows:
-
-```powershell
-.\gradlew.bat assembleDebug
-```
-
-APK debug được tạo tại `app/build/outputs/apk/debug/app-debug.apk`. Đây là bản cài thử; phát hành chính thức cần tạo và bảo vệ khóa ký release riêng.
-
-## Cấu hình kết nối
-
-1. Trên màn hình đăng nhập, nhấn **Cấu hình API** để xem hoặc cập nhật URL API. Nếu nhập URL gốc, ứng dụng tự bổ sung `/pool_api/pool_api.php`.
-2. Đăng nhập bằng tài khoản ứng dụng đã tạo trên Pi. Tài khoản ứng dụng không phải tài khoản MQTT hoặc MariaDB.
-3. Với tài khoản admin, trong **Cài đặt → Thiết bị → Kết nối MQTT**, nhập `mqtt_wss_uri` từ `~/smartpool-endpoints.txt` để kết nối Mosquitto trên Pi. Dùng tài khoản MQTT `android` và mật khẩu từ cấu hình riêng trên Pi; file endpoint không chứa mật khẩu.
-4. Lưu cấu hình MQTT. Đổi URL API không tự đổi broker MQTT; thông tin kết nối đã lưu được ưu tiên hơn giá trị mặc định của ứng dụng.
-
-Để nhúng tài khoản MQTT mặc định khi build, sao chép `mqtt.properties.example` thành `mqtt.properties` rồi điền `mqtt.username` và `mqtt.password` bằng tài khoản ứng dụng trên Mosquitto. Không chia sẻ hoặc đưa tệp chứa mật khẩu lên Git.
-
-Địa chỉ Quick Tunnel có thể thay đổi sau khi tunnel khởi động lại; lấy URL hiện hành từ file endpoint trên Pi. Chi tiết topic, payload và xác nhận lệnh nằm trong [tài liệu giao thức MQTT](../README_MQTT_ESP32.md).
+Ngày 18/11/2026: build debug thành công; đã cài lên Android emulator, đăng nhập admin, đọc `SmartPool`, tải 37 mẫu lịch sử, và xem danh sách tài khoản/nhật ký qua API v2. Chưa cài trên điện thoại thật. Xem thêm [API v2](../docs/database-v2.md) và [triển khai Pi](../deploy/raspberry-pi-v2/README.md).

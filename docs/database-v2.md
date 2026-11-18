@@ -6,7 +6,7 @@ Database/API được tái cấu trúc cho admin quản lý nhiều thiết bị
 
 Admin mới dùng username `admin`; credential hiện tại lưu riêng tại `~/smartpool-v2-credentials.txt` trên Pi (quyền 600), không dùng mật khẩu ứng dụng cũ. Backup trước reset và source/image API cũ được giữ tại `/home/qnm/smartpool-rollbacks/v2-20261117-223404/`, cần sudo để đọc. Không đưa nội dung credential hoặc dump vào Git/log.
 
-Không nhập/chuyển dữ liệu cũ. Reset là lệnh CLI riêng có cờ rõ ràng; `migrate.php`, `deploy.sh` và `pool.sh up` không tự xóa database. Firmware, app Android và topic/ACL MQTT hiện chưa chuyển sang hợp đồng v2; BLE chưa triển khai. Không đưa bản API này vào hệ thống đang dùng client cũ mà kỳ vọng mọi chức năng tiếp tục hoạt động.
+Không nhập/chuyển dữ liệu cũ. Reset là lệnh CLI riêng có cờ rõ ràng; `migrate.php`, `deploy.sh` và `pool.sh up` không tự xóa database. Firmware đã hỗ trợ gửi mẫu/status và publish MQTT theo thiết bị; điều khiển/config revision từ xa và BLE chưa triển khai. App Android đã hỗ trợ đăng nhập, trạng thái, lịch sử, nhật ký và quản trị tài khoản cơ bản qua API v2; chọn nhiều thiết bị và điều khiển từ xa chưa triển khai.
 
 ## Mô hình quan hệ
 
@@ -112,7 +112,7 @@ Người dùng gửi `Authorization: Bearer TOKEN`. ESP gửi `X-Pool-Device-Key
 | `login` | Chưa đăng nhập | username/password/remember_me; trả user, token, expires_in, devices và next_after_device_id |
 | `logout` | User | Thu hồi đúng phiên Bearer đang dùng |
 | `list_users` | Admin | limit 1..100, after_id; không trả password hash |
-| `create_user` | Admin | username, full_name, password admin 7..72 byte hoặc user 8..72 byte, role admin/user, student_code tùy chọn |
+| `create_user` | Admin | username, full_name, password 7..72 byte, role admin/user, student_code tùy chọn |
 | `set_user_active` | Admin | user_id, is_active; không tự khóa mình/khóa admin cuối cùng |
 | `set_user_password` | Admin | user_id, password; thu hồi mọi phiên của user đó |
 | `register_device` | Admin | device_id, name, student_full_name, student_code, owner_user_id tùy chọn; thiết bị inactive, config revision=1 |
@@ -172,7 +172,7 @@ Status là luồng live riêng, không gửi bù từ hàng đợi cảm biến:
 
 Response `delivery=stored_only` nghĩa chỉ lưu cấu hình, chưa có worker đồng bộ MQTT hoặc BLE. ESP có thể đọc bằng `get_device_config` khi firmware được tích hợp. Wi-Fi provisioning qua BLE và khôi phục offline là công việc tiếp theo trên Android/ESP; database không thể bảo đảm điện thoại đang ở gần thiết bị.
 
-`request_control` tạo lệnh pending và audit, trả `delivery=not_published_by_api`. **Hiện chưa có MQTT publisher/outbox worker**, không coi response này là bơm đã chạy. Request_id lặp trên cùng device/user/target/enabled trả cùng lệnh; xung đột nội dung hoặc người gọi trả 409. Retry không gia hạn TTL. Gỡ membership, thu hồi control, khóa user hoặc inactive thiết bị sẽ hủy các lệnh pending tương ứng thành cancelled trong cùng giao dịch. ACK do credential của đúng thiết bị gửi, không phải xác nhận của motor vật lý. Lệnh hết hạn hiển thị effective_status=expired, chưa có job tự xóa hoặc tự thu gom pending. Worker tương lai phải kiểm tra lại quyền/active/TTL trước publish, không chỉ đọc một lệnh đã từng được chấp nhận.
+`request_control` tạo lệnh pending và audit, trả `delivery=not_published_by_api` vì chính API không publish; `control-worker` trên Pi kiểm tra lại quyền, active, TTL và báo cáo online trước khi publish MQTT. Không coi response tạo lệnh là bơm đã chạy: app chờ ACK và trạng thái ESP khớp. Request_id lặp trên cùng device/user/target/enabled trả cùng lệnh; xung đột nội dung hoặc người gọi trả 409. Mỗi bơm chỉ có một lệnh pending tại một thời điểm. Retry không gia hạn TTL. Gỡ membership, thu hồi control, khóa user hoặc inactive thiết bị sẽ hủy các lệnh pending tương ứng thành cancelled trong cùng giao dịch. ACK MQTT do credential của đúng thiết bị gửi, không phải xác nhận của motor vật lý. Lệnh hết hạn hiển thị effective_status=expired.
 
 Broker đã chuyển account/ACL theo thiết bị; xem [MQTT v2](mqtt-v2.md). ESP chỉ truy cập namespace của mình, app user không đăng nhập bằng tài khoản dùng chung. Worker backend publish lệnh/cấu hình chưa triển khai; membership/key HTTP vẫn chưa tự đồng bộ thu hồi account ESP. Operator dùng mqtt-admin.py để cấp/thu hồi riêng.
 

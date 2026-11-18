@@ -1,5 +1,4 @@
 #pragma once
 
-// ESP account on the Smart Pool Mosquitto broker; matches MQTT_ESP_PASSWORD on Pi.
-#define SMARTPOOL_MQTT_USERNAME "esp32"
+// The v2 broker username is CONFIG_POOL_DEVICE_ID; this is its password.
 #define SMARTPOOL_MQTT_PASSWORD "luanbui"

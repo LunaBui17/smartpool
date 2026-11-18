@@ -17,19 +17,19 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 
-import org.eclipse.paho.client.mqttv3.IMqttActionListener;
-import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
-import org.eclipse.paho.client.mqttv3.IMqttToken;
-import org.eclipse.paho.client.mqttv3.MqttAsyncClient;
-import org.eclipse.paho.client.mqttv3.MqttCallbackExtended;
-import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
-import org.eclipse.paho.client.mqttv3.MqttException;
-import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.json.JSONObject;
 
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Locale;
-import java.util.UUID;
+import java.util.TimeZone;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class PoolMonitorService extends Service {
 
@@ -45,26 +45,22 @@ public class PoolMonitorService extends Service {
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private NotificationManager notificationManager;
-    private MqttAsyncClient mqttClient;
-    private boolean mqttConnecting;
+    private final ExecutorService apiWorker = Executors.newSingleThreadExecutor();
     private boolean temperatureEnabled = true;
     private String lastAlertKey = "";
 
     private AppConfig config;
-    private String currentConnectedBroker = "";
-
-    private final Runnable reconnectRunnable = new Runnable() {
-        @Override
-        public void run() {
-            if (mqttClient == null || !mqttClient.isConnected()) {
-                connectMqtt();
-            }
+    private final Runnable pollRunnable = new Runnable() {
+        @Override public void run() {
+            apiWorker.execute(() -> pollApi());
+            handler.postDelayed(this, 30000L);
         }
     };
 
     @Override
     public void onCreate() {
         super.onCreate();
+        UserSession.restore(this);
 
         config = AppConfig.getInstance(this);
         notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
@@ -86,7 +82,8 @@ public class PoolMonitorService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        connectMqtt();
+        handler.removeCallbacks(pollRunnable);
+        handler.post(pollRunnable);
         return START_STICKY;
     }
 
@@ -176,165 +173,70 @@ public class PoolMonitorService extends Service {
 
     // ==================== KẾT NỐI MQTT ====================
 
-    private synchronized void connectMqtt() {
-        if (mqttConnecting) {
+    private void pollApi() {
+        String token = UserSession.getToken();
+        if (!UserSession.isAuthenticated() || token == null) {
+            handler.post(() -> updateServiceNotification("Sign in to monitor SmartPool"));
             return;
         }
-
-        final String broker = config.getMqttBroker();
-        final String username = config.getMqttUsername();
-        final String password = config.getMqttPassword();
-
-        if (broker == null || broker.trim().isEmpty()) {
-            updateServiceNotification("Đang chờ cấu hình hệ thống");
-            return;
-        }
-
-        // Nếu broker đã thay đổi thì đóng client cũ
-        if (mqttClient != null && !broker.equals(currentConnectedBroker)) {
-            try {
-                if (mqttClient.isConnected()) mqttClient.disconnect();
-                mqttClient.close();
-            } catch (Exception ignored) {
-            }
-            mqttClient = null;
-        }
-
-        if (mqttClient != null && mqttClient.isConnected()) {
-            return;
-        }
-
-        mqttConnecting = true;
-
+        HttpURLConnection connection = null;
         try {
-            if (mqttClient == null) {
-                String clientId = "SmartPoolMonitor-" + UUID.randomUUID().toString().substring(0, 8);
-                mqttClient = new MqttAsyncClient(broker, clientId, new MemoryPersistence());
-
-                mqttClient.setCallback(new MqttCallbackExtended() {
-                    @Override
-                    public void connectComplete(boolean reconnect, String uri) {
-                        mqttConnecting = false;
-                        currentConnectedBroker = broker;
-                        subscribeTopics();
-                        updateServiceNotification("Đang giám sát cảm biến bể bơi");
-                    }
-
-                    @Override
-                    public void connectionLost(Throwable cause) {
-                        mqttConnecting = false;
-                        updateServiceNotification("Đang khôi phục kết nối giám sát");
-                        scheduleReconnect();
-                    }
-
-                    @Override
-                    public void messageArrived(String topic, org.eclipse.paho.client.mqttv3.MqttMessage message) {
-                        String payload = new String(message.getPayload(), StandardCharsets.UTF_8);
-                        handleMqttMessage(topic, payload);
-                    }
-
-                    @Override
-                    public void deliveryComplete(IMqttDeliveryToken token) {
-                    }
-                });
+            JSONObject body = new JSONObject();
+            body.put("action", "get_status");
+            body.put("device_id", config.getDeviceId());
+            connection = (HttpURLConnection) new URL(config.getHttpApiUrl()).openConnection();
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(8000);
+            connection.setReadTimeout(8000);
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            connection.setRequestProperty("Authorization", "Bearer " + token);
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(body.toString().getBytes(StandardCharsets.UTF_8));
             }
-
-            MqttConnectOptions options = new MqttConnectOptions();
-            options.setAutomaticReconnect(true);
-            options.setCleanSession(true);
-            options.setConnectionTimeout(12);
-            options.setKeepAliveInterval(30);
-
-            if (username != null && !username.trim().isEmpty()) {
-                options.setUserName(username.trim());
+            if (connection.getResponseCode() != 200) throw new IllegalStateException("API HTTP " + connection.getResponseCode());
+            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+            try (InputStream input = connection.getInputStream()) {
+                byte[] buffer = new byte[4096];
+                int count;
+                while ((count = input.read(buffer)) != -1) bytes.write(buffer, 0, count);
             }
-            if (password != null && !password.isEmpty()) {
-                options.setPassword(password.toCharArray());
+            JSONObject response = new JSONObject(new String(bytes.toByteArray(), StandardCharsets.UTF_8));
+            JSONObject state = response.optJSONObject("state");
+            JSONObject sample = response.optJSONObject("last_received_sample");
+            if (state == null || !state.optBoolean("is_recent_report", false)) {
+                handler.post(() -> updateServiceNotification("SmartPool device offline"));
+                return;
             }
-
-            mqttClient.connect(options, null, new IMqttActionListener() {
-                @Override
-                public void onSuccess(IMqttToken token) {
-                    mqttConnecting = false;
-                    currentConnectedBroker = broker;
-                    subscribeTopics();
+            boolean enabled = state.optBoolean("temperature_enabled", false);
+            double temperature = sample == null ? Double.NaN : sample.optDouble("temperature", Double.NaN);
+            long receivedAt = 0;
+            if (sample != null) {
+                String rawTime = sample.optString("received_at", "");
+                if (rawTime.length() >= 19) {
+                    SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
+                    format.setTimeZone(TimeZone.getTimeZone("UTC"));
+                    Date parsed = format.parse(rawTime.substring(0, 19));
+                    if (parsed != null) receivedAt = parsed.getTime();
                 }
-
-                @Override
-                public void onFailure(IMqttToken token, Throwable error) {
-                    mqttConnecting = false;
-                    Log.e(TAG, "Kết nối MQTT thất bại: " + error);
-                    updateServiceNotification("Đang thử kết nối hệ thống");
-                    scheduleReconnect();
+            }
+            boolean fresh = receivedAt > 0 && System.currentTimeMillis() - receivedAt <= 120000L;
+            handler.post(() -> {
+                temperatureEnabled = enabled;
+                updateServiceNotification("SmartPool online via API v2");
+                if (!enabled) {
+                    lastAlertKey = "";
+                    notificationManager.cancel(ALERT_NOTIFICATION_ID);
                 }
+                if (enabled && fresh && Double.isFinite(temperature)) checkTemperature(temperature);
             });
-
-        } catch (MqttException e) {
-            mqttConnecting = false;
-            Log.e(TAG, "Lỗi khởi tạo MQTT", e);
-            scheduleReconnect();
+        } catch (Exception error) {
+            Log.w(TAG, "API v2 monitor request failed", error);
+            handler.post(() -> updateServiceNotification("SmartPool API unavailable"));
+        } finally {
+            if (connection != null) connection.disconnect();
         }
     }
-
-    private void subscribeTopics() {
-        if (mqttClient == null || !mqttClient.isConnected()) {
-            return;
-        }
-
-        try {
-            mqttClient.subscribe(config.getTopicStatus(), 1);
-            String topicTelemetry = config.getTopicTelemetry();
-            mqttClient.subscribe(topicTelemetry, 1);
-        } catch (MqttException e) {
-            Log.e(TAG, "Không subscribe được trạng thái và telemetry", e);
-            scheduleReconnect();
-        }
-    }
-
-    private void scheduleReconnect() {
-        handler.removeCallbacks(reconnectRunnable);
-        handler.postDelayed(reconnectRunnable, 5000L);
-    }
-
-    // ==================== ĐỌC DỮ LIỆU CẢM BIẾN ====================
-
-    private void handleMqttMessage(String topic, String payload) {
-        if (!topic.equals(config.getTopicTelemetry()) && !topic.equals(config.getTopicStatus())) {
-            return;
-        }
-
-        try {
-            JSONObject json = new JSONObject(payload);
-            if (topic.equals(config.getTopicStatus())) {
-                if (json.has("temperature_enabled")) {
-                    int enabled = json.getInt("temperature_enabled");
-                    if (enabled != 0 && enabled != 1) {
-                        throw new org.json.JSONException("Invalid temperature_enabled state");
-                    }
-                    temperatureEnabled = enabled == 1;
-                    if (!temperatureEnabled) {
-                        lastAlertKey = "";
-                        notificationManager.cancel(ALERT_NOTIFICATION_ID);
-                        notificationManager.cancel(RECOVERY_NOTIFICATION_ID);
-                    }
-                }
-                return;
-            }
-            if (!temperatureEnabled) return;
-            double temp = json.optDouble("nhiet_do", Double.NaN);
-
-            if (Double.isNaN(temp) || Double.isInfinite(temp)) {
-                return;
-            }
-
-            checkTemperature(temp);
-
-        } catch (Exception e) {
-            Log.e(TAG, "Không đọc được telemetry", e);
-        }
-    }
-
-    // ==================== KIỂM TRA NHIỆT ĐỘ ====================
 
     private void checkTemperature(double temp) {
         float tempMin = config.getTempMin();
@@ -454,16 +356,7 @@ public class PoolMonitorService extends Service {
     public void onDestroy() {
         handler.removeCallbacksAndMessages(null);
 
-        if (mqttClient != null) {
-            try {
-                if (mqttClient.isConnected()) {
-                    mqttClient.disconnect();
-                }
-                mqttClient.close();
-            } catch (Exception e) {
-                Log.e(TAG, "Lỗi đóng MQTT Service", e);
-            }
-        }
+        apiWorker.shutdownNow();
 
         super.onDestroy();
     }

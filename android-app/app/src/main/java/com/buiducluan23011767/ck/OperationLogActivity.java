@@ -77,6 +77,8 @@ public class OperationLogActivity extends AppCompatActivity {
                 rows.put(row.getString("event_id"), row);
             }
             body.put("action", "list_activity");
+            body.put("device_id", AppConfig.getInstance(this).getDeviceId());
+            body.put("limit", 100);
         } catch (SQLiteException | JSONException e) {
             Log.e(TAG, "Không đọc được nhật ký trên điện thoại", e);
             status.setText("Không đọc được nhật ký trên điện thoại.");
@@ -106,9 +108,8 @@ public class OperationLogActivity extends AppCompatActivity {
                             rows.put(row.getString("event_id"), row);
                         }
                         render(rows);
-                        status.setText((UserSession.isAdmin() ? "Admin: nhật ký mọi tài khoản."
-                                : "Nhật ký tài khoản của bạn.")
-                                + "\nTối đa 100 sự kiện mới nhất. Mục chưa đồng bộ vẫn được giữ trên điện thoại.");
+                        status.setText("Nhật ký thiết bị " + AppConfig.getInstance(this).getDeviceId() + "."
+                                + "\nTối đa 100 sự kiện mới nhất. Nhật ký thao tác cũ chỉ lưu trên điện thoại.");
                     } catch (JSONException e) {
                         Log.e(TAG, "Phản hồi nhật ký không hợp lệ", e);
                         status.setText("Phản hồi máy chủ không hợp lệ; đang hiển thị bản cục bộ.");
@@ -142,7 +143,19 @@ public class OperationLogActivity extends AppCompatActivity {
             JSONObject row = sorted.get(i);
             View item = getLayoutInflater().inflate(R.layout.item_operation_log, entries, false);
             TextView time = item.findViewById(R.id.txtEventTime);
-            time.setText(format.format(new Date(row.optLong("occurred_at_ms"))));
+            long eventTime = row.optLong("occurred_at_ms", 0);
+            if (eventTime <= 0) {
+                String received = row.optString("received_at", "");
+                if (received.length() >= 19) {
+                    try {
+                        SimpleDateFormat utc = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
+                        utc.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+                        Date parsed = utc.parse(received.substring(0, 19));
+                        if (parsed != null) eventTime = parsed.getTime();
+                    } catch (java.text.ParseException ignored) { }
+                }
+            }
+            time.setText(eventTime > 0 ? format.format(new Date(eventTime)) : "--");
             TextView action = item.findViewById(R.id.txtEventAction);
             action.setText(row.optString("action"));
             TextView result = item.findViewById(R.id.txtEventResult);
@@ -160,7 +173,8 @@ public class OperationLogActivity extends AppCompatActivity {
             }
             result.setTextColor(getColor(color));
             TextView actor = item.findViewById(R.id.txtEventActor);
-            actor.setText(row.optString("username") + "\nThiết bị: " + row.optString("device_id"));
+            actor.setText(row.optString("actor_username", row.optString("username"))
+                    + "\nThiết bị: " + row.optString("device_id"));
             TextView detail = item.findViewById(R.id.txtEventDetail);
             detail.setText(row.optString("detail"));
             detail.setVisibility(row.optString("detail").isEmpty() ? View.GONE : View.VISIBLE);

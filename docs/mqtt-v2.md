@@ -12,7 +12,7 @@ Broker trên Pi `192.168.60.87` đã cập nhật ngày 17/11/2026. Không thay 
 
 ACL sinh thành các dòng explicit cho từng username, không dùng wildcard toàn hệ thống cho ESP. ID phải là ASCII 1–64 ký tự, bắt đầu chữ/số; tài khoản hệ thống bắt đầu `_` nên không trùng ID hợp lệ.
 
-Ordinary user/admin của app không đăng nhập MQTT trực tiếp trong mô hình mới. App gọi API kiểm tra membership; worker backend sau này chuyển lệnh/config ra broker bằng tài khoản bridge. **Worker chưa triển khai**, nên API vẫn lưu lệnh/config mà chưa publish. Broker không tự đọc bảng device_users hoặc tự hiểu token HTTP.
+User/admin của app không đăng nhập MQTT trực tiếp. App gọi API kiểm tra membership; `control-worker` trên Pi đọc lệnh bơm còn hạn, kiểm tra lại quyền và trạng thái thiết bị rồi phát vào broker bằng tài khoản bridge. Worker nhận ACK từ ESP và cập nhật lệnh trong database. Cấu hình `config/desired` chưa được worker đồng bộ. Broker không tự đọc bảng `device_users` hoặc tự hiểu token HTTP.
 
 ## Topic đã được cấp trong ACL
 
@@ -28,7 +28,7 @@ Prefix là `smartpool/devices/{device_id}`:
 | `config/desired` | Read | Write | device_id, revision và settings; cấu hình mong muốn có thể retained |
 | `diagnostics/probe` | Read/write | Không mặc định | Chẩn đoán riêng của account thiết bị |
 
-Đây là namespace/ACL broker, chưa phải bằng chứng firmware đã hiểu payload. Firmware hiện vẫn dùng topic/payload cũ; phải cập nhật parser, ID ổn định, credential và subscribe/publish/LWT trước khi dùng. Firmware cần bỏ command retained, kiểm tra device_id/TTL/command_id, chống thực thi lại lệnh và ACK sau khi áp dụng. Config revision cũng cần được kiểm tra/lưu đúng.
+Firmware publish status/telemetry và LWT sang namespace theo `device_id`, dùng account cùng tên ID. Firmware subscribe `cmd/pump`, kiểm tra `device_id`, thời hạn và ID lệnh, lưu ID lệnh cuối của từng bơm trong NVS để chống lặp và gửi `ack/command` sau khi áp dụng. `config/desired` và đồng bộ revision chưa triển khai.
 
 Không cấp topic cấu hình Wi-Fi, topic đổi ID hoặc topic global cũ. Wi-Fi qua BLE và khôi phục offline vẫn chưa làm; không gửi password Wi-Fi lên retained MQTT.
 

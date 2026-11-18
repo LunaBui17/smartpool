@@ -1,5 +1,6 @@
 # Generated build outputs (ESP-IDF and Android)
 **/build/
+esp-firmware/build-v53/
 
 # Raspberry Pi deployment credentials and backups
 deploy/raspberry-pi/.env
@@ -8,3 +9,4 @@ deploy/raspberry-pi/backups/
 deploy/raspberry-pi-v2/.env*
 deploy/raspberry-pi-v2/backups/
 deploy/raspberry-pi-v2/.mqtt-admin.lock
+esp-firmware/main/device_credentials.h

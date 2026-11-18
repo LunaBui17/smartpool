@@ -12,7 +12,7 @@ load_policy() {
     test -r /mqtt-policy || { echo 'Missing private MQTT password policy' >&2; exit 1; }
     admin_password="$(sed -n '1p' /mqtt-policy)"
     user_password="$(sed -n '2p' /mqtt-policy)"
-    [ "${#admin_password}" -ge 7 ] && [ "${#user_password}" -ge 8 ] || exit 1
+    [ "${#admin_password}" -ge 7 ] && [ "${#user_password}" -ge 7 ] || exit 1
     case "$admin_password$user_password" in *:*) echo 'Invalid password policy' >&2; exit 1 ;; esac
 }
 render_acl() {

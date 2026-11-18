@@ -4,7 +4,6 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
@@ -17,10 +16,11 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.android.volley.DefaultRetryPolicy;
 import com.android.volley.Request;
 import com.android.volley.RequestQueue;
-import com.android.volley.toolbox.JsonArrayRequest;
+import com.android.volley.toolbox.JsonObjectRequest;
 import com.android.volley.toolbox.Volley;
 
 import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -89,9 +89,10 @@ public class SensorChartActivity extends AppCompatActivity {
         selectedSensor = sensor;
         AppConfig.getInstance(this).setChartSensor(sensor);
         boolean temperatureSelected = SENSOR_TEMPERATURE.equals(sensor);
+        boolean calibrated = AppConfig.getInstance(this).hasWaterLevelCalibration();
         title.setText(temperatureSelected ? "Biểu đồ nhiệt độ nước"
-                : "Biểu đồ mực nước (cm)");
-        adcTab.setText("Mực nước (cm)");
+                : calibrated ? "Biểu đồ mực nước (cm)" : "Biểu đồ cảm biến nước (ADC)");
+        adcTab.setText(calibrated ? "Mực nước (cm)" : "Cảm biến nước (ADC)");
         temperatureTab.setSelected(temperatureSelected);
         adcTab.setSelected(!temperatureSelected);
         temperatureTab.setBackgroundResource(temperatureSelected
@@ -111,16 +112,23 @@ public class SensorChartActivity extends AppCompatActivity {
                     ? "Chưa cấu hình URL HTTP API." : "Chưa tải được lịch sử cảm biến.");
             return;
         }
-        String historyUrl = Uri.parse(baseUrl).buildUpon()
-                .appendQueryParameter("history", "1")
-                .appendQueryParameter("limit", String.valueOf(HISTORY_LIMIT))
-                .build().toString();
-
-        JsonArrayRequest request = new JsonArrayRequest(
-                Request.Method.GET,
-                historyUrl,
-                null,
-                this::onHistoryLoaded,
+        JSONObject body = new JSONObject();
+        try {
+            body.put("action", "get_history");
+            body.put("device_id", AppConfig.getInstance(this).getDeviceId());
+            body.put("time_basis", "received");
+            body.put("limit", HISTORY_LIMIT);
+            body.put("to_ms", System.currentTimeMillis() + 300000L);
+        } catch (org.json.JSONException e) {
+            status.setText("Không tạo được yêu cầu lịch sử.");
+            return;
+        }
+        JsonObjectRequest request = new JsonObjectRequest(
+                Request.Method.POST,
+                baseUrl,
+                body,
+                response -> onHistoryLoaded(response.optJSONArray("samples") == null
+                        ? new JSONArray() : response.optJSONArray("samples")),
                 error -> {
                     Log.e(TAG, "Không tải được lịch sử cảm biến qua HTTP", error);
                     status.setText(UserSession.isAdmin()
@@ -128,7 +136,14 @@ public class SensorChartActivity extends AppCompatActivity {
                             + (error.getMessage() == null ? "lỗi kết nối" : error.getMessage())
                             : "Chưa tải được lịch sử cảm biến. Vui lòng thử lại sau.");
                 }
-        );
+        ) {
+            @Override
+            public java.util.Map<String, String> getHeaders() {
+                java.util.Map<String, String> headers = new java.util.HashMap<>();
+                headers.put("Authorization", "Bearer " + UserSession.getToken());
+                return headers;
+            }
+        };
         request.setShouldCache(false);
         request.setRetryPolicy(new DefaultRetryPolicy(6000, 1, 1.0f));
         request.setTag(this);
@@ -153,20 +168,22 @@ public class SensorChartActivity extends AppCompatActivity {
             startMs = Math.min(startMs, timeMs);
             endMs = Math.max(endMs, timeMs);
 
-            if (!row.isNull("nhiet_do")) {
-                double value = row.optDouble("nhiet_do", Double.NaN);
+            if (!row.isNull("temperature")) {
+                double value = row.optDouble("temperature", Double.NaN);
                 if (Double.isFinite(value)) temperatures.add(new HistoryPoint(timeMs, value));
             }
-            if (!row.isNull("muc_nuoc_raw")) {
-                double value = row.optDouble("muc_nuoc_raw", Double.NaN);
-                if (config.isWaterAdcWithinCalibration(value)) {
-                    adcValues.add(new HistoryPoint(timeMs, config.waterAdcToCm(value)));
+            if (!row.isNull("water_adc")) {
+                double value = row.optDouble("water_adc", Double.NaN);
+                if (Double.isFinite(value) && value >= 0 && value <= 4095) {
+                    if (!config.hasWaterLevelCalibration()) adcValues.add(new HistoryPoint(timeMs, value));
+                    else if (config.isWaterAdcWithinCalibration(value))
+                        adcValues.add(new HistoryPoint(timeMs, config.waterAdcToCm(value)));
                 }
-                temperatures.sort(Comparator.comparingLong(point -> point.timeMs));
-                adcValues.sort(Comparator.comparingLong(point -> point.timeMs));
-                if (missingTimestamps > 0) Log.w(TAG, "Mẫu thiếu timestamp: " + missingTimestamps);
             }
         }
+        temperatures.sort(Comparator.comparingLong(point -> point.timeMs));
+        adcValues.sort(Comparator.comparingLong(point -> point.timeMs));
+        if (missingTimestamps > 0) Log.w(TAG, "Mẫu thiếu timestamp: " + missingTimestamps);
 
         historyLoaded = true;
         updateHistoryStatus();
@@ -175,16 +192,14 @@ public class SensorChartActivity extends AppCompatActivity {
 
     private void updateHistoryStatus() {
         AppConfig config = AppConfig.getInstance(this);
-        if (!SENSOR_TEMPERATURE.equals(selectedSensor) && !config.hasWaterLevelCalibration()) {
-            status.setText(UserSession.isAdmin()
-                    ? "Chưa hiệu chuẩn. Vào Cài đặt để cấu hình khoảng mực nước đo được."
-                    : "Chưa hiệu chuẩn mực nước theo cm; không thể vẽ biểu đồ chiều cao.");
-        } else {
+        {
             int selectedCount = SENSOR_TEMPERATURE.equals(selectedSensor)
                     ? temperatures.size() : adcValues.size();
             status.setText(String.format(Locale.getDefault(),
                     "Đã tải %d mẫu. Trục X: thời điểm máy chủ nhận dữ liệu, giờ điện thoại (%s).",
                     selectedCount, java.util.TimeZone.getDefault().getID())
+                    + (!SENSOR_TEMPERATURE.equals(selectedSensor) && !config.hasWaterLevelCalibration()
+                    ? "\nChưa hiệu chuẩn, đang hiển thị số ADC thô." : "")
                     + (missingTimestamps == 0 ? "" : "\nBỏ qua " + missingTimestamps
                     + " mẫu thiếu thời gian. Cần cập nhật API hỗ trợ received_at_ms."));
         }
@@ -193,7 +208,7 @@ public class SensorChartActivity extends AppCompatActivity {
     private void showChart() {
         List<HistoryPoint> values = SENSOR_TEMPERATURE.equals(selectedSensor) ? temperatures : adcValues;
         String unit = SENSOR_TEMPERATURE.equals(selectedSensor) ? "°C"
-                : "cm";
+                : AppConfig.getInstance(this).hasWaterLevelCalibration() ? "cm" : "ADC";
         int color = SENSOR_TEMPERATURE.equals(selectedSensor)
                 ? Color.rgb(14, 165, 233) : Color.rgb(16, 185, 129);
         chartContainer.removeAllViews();

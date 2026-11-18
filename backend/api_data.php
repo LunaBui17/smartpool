@@ -128,6 +128,9 @@ function api_command($db,$user,$device,$action,$data) {
             if((int)$old[0]['requested_by']!==(int)$user['id']||$old[0]['target']!==$target||(int)$old[0]['enabled']!==$on)api_fail(409,'request_id xung đột');
             return array('command'=>api_public($old[0]),'duplicate'=>true,'delivery'=>'not_published_by_api');
         }
+        api_query($db,"UPDATE device_commands SET status='expired' WHERE device_id=? AND target=? AND status='pending' AND expires_at<=UTC_TIMESTAMP(3)",'ss',array($device,$target));
+        $pending=api_query($db,"SELECT command_id FROM device_commands WHERE device_id=? AND target=? AND status='pending' FOR UPDATE",'ss',array($device,$target));
+        if($pending)api_fail(409,'Bơm đang có lệnh chờ xác nhận');
         $id=api_uuid();
         api_query($db,'INSERT INTO device_commands(command_id,device_id,request_id,requested_by,target,enabled,expires_at) '
             . 'VALUES (?,?,?,?,?,?,TIMESTAMPADD(SECOND,?,UTC_TIMESTAMP(3)))','sssisii',array($id,$device,$request,$user['id'],$target,$on,$ttl));

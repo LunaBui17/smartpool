@@ -7,7 +7,7 @@ require_once __DIR__.'/api_core.php';
 $db=null;
 try {
     $admin=rtrim((string)fgets(STDIN),"\r\n");$ordinary=rtrim((string)fgets(STDIN),"\r\n");
-    if(strlen($admin)<7||strlen($ordinary)<8||strlen($admin)>72||strlen($ordinary)>72||str_contains($admin,"\0")||str_contains($ordinary,"\0"))throw new RuntimeException('Invalid policy');
+    if(strlen($admin)<7||strlen($ordinary)<7||strlen($admin)>72||strlen($ordinary)>72||str_contains($admin,"\0")||str_contains($ordinary,"\0"))throw new RuntimeException('Invalid policy');
     $db=pool_v2_connect();$db->begin_transaction();
     $users=api_query($db,'SELECT id,username,role FROM users ORDER BY id FOR UPDATE');
     foreach($users as $user) {

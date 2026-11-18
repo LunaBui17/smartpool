@@ -64,6 +64,8 @@ public class AppConfig {
 
     private static final String KEY_HTTP_API_URL = "http_api_url";
     private static final String KEY_HTTP_API_URL_MIGRATED = "http_api_url_migrated_cloudflare_v1";
+    private static final String KEY_TUNNEL_V2_MIGRATED = "tunnel_v2_migrated_20261118";
+    private static final String KEY_DEVICE_V2_MIGRATED = "device_v2_migrated_20261118";
     private static final String KEY_HTTP_POLL_INTERVAL = "http_poll_interval";
     private static final String KEY_CONTROL_MODE = "control_mode";
     private static final String KEY_INTERLOCK_ENABLED = "interlock_enabled";
@@ -73,7 +75,7 @@ public class AppConfig {
 
     // Default values
     public static final boolean DEFAULT_INTERLOCK_ENABLED = true;
-    public static final String DEFAULT_DEVICE_ID = "ESP32S3_SMARTPOOL_01";
+    public static final String DEFAULT_DEVICE_ID = "SmartPool";
     public static final String DEFAULT_DEVICE_NAME = "Hệ thống Bể bơi Thông minh";
     public static final String DEFAULT_DEVICE_LOCATION = "Bể bơi sân vườn";
 
@@ -87,7 +89,7 @@ public class AppConfig {
     public static final String DEFAULT_WIFI_PASS = "";
 
     public static final String DEFAULT_MQTT_BROKER =
-            "wss://division-unlikely-drinking-disks.trycloudflare.com/mqtt";
+            "wss://mysterious-witness-crown-glasgow.trycloudflare.com/mqtt";
     public static final int DEFAULT_MQTT_PORT = 443;
 
     // Các topic chia nhỏ chuyên biệt
@@ -109,7 +111,7 @@ public class AppConfig {
     public static final String DEFAULT_TOPIC_CMD_TEMPERATURE_ENABLED = "smartpool/cmd/temperature_enabled";
     public static final String DEFAULT_TOPIC_CMD_WATER_ENABLED = "smartpool/cmd/water_level_enabled";
 
-    public static final String DEFAULT_HTTP_API_URL = "https://division-unlikely-drinking-disks.trycloudflare.com/pool_api/pool_api.php";
+    public static final String DEFAULT_HTTP_API_URL = "https://mysterious-witness-crown-glasgow.trycloudflare.com/pool_api/pool_api.php";
     public static final int DEFAULT_HTTP_POLL_INTERVAL = 3;
 
     private static AppConfig instance;
@@ -128,6 +130,25 @@ public class AppConfig {
                 edit.putString(KEY_HTTP_API_URL, DEFAULT_HTTP_API_URL);
             }
             edit.putBoolean(KEY_HTTP_API_URL_MIGRATED, true).apply();
+        }
+        if (!prefs.getBoolean(KEY_TUNNEL_V2_MIGRATED, false)) {
+            SharedPreferences.Editor edit = prefs.edit();
+            String httpUrl = prefs.getString(KEY_HTTP_API_URL, "").trim();
+            if (httpUrl.isEmpty() || "https://division-unlikely-drinking-disks.trycloudflare.com/pool_api/pool_api.php".equals(httpUrl)) {
+                edit.putString(KEY_HTTP_API_URL, DEFAULT_HTTP_API_URL);
+            }
+            String mqttBroker = prefs.getString(KEY_MQTT_BROKER, "").trim();
+            if (mqttBroker.isEmpty() || "wss://division-unlikely-drinking-disks.trycloudflare.com/mqtt".equals(mqttBroker)) {
+                edit.putString(KEY_MQTT_BROKER, DEFAULT_MQTT_BROKER);
+            }
+            edit.putBoolean(KEY_TUNNEL_V2_MIGRATED, true).apply();
+        }
+        if (!prefs.getBoolean(KEY_DEVICE_V2_MIGRATED, false)) {
+            SharedPreferences.Editor edit = prefs.edit();
+            if ("ESP32S3_SMARTPOOL_01".equals(prefs.getString(KEY_DEVICE_ID, ""))) {
+                edit.putString(KEY_DEVICE_ID, DEFAULT_DEVICE_ID);
+            }
+            edit.putBoolean(KEY_DEVICE_V2_MIGRATED, true).apply();
         }
         // Older app versions saved the percent-style defaults 20/85 as ADC limits.
         if (prefs.contains(KEY_WATER_MIN) && prefs.contains(KEY_WATER_MAX)

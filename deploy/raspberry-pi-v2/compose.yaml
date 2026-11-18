@@ -51,6 +51,8 @@ services:
       POOL_DB_NAME: pool_db
       POOL_DB_USER: smartpool
       POOL_DB_PASSWORD: ${DB_PASSWORD:?Run deploy.sh first}
+    volumes:
+      - control-state:/run/smartpool-control:ro
     depends_on:
       db:
         condition: service_healthy
@@ -88,6 +90,26 @@ services:
         condition: service_completed_successfully
     logging: *logging
 
+  control-worker:
+    build:
+      context: ../..
+      dockerfile: deploy/raspberry-pi-v2/control-worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      POOL_DB_HOST: db
+      POOL_DB_NAME: pool_db
+      POOL_DB_USER: smartpool
+      POOL_DB_PASSWORD: ${DB_PASSWORD:?Run deploy.sh first}
+    volumes:
+      - mqtt-auth:/auth:ro
+      - control-state:/run/smartpool-control
+    depends_on:
+      db:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+    logging: *logging
+
 volumes:
   database:
   mqtt-auth:
@@ -96,3 +118,4 @@ volumes:
   mqtt-data:
     external: true
     name: smartpool-v2_mqtt-data
+  control-state:

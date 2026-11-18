@@ -5,7 +5,7 @@
 #include "pump_auto.h"
 
 #define POOL_MQTT_PAYLOAD_MAX 4096
-#define POOL_MQTT_TOPIC_MAX 80
+#define POOL_MQTT_TOPIC_MAX 128
 #define POOL_CFG_THRESHOLDS 1u
 #define POOL_CFG_WIFI 2u
 #define POOL_CFG_DEVICE 4u

@@ -151,7 +151,10 @@ function api_dispatch_action($db,$data) {
         $measured=api_query($db,'SELECT * FROM sensor_samples WHERE device_id=? AND measured_at_ms IS NOT NULL ORDER BY measured_at_ms DESC,id DESC LIMIT 1','s',array($device));
         $received=api_query($db,'SELECT * FROM sensor_samples WHERE device_id=? ORDER BY received_at DESC,id DESC LIMIT 1','s',array($device));
         $revision=(int)api_query($db,'SELECT revision FROM device_configs WHERE device_id=?','s',array($device))[0]['revision'];
-        return array('device_id'=>$device,'state'=>$status,'latest_measured_sample'=>$measured?api_public($measured[0]):null,
+        $heartbeat='/run/smartpool-control/heartbeat';
+        $controlReady=is_file($heartbeat)&&(@filemtime($heartbeat) ?: 0)>time()-10;
+        return array('device_id'=>$device,'state'=>$status,'remote_control_ready'=>$controlReady,
+            'latest_measured_sample'=>$measured?api_public($measured[0]):null,
             'last_received_sample'=>$received?api_public($received[0]):null,'desired_config_revision'=>$revision,
             'config_revision_reported_matching'=>$status!==null&&$status['reported_config_revision']!==null&&$status['reported_config_revision']===$revision);
     }
@@ -216,7 +219,7 @@ function api_admin_action($db,$user,$action,$data) {
 }
 function api_password_hash($data,$role='user') {
     $password=$data['password']??null;
-    $minimum=$role==='admin'?7:8;
+    $minimum=7;
     if(!is_string($password)||strlen($password)<$minimum||strlen($password)>72||str_contains($password,"\0"))api_fail(400,'Mật khẩu không đủ độ dài theo role');
     return password_hash($password,PASSWORD_DEFAULT);
 }

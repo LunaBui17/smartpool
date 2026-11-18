@@ -77,6 +77,20 @@
             android:orientation="vertical"
             android:padding="16dp">
 
+            <TextView
+                android:id="@+id/txtDevicePicker"
+                style="@style/PoolBody"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:background="@drawable/bg_card"
+                android:clickable="true"
+                android:focusable="true"
+                android:minHeight="48dp"
+                android:padding="12dp"
+                android:text="Đang tải thiết bị..."
+                android:textColor="@color/text_primary" />
+
             <LinearLayout
                 android:id="@+id/alertBannerContainer"
                 style="@style/PoolCard"
@@ -86,6 +100,44 @@
                     android:id="@+id/txtAlert"
                     style="@style/PoolBody"
                     android:textColor="@color/danger" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/adminOverviewContent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+                <TextView style="@style/PoolTitle" android:text="Tổng quan thiết bị" />
+                <TextView
+                    android:id="@+id/txtAdminOverviewSummary"
+                    style="@style/PoolBody"
+                    android:layout_marginTop="8dp"
+                    android:text="Đang tải thông báo tổng quan..." />
+                <TextView
+                    android:id="@+id/txtAdminOverviewNotice"
+                    style="@style/PoolBody"
+                    android:layout_marginTop="14dp"
+                    android:background="@drawable/bg_card"
+                    android:padding="14dp"
+                    android:text="Thông báo hệ thống: đang kiểm tra thiết bị." />
+                <EditText
+                    android:id="@+id/edtAdminDeviceSearch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:background="@drawable/bg_card"
+                    android:hint="Tìm thiết bị theo ID"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:minHeight="52dp"
+                    android:padding="12dp" />
+                <LinearLayout
+                    android:id="@+id/adminDeviceList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:orientation="vertical" />
             </LinearLayout>
 
             <LinearLayout
@@ -280,23 +332,19 @@
                 android:visibility="gone">
                 <TextView style="@style/PoolTitle" android:text="Trạng thái hệ thống" />
                 <TextView style="@style/PoolBody" android:layout_marginTop="8dp"
-                    android:text="Theo dõi đường kết nối và trạng thái từng thành phần." />
+                    android:text="Xem kết nối và thiết bị theo báo cáo mới nhất từ API v2." />
                 <TextView android:id="@+id/txtSystemStatusUpdated"
                     style="@style/PoolCaption" android:layout_marginTop="12dp" />
                 <com.buiducluan23011767.ck.SystemStatusView
                     android:id="@+id/systemStatusDiagram"
                     android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:layout_marginTop="12dp" android:importantForAccessibility="yes" />
-                <LinearLayout style="@style/PoolCard">
-                    <TextView style="@style/PoolSectionTitle" android:text="Đọc lưu đồ" />
-                    <TextView style="@style/PoolBody"
-                        android:text="Xanh: bật hoặc kết nối\nXám: tắt hoặc chưa rõ\nCam: chờ xác nhận\nĐỏ: lỗi kết nối" />
-                    <TextView style="@style/PoolCaption" android:layout_marginTop="12dp"
-                        android:text="API và MQTT được theo dõi độc lập. Mất liên lạc không có nghĩa thiết bị đã tắt. Trạng thái MQTT gần nhất có thể là retained; bơm bật là trạng thái relay do ESP báo, không phải phản hồi cơ khí. Không dò trực tiếp tiến trình Docker hoặc Cloudflare." />
-                </LinearLayout>
                 <TextView android:id="@+id/protocolSectionTitle"
-                    style="@style/PoolSectionTitle" android:text="Chi tiết kết nối" />
+                    style="@style/PoolSectionTitle" android:text="Chi tiết kỹ thuật  ▾"
+                    android:clickable="true" android:focusable="true" />
                 <LinearLayout android:id="@+id/protocolDetailsSection" style="@style/PoolCard">
+                    <TextView style="@style/PoolCaption"
+                        android:text="Database được suy ra qua API. App không kiểm tra MQTT trực tiếp. Trạng thái bơm là trạng thái relay do ESP báo." />
                     <TextView android:id="@+id/txtMqttBadge" style="@style/PoolBody"
                         android:text="MQTT: Đang kết nối..." android:textStyle="bold" />
                     <TextView android:id="@+id/txtConnection" style="@style/PoolCaption"

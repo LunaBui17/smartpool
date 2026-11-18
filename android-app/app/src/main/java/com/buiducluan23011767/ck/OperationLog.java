@@ -150,58 +150,7 @@ final class OperationLog extends SQLiteOpenHelper {
     }
 
     void sync() {
-        if (syncing || !UserSession.isAuthenticated()) return;
-        final String username = UserSession.getUsername();
-        final String token = UserSession.getToken();
-        final String apiUrl = AppConfig.getInstance(context).getHttpApiUrl();
-        if (apiUrl.trim().isEmpty()) return;
-        final JSONArray events;
-        final JSONObject body = new JSONObject();
-        try (Cursor cursor = getReadableDatabase().query("events", null,
-                "synced = 0 AND username = ? AND api_url = ?", new String[]{username, apiUrl},
-                null, null, "occurred_at_ms ASC, rowid ASC", "20")) {
-            events = readEvents(cursor);
-            if (events.length() == 0) return;
-            body.put("action", "record_activity");
-            body.put("events", events);
-        } catch (SQLiteException | JSONException e) {
-            Log.e(TAG, "Không đọc được hàng đợi nhật ký", e);
-            return;
-        }
-        syncing = true;
-        JsonObjectRequest request = new JsonObjectRequest(Request.Method.POST, apiUrl, body,
-                response -> {
-                    syncing = false;
-                    if (!"success".equals(response.optString("status"))) {
-                        Log.e(TAG, "Máy chủ chưa xác nhận lưu nhật ký");
-                        return;
-                    }
-                    try {
-                        ContentValues saved = new ContentValues();
-                        saved.put("synced", 1);
-                        for (int i = 0; i < events.length(); i++) {
-                            getWritableDatabase().update("events", saved, "event_id = ?",
-                                    new String[]{events.getJSONObject(i).getString("event_id")});
-                        }
-                    } catch (SQLiteException | JSONException e) {
-                        Log.e(TAG, "Không cập nhật được trạng thái đồng bộ nhật ký", e);
-                        return;
-                    }
-                    sync();
-                },
-                error -> {
-                    syncing = false;
-                    Log.w(TAG, "Chưa đồng bộ được nhật ký; bản ghi vẫn giữ trên điện thoại", error);
-                }) {
-            @Override
-            public Map<String, String> getHeaders() {
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + token);
-                return headers;
-            }
-        };
-        request.setRetryPolicy(new DefaultRetryPolicy(8000, 0, 1.0f));
-        queue.add(request);
+        // Legacy local descriptions cannot be mapped to the typed v2 event contract.
     }
 
     static String resultLabel(String result) {

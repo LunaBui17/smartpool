@@ -51,8 +51,22 @@
                 android:layout_height="52dp"
                 android:layout_marginTop="8dp"
                 android:background="@drawable/bg_input_field"
-                android:hint="Mật khẩu (ít nhất 8 ký tự; để trống khi sửa nếu giữ nguyên)"
+                android:hint="Mật khẩu (ít nhất 7 byte; để trống khi sửa nếu giữ nguyên)"
                 android:inputType="textPassword"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:singleLine="true"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <EditText
+                android:id="@+id/edtUserFullName"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_input_field"
+                android:hint="Họ và tên tài khoản mới"
+                android:inputType="textPersonName"
                 android:paddingStart="10dp"
                 android:paddingEnd="10dp"
                 android:singleLine="true"

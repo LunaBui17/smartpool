@@ -118,12 +118,14 @@ public class SettingsActivity extends AppCompatActivity {
     private TextView txtSettingsFeedback;
     private EditText edtUserUsername;
     private EditText edtUserPassword;
+    private EditText edtUserFullName;
     private Spinner spnUserRole;
     private androidx.appcompat.widget.SwitchCompat switchUserActive;
     private Button btnSaveUser;
     private Button btnCancelUserEdit;
     private LinearLayout layoutUserList;
     private int editingUserId;
+    private boolean editingUserActive;
     private TextView txtPreviewJsonInline;
     private boolean resetConfirmationPending;
     private final Runnable resetConfirmationExpiry = () -> {
@@ -191,10 +193,11 @@ public class SettingsActivity extends AppCompatActivity {
         loadValuesToViews();
         setupAutomationTab();
         setupListeners();
+        resetUserForm();
         setupSettingsSections(savedInstanceState);
 
         refreshMqttActions();
-        connectMqtt();
+        txtSettingsMqttStatus.setText("API v2: cấu hình và điều khiển MQTT cũ chưa được hỗ trợ.");
         showSettingsTab(config.getSettingsTab());
     }
 
@@ -250,9 +253,10 @@ public class SettingsActivity extends AppCompatActivity {
         txtSettingsFeedback = findViewById(R.id.txtSettingsFeedback);
         edtUserUsername = findViewById(R.id.edtUserUsername);
         edtUserPassword = findViewById(R.id.edtUserPassword);
+        edtUserFullName = findViewById(R.id.edtUserFullName);
         spnUserRole = findViewById(R.id.spnUserRole);
         spnUserRole.setAdapter(new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_dropdown_item, new String[]{"Guest", "Admin"}));
+                android.R.layout.simple_spinner_dropdown_item, new String[]{"User", "Admin"}));
         switchUserActive = findViewById(R.id.switchUserActive);
         btnSaveUser = findViewById(R.id.btnSaveUser);
         btnCancelUserEdit = findViewById(R.id.btnCancelUserEdit);
@@ -555,17 +559,7 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     private void requestAutomationStatus() {
-        if (mqttClient == null || !mqttClient.isConnected()) {
-            txtAutomationConnection.setText("Chưa kết nối MQTT. Kết nối broker để tải hoặc lưu cấu hình tự động hóa.");
-            return;
-        }
-        try {
-            mqttClient.subscribe(config.getTopicStatus(), 1);
-            txtAutomationConnection.setText("Đang yêu cầu cấu hình và trạng thái từ ESP32 qua MQTT…");
-        } catch (MqttException e) {
-            Log.e(TAG, "Không thể yêu cầu trạng thái tự động hóa qua MQTT", e);
-            txtAutomationConnection.setText("Không thể tải trạng thái qua MQTT: " + e.getMessage());
-        }
+        txtAutomationConnection.setText("Backend v2 has no worker for ESP automation config. Use ESP local web.");
         refreshAutomationControls();
     }
 
@@ -980,26 +974,45 @@ public class SettingsActivity extends AppCompatActivity {
         }
         String username = edtUserUsername.getText().toString().trim();
         String password = edtUserPassword.getText().toString();
+        String fullName = edtUserFullName.getText().toString().trim();
         if (!username.matches("[A-Za-z0-9._-]{3,64}")) {
             edtUserUsername.setError("Dùng 3-64 ký tự chữ, số, . _ -.");
             return;
         }
         int passwordBytes = password.getBytes(StandardCharsets.UTF_8).length;
-        if ((editingUserId == 0 && passwordBytes < 8)
-                || (!password.isEmpty() && (passwordBytes < 8 || passwordBytes > 72))) {
+        if ((editingUserId == 0 && passwordBytes < 7)
+                || (!password.isEmpty() && (passwordBytes < 7 || passwordBytes > 72))) {
             edtUserPassword.setError(editingUserId == 0
-                    ? "Mật khẩu cần dài 8-72 byte." : "Mật khẩu mới cần dài 8-72 byte.");
+                    ? "Mật khẩu cần dài 7-72 byte." : "Mật khẩu mới cần dài 7-72 byte.");
             return;
         }
         boolean editing = editingUserId != 0;
+        boolean grantDeviceView = !editing && spnUserRole.getSelectedItemPosition() == 0;
+        if (!editing && fullName.isEmpty()) {
+            edtUserFullName.setError("Nhập họ và tên.");
+            return;
+        }
+        if (editing && password.isEmpty() && switchUserActive.isChecked() == editingUserActive) {
+            showSettingsFeedback("Chưa có thay đổi mật khẩu hoặc trạng thái tài khoản.", true);
+            return;
+        }
+        if (editing && !password.isEmpty() && switchUserActive.isChecked() != editingUserActive) {
+            showSettingsFeedback("Lưu mật khẩu và trạng thái tài khoản trong hai lần riêng.", true);
+            return;
+        }
         JSONObject body = new JSONObject();
         try {
-            body.put("action", "save_user");
-            if (editingUserId != 0) body.put("user_id", editingUserId);
-            body.put("username", username);
-            if (!password.isEmpty()) body.put("password", password);
-            body.put("role", editing || spnUserRole.getSelectedItemPosition() == 0 ? "guest" : "admin");
-            body.put("is_active", switchUserActive.isChecked());
+            body.put("action", editing ? (password.isEmpty() ? "set_user_active" : "set_user_password") : "create_user");
+            if (editing) {
+                body.put("user_id", editingUserId);
+                if (password.isEmpty()) body.put("is_active", switchUserActive.isChecked());
+                else body.put("password", password);
+            } else {
+                body.put("username", username);
+                body.put("full_name", fullName);
+                body.put("password", password);
+                body.put("role", spnUserRole.getSelectedItemPosition() == 0 ? "user" : "admin");
+            }
         } catch (org.json.JSONException e) {
             showSettingsFeedback("Không thể tạo yêu cầu lưu tài khoản.", true);
             return;
@@ -1021,6 +1034,10 @@ public class SettingsActivity extends AppCompatActivity {
                 response -> {
                     OperationLog.get(this).finish(operation, "confirmed", "API đã lưu tài khoản");
                     resetUserForm();
+                    if (grantDeviceView) {
+                        grantNewUserView(response.optInt("user_id", 0), username);
+                        return;
+                    }
                     showSettingsFeedback(editing
                             ? "Đã cập nhật tài khoản: " + username : "Đã tạo tài khoản: " + username, false);
                     requestUsers();
@@ -1032,6 +1049,45 @@ public class SettingsActivity extends AppCompatActivity {
         ) {
             @Override
             public java.util.Map<String, String> getHeaders() {
+                java.util.Map<String, String> headers = new java.util.HashMap<>();
+                headers.put("Authorization", "Bearer " + UserSession.getToken());
+                return headers;
+            }
+        };
+        request.setRetryPolicy(new DefaultRetryPolicy(8000, 0, 1.0f));
+        request.setTag(this);
+        accountRequestQueue.add(request);
+    }
+
+    private void grantNewUserView(int userId, String username) {
+        if (userId <= 0) {
+            showSettingsFeedback("Đã tạo user nhưng chưa cấp được quyền xem SmartPool.", true);
+            requestUsers();
+            return;
+        }
+        JSONObject body = new JSONObject();
+        try {
+            body.put("action", "set_device_member");
+            body.put("device_id", config.getDeviceId());
+            body.put("user_id", userId);
+            body.put("can_view", true);
+            body.put("can_control", false);
+            body.put("can_configure", false);
+        } catch (org.json.JSONException error) {
+            showSettingsFeedback("Đã tạo user nhưng chưa cấp được quyền xem SmartPool.", true);
+            requestUsers();
+            return;
+        }
+        JsonObjectRequest request = new JsonObjectRequest(Request.Method.POST,
+                config.getHttpApiUrl().trim(), body,
+                response -> {
+                    showSettingsFeedback("Đã tạo " + username + " và cấp quyền xem " + config.getDeviceId() + ".", false);
+                    requestUsers();
+                }, error -> {
+                    showAccountApiError(error, "Đã tạo user nhưng cấp quyền xem thiết bị thất bại.");
+                    requestUsers();
+                }) {
+            @Override public java.util.Map<String, String> getHeaders() {
                 java.util.Map<String, String> headers = new java.util.HashMap<>();
                 headers.put("Authorization", "Bearer " + UserSession.getToken());
                 return headers;
@@ -1095,7 +1151,7 @@ public class SettingsActivity extends AppCompatActivity {
             if (user == null) continue;
             int userId = user.optInt("id", -1);
             String username = user.optString("username", "");
-            boolean active = user.optInt("is_active", 0) == 1;
+            boolean active = user.optBoolean("is_active", false);
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setPadding(dp(12), dp(10), dp(12), dp(10));
@@ -1106,7 +1162,7 @@ public class SettingsActivity extends AppCompatActivity {
             layoutUserList.addView(card, cardParams);
 
             boolean admin = "admin".equals(user.optString("role"));
-            TextView detail = automationLabel(username + (admin ? " • ADMIN" : " • GUEST")
+            TextView detail = automationLabel(username + (admin ? " • ADMIN" : " • USER")
                     + (active ? " • Hoạt động" : " • Đã khóa"), 13, true);
             card.addView(detail);
             if (admin) continue;
@@ -1119,7 +1175,8 @@ public class SettingsActivity extends AppCompatActivity {
             edit.setOnClickListener(v -> editUser(user));
             actions.addView(edit, new LinearLayout.LayoutParams(0, dp(42), 1));
             Button delete = new Button(this);
-            delete.setText("Xóa");
+            delete.setText("Khóa");
+            delete.setEnabled(active);
             delete.setAllCaps(false);
             delete.setTextColor(getColor(R.color.danger));
             delete.setOnClickListener(v -> deleteUser(userId, username));
@@ -1131,11 +1188,16 @@ public class SettingsActivity extends AppCompatActivity {
 
     private void editUser(JSONObject user) {
         editingUserId = user.optInt("id", 0);
+        editingUserActive = user.optBoolean("is_active", false);
         edtUserUsername.setText(user.optString("username", ""));
+        edtUserUsername.setEnabled(false);
         edtUserPassword.setText("");
+        edtUserFullName.setText(user.optString("full_name", ""));
+        edtUserFullName.setEnabled(false);
         spnUserRole.setSelection(0);
         spnUserRole.setEnabled(false);
-        switchUserActive.setChecked(user.optInt("is_active", 0) == 1);
+        switchUserActive.setChecked(editingUserActive);
+        switchUserActive.setEnabled(true);
         btnSaveUser.setText("Lưu thay đổi");
         btnCancelUserEdit.setVisibility(View.VISIBLE);
         edtUserUsername.requestFocus();
@@ -1143,11 +1205,16 @@ public class SettingsActivity extends AppCompatActivity {
 
     private void resetUserForm() {
         editingUserId = 0;
+        editingUserActive = true;
         edtUserUsername.setText("");
+        edtUserUsername.setEnabled(true);
         edtUserPassword.setText("");
+        edtUserFullName.setText("");
+        edtUserFullName.setEnabled(true);
         spnUserRole.setSelection(0);
         spnUserRole.setEnabled(true);
         switchUserActive.setChecked(true);
+        switchUserActive.setEnabled(false);
         btnSaveUser.setText("Tạo tài khoản");
         btnCancelUserEdit.setVisibility(View.GONE);
     }
@@ -1163,8 +1230,9 @@ public class SettingsActivity extends AppCompatActivity {
         }
         JSONObject body = new JSONObject();
         try {
-            body.put("action", "delete_user");
+            body.put("action", "set_user_active");
             body.put("user_id", userId);
+            body.put("is_active", false);
         } catch (org.json.JSONException e) {
             showSettingsFeedback("Không thể tạo yêu cầu xóa tài khoản.", true);
             return;
@@ -1174,7 +1242,7 @@ public class SettingsActivity extends AppCompatActivity {
                 Request.Method.POST, apiUrl, body,
                 response -> {
                     OperationLog.get(this).finish(operation, "confirmed", "API đã xóa tài khoản");
-                    showSettingsFeedback("Đã xóa tài khoản: " + username, false);
+                    showSettingsFeedback("Đã khóa tài khoản: " + username, false);
                     if (editingUserId == userId) resetUserForm();
                     requestUsers();
                 },
@@ -1222,11 +1290,12 @@ public class SettingsActivity extends AppCompatActivity {
     // ==================== KẾT NỐI MQTT ====================
 
     private void refreshMqttActions() {
-        boolean ready = mqttClient != null && mqttClient.isConnected();
+        boolean ready = false;
         for (android.view.View action : new android.view.View[]{btnSaveThresholds, btnScanWifi,
-                btnSaveWifi, btnSaveDevice, btnSaveHttpConfig, btnSaveAndPublishMqtt}) {
+                btnSaveWifi, btnSaveDevice, btnSaveAndPublishMqtt, btnSaveMqttConfig}) {
             if (action != null) action.setEnabled(ready);
         }
+        btnSaveHttpConfig.setEnabled(true);
         refreshAutomationControls();
     }
 
@@ -1698,22 +1767,7 @@ public class SettingsActivity extends AppCompatActivity {
 
         config.setHttpApiUrl(httpUrl);
         config.setHttpPollIntervalSec(interval);
-        config.setControlMode("mqtt");
-
-        if (mqttClient == null || !mqttClient.isConnected()) {
-            OperationLog.get(this).record("Lưu cấu hình HTTP", "saved", "Chưa đồng bộ với ESP32");
-            showSettingsFeedback("Đã lưu HTTP trong app. Kết nối MQTT để đồng bộ URL với ESP32.", false);
-            return;
-        }
-
-        String reqId = "req_http_" + UUID.randomUUID();
-        publishWithAckProgress(
-                "Đang gửi cấu hình HTTP",
-                config.getTopicConfigHttp(),
-                config.buildHttpJson(reqId).toString(),
-                reqId,
-                "Cấu hình HTTP"
-        );
+        showSettingsFeedback("Đã lưu URL API v2 trong app.", false);
     }
 
     /**

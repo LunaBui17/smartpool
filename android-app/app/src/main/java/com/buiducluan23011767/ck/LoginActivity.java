@@ -118,11 +118,13 @@ public class LoginActivity extends AppCompatActivity {
                 body,
                 response -> {
                     login.setEnabled(true);
-                    String returnedRole = response.optString("role", "");
+                    JSONObject user = response.optJSONObject("user");
+                    String returnedRole = user == null ? "" : user.optString("role", "");
                     String sessionToken = response.optString("token", "");
-                    String accountName = response.optString("username", enteredUsername);
+                    String accountName = user == null ? enteredUsername : user.optString("username", enteredUsername);
                     long expiresIn = response.optLong("expires_in", 0);
-                    if (!("admin".equals(returnedRole) || "guest".equals(returnedRole))
+                    if (!"success".equals(response.optString("status"))
+                            || !("admin".equals(returnedRole) || "user".equals(returnedRole))
                             || sessionToken.isEmpty() || expiresIn <= 0) {
                         status.setText("Máy chủ trả về thông tin tài khoản không hợp lệ.");
                         return;
@@ -145,7 +147,7 @@ public class LoginActivity extends AppCompatActivity {
                         status.setText("Tên đăng nhập hoặc mật khẩu không đúng.");
                     } else if (responseCode == 0) {
                         status.setText("Không thể kết nối máy chủ. Kiểm tra mạng và URL API ở trên; "
-                                + "nếu Quick Tunnel đổi địa chỉ, nhập URL mới từ file smartpool-endpoints.txt trên Pi.");
+                                + "nếu Quick Tunnel đổi địa chỉ, nhập URL mới từ file smartpool-v2-endpoints.txt trên Pi.");
                     } else {
                         status.setText(String.format(Locale.getDefault(),
                                 "Đăng nhập thất bại (HTTP %d).", responseCode));

@@ -50,7 +50,7 @@ final class UserSession {
         String savedToken = preferences.getString(KEY_TOKEN, null);
         long savedExpiry = preferences.getLong(KEY_EXPIRES_AT, 0);
         if (savedUsername == null || savedToken == null || savedToken.isEmpty()
-                || !("admin".equals(savedRole) || "guest".equals(savedRole))
+                || !("admin".equals(savedRole) || "user".equals(savedRole))
                 || savedExpiry <= System.currentTimeMillis()) {
             clearSessionData(preferences);
             return false;

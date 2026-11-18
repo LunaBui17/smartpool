@@ -1,20 +1,19 @@
 package com.buiducluan23011767.ck;
 
 import android.content.Context;
-import android.graphics.Canvas;
-import android.graphics.Paint;
-import android.graphics.Path;
-import android.graphics.RectF;
 import android.graphics.Typeface;
-import android.text.TextUtils;
+import android.graphics.drawable.GradientDrawable;
 import android.util.AttributeSet;
 import android.view.View;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
-import java.util.ArrayList;
 import java.util.List;
 
-public final class SystemStatusView extends View {
+/** A compact status board for the phone screen. No state is inferred from its colour alone. */
+public final class SystemStatusView extends LinearLayout {
     enum State { ON, OFF, UNKNOWN, WAIT, ERROR }
+    private String renderedSnapshot;
 
     static final class Node {
         final String title;
@@ -30,150 +29,157 @@ public final class SystemStatusView extends View {
         }
     }
 
-    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final List<Node> nodes = new ArrayList<>();
-
     public SystemStatusView(Context context, AttributeSet attrs) {
         super(context, attrs);
+        setOrientation(VERTICAL);
     }
 
-    void setNodes(List<Node> updated) {
-        boolean resized = nodes.size() != updated.size();
-        nodes.clear();
-        nodes.addAll(updated);
-        StringBuilder description = new StringBuilder();
-        for (Node node : nodes) {
-            description.append(node.title).append(": ").append(node.status)
-                    .append(". ").append(node.detail).append(".\n");
+    void setSnapshot(Node summary, List<Node> connections, List<Node> device) {
+        StringBuilder snapshot = new StringBuilder();
+        appendSnapshot(snapshot, summary);
+        for (Node node : connections) appendSnapshot(snapshot, node);
+        for (Node node : device) appendSnapshot(snapshot, node);
+        String nextSnapshot = snapshot.toString();
+        if (nextSnapshot.equals(renderedSnapshot)) return;
+        renderedSnapshot = nextSnapshot;
+        removeAllViews();
+        addSummary(summary);
+        addSection("KẾT NỐI", connections);
+        addSection("THIẾT BỊ", device);
+    }
+
+    private void appendSnapshot(StringBuilder snapshot, Node node) {
+        snapshot.append(node.title.length()).append(':').append(node.title)
+                .append(node.status.length()).append(':').append(node.status)
+                .append(node.detail.length()).append(':').append(node.detail)
+                .append(node.state.ordinal());
+    }
+
+    private void addSummary(Node node) {
+        LinearLayout card = new LinearLayout(getContext());
+        card.setOrientation(VERTICAL);
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
+        card.setBackground(background(softColor(node.state), stateColor(node.state), 16));
+        LayoutParams cardParams = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
+        cardParams.bottomMargin = dp(8);
+        addView(card, cardParams);
+
+        TextView title = label(node.title, 18, R.color.text_primary, true);
+        card.addView(title);
+        TextView status = label(symbol(node.state) + "  " + node.status, 15, stateColor(node.state), true);
+        LayoutParams statusParams = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
+        statusParams.topMargin = dp(5);
+        card.addView(status, statusParams);
+        if (!node.detail.isEmpty()) {
+            TextView detail = label(node.detail, 13, R.color.text_secondary, false);
+            LayoutParams detailParams = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
+            detailParams.topMargin = dp(5);
+            card.addView(detail, detailParams);
         }
-        setContentDescription(description.toString());
-        if (resized) requestLayout();
-        invalidate();
     }
 
-    private float nodeHeight() {
-        return Math.max(dp(90), sp(14) * 5 + dp(16));
-    }
+    private void addSection(String heading, List<Node> items) {
+        TextView section = label(heading, 13, R.color.text_secondary, true);
+        LayoutParams headingParams = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
+        headingParams.topMargin = dp(16);
+        headingParams.bottomMargin = dp(8);
+        addView(section, headingParams);
 
-    @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        int rows = nodes.isEmpty() ? 1 : 1 + nodes.size() / 2;
-        int height = (int) Math.ceil(dp(16) + rows * (nodeHeight() + dp(28)));
-        setMeasuredDimension(resolveSize((int) dp(360), widthMeasureSpec),
-                resolveSize(height, heightMeasureSpec));
-    }
-
-    private RectF box(int index) {
-        float margin = dp(8);
-        float right = getWidth() - dp(22);
-        float halfWidth = (right - margin - dp(16)) / 2;
-        if (index == 0) {
-            return new RectF(getWidth() * 0.18f, margin, getWidth() * 0.82f,
-                    margin + nodeHeight());
-        }
-        int row = 1 + (index - 1) / 2;
-        float left = margin + ((index - 1) % 2) * (halfWidth + dp(16));
-        float top = margin + row * (nodeHeight() + dp(28));
-        return new RectF(left, top, left + halfWidth, top + nodeHeight());
-    }
-
-    @Override
-    protected void onDraw(Canvas canvas) {
-        super.onDraw(canvas);
-        if (nodes.isEmpty()) return;
-        paint.setColor(getContext().getColor(R.color.text_muted));
-        paint.setStrokeWidth(dp(1.5f));
-        paint.setStyle(Paint.Style.STROKE);
-        if (nodes.size() >= 5) {
-            RectF app = box(0);
-            float splitY = app.bottom + dp(12);
-            canvas.drawLine(app.centerX(), app.bottom, app.centerX(), splitY, paint);
-            canvas.drawLine(box(1).centerX(), splitY, box(2).centerX(), splitY, paint);
-            arrow(canvas, box(1).centerX(), splitY, box(1).top);
-            arrow(canvas, box(2).centerX(), splitY, box(2).top);
-            arrow(canvas, box(1).centerX(), box(1).bottom, box(3).top);
-            arrow(canvas, box(2).centerX(), box(2).bottom, box(4).top);
-            if (nodes.size() > 5) {
-                RectF esp = box(4);
-                float trunk = getWidth() - dp(6);
-                float startY = esp.bottom + dp(10);
-                canvas.drawLine(esp.centerX(), esp.bottom, esp.centerX(), startY, paint);
-                canvas.drawLine(esp.centerX(), startY, trunk, startY, paint);
-                canvas.drawLine(trunk, startY, trunk, box(nodes.size() - 1).top - dp(12), paint);
-                for (int i = 5; i < nodes.size(); i += 2) {
-                    float branchY = box(i).top - dp(12);
-                    canvas.drawLine(box(i).centerX(), branchY, trunk, branchY, paint);
-                    arrow(canvas, box(i).centerX(), branchY, box(i).top);
-                    if (i + 1 < nodes.size()) {
-                        arrow(canvas, box(i + 1).centerX(), branchY, box(i + 1).top);
-                    }
-                }
+        LinearLayout card = new LinearLayout(getContext());
+        card.setOrientation(VERTICAL);
+        card.setBackground(background(R.color.surface_card, R.color.card_stroke, 16));
+        addView(card, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        for (int i = 0; i < items.size(); i++) {
+            if (i > 0) {
+                View divider = new View(getContext());
+                divider.setBackgroundColor(getContext().getColor(R.color.line));
+                LayoutParams dividerParams = new LayoutParams(LayoutParams.MATCH_PARENT, dp(1));
+                dividerParams.leftMargin = dp(16);
+                dividerParams.rightMargin = dp(16);
+                card.addView(divider, dividerParams);
             }
-        }
-        paint.setStyle(Paint.Style.FILL);
-        for (int i = 0; i < nodes.size(); i++) {
-            Node node = nodes.get(i);
-            RectF bounds = box(i);
-            int color = stateColor(node.state);
-            paint.setColor(getContext().getColor(R.color.surface_card));
-            canvas.drawRoundRect(bounds, dp(12), dp(12), paint);
-            paint.setColor(color);
-            paint.setStyle(Paint.Style.STROKE);
-            canvas.drawRoundRect(bounds, dp(12), dp(12), paint);
-            paint.setStyle(Paint.Style.FILL);
-            float x = bounds.left + dp(10);
-            float width = bounds.width() - dp(20);
-            float y = bounds.top + dp(12) - textAscent(13);
-            paint.setColor(getContext().getColor(R.color.text_primary));
-            paint.setTypeface(Typeface.DEFAULT_BOLD);
-            text(canvas, node.title, x, y, width, 13);
-            y += paint.getFontSpacing() + dp(6);
-            paint.setColor(color);
-            text(canvas, node.status, x, y, width, 13);
-            y += paint.getFontSpacing() + dp(6);
-            paint.setTypeface(Typeface.DEFAULT);
-            paint.setColor(getContext().getColor(R.color.text_secondary));
-            text(canvas, node.detail, x, y, width, 11);
+            addRow(card, items.get(i));
         }
     }
 
-    private float textAscent(int size) {
-        paint.setTextSize(sp(size));
-        return paint.ascent();
+    private void addRow(LinearLayout parent, Node node) {
+        LinearLayout row = new LinearLayout(getContext());
+        row.setOrientation(VERTICAL);
+        row.setPadding(dp(16), dp(12), dp(16), dp(12));
+        row.setMinimumHeight(dp(62));
+        row.setContentDescription(node.title + ". " + node.status
+                + (node.detail.isEmpty() ? "" : ". " + node.detail));
+        parent.addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+
+        LinearLayout top = new LinearLayout(getContext());
+        top.setOrientation(HORIZONTAL);
+        top.setBaselineAligned(false);
+        row.addView(top, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+
+        TextView title = label(node.title, 15, R.color.text_primary, true);
+        top.addView(title, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1));
+        TextView status = label(symbol(node.state) + " " + node.status, 13, stateColor(node.state), true);
+        status.setTextAlignment(TEXT_ALIGNMENT_VIEW_END);
+        LayoutParams statusParams = new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
+        statusParams.leftMargin = dp(8);
+        top.addView(status, statusParams);
+
+        if (!node.detail.isEmpty()) {
+            TextView detail = label(node.detail, 12, R.color.text_secondary, false);
+            LayoutParams detailParams = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
+            detailParams.topMargin = dp(4);
+            row.addView(detail, detailParams);
+        }
     }
 
-    private void text(Canvas canvas, String value, float x, float y, float width, int size) {
-        paint.setTextSize(sp(size));
-        canvas.drawText(TextUtils.ellipsize(value, new android.text.TextPaint(paint),
-                Math.max(0, width), TextUtils.TruncateAt.END).toString(), x, y, paint);
+    private TextView label(String value, int size, int color, boolean bold) {
+        TextView text = new TextView(getContext());
+        text.setText(value);
+        text.setTextSize(size);
+        text.setTextColor(getContext().getColor(color));
+        text.setIncludeFontPadding(false);
+        if (bold) text.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        return text;
     }
 
-    private void arrow(Canvas canvas, float x, float startY, float endY) {
-        canvas.drawLine(x, startY, x, endY, paint);
-        Path head = new Path();
-        head.moveTo(x - dp(4), endY - dp(5));
-        head.lineTo(x, endY);
-        head.lineTo(x + dp(4), endY - dp(5));
-        canvas.drawPath(head, paint);
+    private GradientDrawable background(int fill, int stroke, int radius) {
+        GradientDrawable shape = new GradientDrawable();
+        shape.setColor(getContext().getColor(fill));
+        shape.setCornerRadius(dp(radius));
+        shape.setStroke(dp(1), getContext().getColor(stroke));
+        return shape;
+    }
+
+    private String symbol(State state) {
+        switch (state) {
+            case ON: return "●";
+            case WAIT: return "◐";
+            case ERROR: return "!";
+            case OFF: return "○";
+            default: return "·";
+        }
     }
 
     private int stateColor(State state) {
-        int resource;
         switch (state) {
-            case ON: resource = R.color.success; break;
-            case WAIT: resource = R.color.warning; break;
-            case ERROR: resource = R.color.danger; break;
-            case OFF: resource = R.color.text_secondary; break;
-            default: resource = R.color.text_muted;
+            case ON: return R.color.success;
+            case WAIT: return R.color.warning;
+            case ERROR: return R.color.danger;
+            case OFF: return R.color.text_secondary;
+            default: return R.color.text_muted;
         }
-        return getContext().getColor(resource);
     }
 
-    private float dp(float value) {
-        return value * getResources().getDisplayMetrics().density;
+    private int softColor(State state) {
+        switch (state) {
+            case ON: return R.color.success_soft;
+            case WAIT: return R.color.warning_soft;
+            case ERROR: return R.color.danger_soft;
+            default: return R.color.surface_elevated;
+        }
     }
 
-    private float sp(float value) {
-        return value * getResources().getDisplayMetrics().scaledDensity;
+    private int dp(float value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 }

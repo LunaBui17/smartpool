@@ -62,7 +62,8 @@ static cJSON *read_json(httpd_req_t *req)
     }
     char body[768];
     if (req->content_len <= 0 || req->content_len >= sizeof(body)) {
-        httpd_resp_send_err(req, HTTPD_413_CONTENT_TOO_LARGE, "Request is too large");
+        httpd_resp_set_status(req, "413 Payload Too Large");
+        httpd_resp_sendstr(req, "Request is too large");
         return NULL;
     }
     size_t received = 0;

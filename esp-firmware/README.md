@@ -1,16 +1,16 @@
 # Firmware ESP32-S3 Smart Pool
 
-**Tương thích backend:** firmware trong thư mục này chưa tích hợp database/API v2 nhiều thiết bị. Payload HTTP, credential theo thiết bị, giờ đo NVS, status boot/sequence và config revision cần cập nhật trước khi dùng với backend mới. Xem [hợp đồng v2](../docs/database-v2.md). BLE chưa triển khai.
+**Backend v2:** firmware gửi mẫu đo và trạng thái live vào API v2, dùng MQTT account theo `device_id` và topic riêng của thiết bị. Firmware nhận `cmd/pump` theo ID, kiểm tra hạn lệnh, lưu ID chống lặp và gửi `ack/command`; worker trên Pi phát lệnh khi đã kiểm tra quyền API. Giờ đo của mẫu NVS hiện gửi là `unknown`; đồng bộ cấu hình revision và BLE chưa triển khai. Xem [hợp đồng v2](../docs/database-v2.md).
 
-[Hướng dẫn tổng thể](../README.md) · [Luồng toàn hệ thống](../docs/system-flow.md) · [Giao thức MQTT](../README_MQTT_ESP32.md) · [Triển khai Raspberry Pi](../deploy/raspberry-pi/README.md)
+[Hướng dẫn tổng thể](../README.md) · [Luồng toàn hệ thống](../docs/system-flow.md) · [Giao thức MQTT v2](../docs/mqtt-v2.md) · [Triển khai Raspberry Pi v2](../deploy/raspberry-pi-v2/README.md)
 
 Firmware đọc cảm biến, điều khiển hai relay, tự động hóa bơm ngay trên ESP32-S3 và kết nối với backend Smart Pool:
 
 - Đọc nhiệt độ từ DS18B20 và mực nước từ cảm biến analog.
-- Điều khiển độc lập bơm vào và bơm ra qua MQTT hoặc trang web nội bộ.
+- Điều khiển độc lập bơm vào và bơm ra qua trang web nội bộ hoặc lệnh MQTT v2 từ worker trên Pi.
 - Lưu cấu hình và quy tắc tự động hóa trong NVS.
 - Gửi mẫu đo tới API qua HTTP(S); lưu tạm tối đa 128 mẫu trong NVS khi chưa gửi được.
-- Phát trạng thái và telemetry qua MQTT để ứng dụng Android theo dõi.
+- Phát trạng thái và telemetry qua MQTT topic riêng của thiết bị.
 - Cung cấp điểm truy cập Wi-Fi và trang cấu hình cục bộ trên ESP32.
 
 ## Chân kết nối và cấu hình mặc định
@@ -30,7 +30,7 @@ Nối chung GND giữa ESP32, cảm biến và đầu vào relay. Không cấp �
 
 1. Cài đặt môi trường ESP-IDF và mở terminal đã nạp môi trường đó.
 2. Tại thư mục `esp-firmware`, chạy `idf.py menuconfig` để kiểm tra cấu hình phần cứng, điểm truy cập, API và broker MQTT.
-3. Nếu dùng Mosquitto trên Raspberry Pi, lấy endpoint mới nhất từ `~/smartpool-endpoints.txt` trên Pi. Cấu hình thông tin MQTT tương ứng trong `main/mqtt_credentials.h`; không chia sẻ mật khẩu hoặc tệp chứa thông tin xác thực.
+3. Đăng ký `SmartPool` (hoặc ID đã chọn trong `CONFIG_POOL_DEVICE_ID`) trong API v2, kích hoạt thiết bị, cấp `device_key` HTTP và tạo MQTT account bằng `sudo python3 mqtt-admin.py add-device SmartPool` trên Pi. Lưu key một lần vào `main/device_credentials.h` theo file `.example` (file này được Git bỏ qua). MQTT username tự bằng ID; password lấy từ file private `~/smartpool-v2-mqtt/SmartPool.txt` trên Pi và cấu hình trong `main/mqtt_credentials.h` hoặc trang local.
 4. Build và nạp firmware:
 
 ```bash
@@ -40,8 +40,9 @@ idf.py -p COMx flash monitor
 ```
 
 Thay `COMx` bằng cổng nối với bo mạch. Nếu tạo cấu hình mới mà chưa có `sdkconfig`, chọn target bằng `idf.py set-target esp32s3` trước khi build.
+File `.bin` sau khi build chứa key HTTP của thiết bị; không chia sẻ artifact hoặc đưa vào Git. Trên máy này bản build đã kiểm tra nằm tại `build-v53/ds18b20.bin`, được Git bỏ qua. Flash cần cổng USB của ESP; `COM1` hệ thống không chứng minh bo ESP đã kết nối.
 
-Thông tin Wi-Fi, API, MQTT và các quy tắc đã lưu trong NVS được giữ qua lần khởi động lại và có thể ghi đè giá trị mặc định trong firmware. Địa chỉ Quick Tunnel có thể thay đổi; hãy lấy địa chỉ hiện hành từ file endpoint trên Pi rồi cập nhật cấu hình ESP32 và Android.
+Mặc định firmware dùng API `https://mysterious-witness-crown-glasgow.trycloudflare.com/pool_api/pool_api.php` và MQTT `wss://mysterious-witness-crown-glasgow.trycloudflare.com/mqtt` qua Cloudflare Quick Tunnel. Wi-Fi đã lưu trong NVS được giữ lại. Cấu hình v2 lưu sau đó có thể ghi đè mặc định; kiểm tra trang local sau khi flash. Khi Quick Tunnel đổi URL, lấy endpoint hiện hành từ `~/smartpool-v2-endpoints.txt` trên Pi và cập nhật cả API lẫn MQTT WSS.
 
 ## Trang cấu hình cục bộ
 
@@ -57,13 +58,12 @@ Trang cấu hình cho phép xem trạng thái cảm biến và kết nối, bậ
 
 ## Điều khiển và dữ liệu
 
-- Lệnh MQTT cho bơm dùng topic `smartpool/cmd/bom_vao` và `smartpool/cmd/bom_ra`; payload `1` bật, `0` tắt. Lệnh bật bơm không được gửi dưới dạng retained.
-- ESP32 phát trạng thái tại `smartpool/status` và số đo tại `smartpool/telemetry`. Trạng thái relay là trạng thái GPIO được điều khiển, không phải xác nhận bơm thực sự đang quay.
+- ESP32 phát trạng thái tại `smartpool/devices/SmartPool/status` và số đo tại `smartpool/devices/SmartPool/telemetry`. Trạng thái relay là trạng thái GPIO được điều khiển, không phải xác nhận bơm thực sự đang quay.
 - Mẫu đo được gửi qua HTTP(S) để lưu lịch sử. Khi API chưa khả dụng, firmware xếp mẫu vào hàng đợi NVS và gửi lại khi có thể.
 - Quy tắc tự động hóa chạy trên ESP32, không cần ứng dụng Android duy trì kết nối.
-- Điều khiển từ xa yêu cầu MQTT và ESP32 trực tuyến. Điều khiển tại chỗ và tự động hóa hoạt động theo trạng thái cảm biến, cấu hình liên động và chế độ hiện tại của thiết bị.
+- Điều khiển tại chỗ, tự động hóa và lệnh bơm MQTT v2 hoạt động theo trạng thái cảm biến, cấu hình liên động và chế độ hiện tại của thiết bị.
 
-Danh sách topic, cấu trúc payload, retained và xác nhận lệnh được mô tả trong [tài liệu giao thức MQTT](../README_MQTT_ESP32.md). Luồng dữ liệu, lưu trữ và xử lý khi mất kết nối nằm trong [sơ đồ toàn hệ thống](../docs/system-flow.md).
+Danh sách topic và ACL mới nằm trong [tài liệu MQTT v2](../docs/mqtt-v2.md). Luồng dữ liệu, lưu trữ và xử lý khi mất kết nối nằm trong [sơ đồ toàn hệ thống](../docs/system-flow.md).
 
 ## Kiểm tra
 

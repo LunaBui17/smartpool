@@ -104,11 +104,17 @@ menu "Smart Pool Network"
 
     config POOL_API_URL
         string "HTTP(S) API URL"
-        default "https://division-unlikely-drinking-disks.trycloudflare.com/pool_api/pool_api.php"
+        default "https://mysterious-witness-crown-glasgow.trycloudflare.com/pool_api/pool_api.php"
+
+    config POOL_DEVICE_ID
+        string "Registered backend v2 device ID"
+        default "SmartPool"
+        help
+            Register this exact ID in the v2 API and use it as the MQTT username.
 
     config POOL_MQTT_URI
         string "MQTT broker URI"
-        default "wss://division-unlikely-drinking-disks.trycloudflare.com/mqtt"
+        default "wss://mysterious-witness-crown-glasgow.trycloudflare.com/mqtt"
 
 endmenu
 
