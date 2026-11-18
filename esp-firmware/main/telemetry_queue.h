@@ -24,7 +24,8 @@ typedef struct {
     int64_t measured_at_ms; // Zero means unknown at acquisition, including migrated v1/v2 data.
 } telemetry_sample_t;
 
-esp_err_t telemetry_queue_init(void);
+esp_err_t telemetry_queue_check_device(const char *device_id, const char *legacy_device_id);
+esp_err_t telemetry_queue_init(const char *device_id, const char *legacy_device_id);
 esp_err_t telemetry_queue_push(const telemetry_sample_t *sample, bool *dropped_oldest);
 bool telemetry_queue_peek(telemetry_sample_t *sample);
 bool telemetry_queue_peek_at(unsigned int offset, telemetry_sample_t *sample);

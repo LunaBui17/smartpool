@@ -71,6 +71,7 @@ function api_device($db, $device) {
 function api_access($db, $user, $device, $permission = 'view') {
     if (!in_array($permission, array('view','control','configure'), true)) throw new RuntimeException('Unknown permission');
     $row = api_device($db, $device);
+    if($permission!=='view'&&api_delete_job($db,$device)!==null)api_fail(409,'Thiết bị đang chờ reset/xóa');
     if ($user['role'] === 'admin') {
         if ($permission !== 'view' && !(int)$row['is_active']) api_fail(403, 'Thiết bị đã vô hiệu hóa');
         return $row;
@@ -79,14 +80,17 @@ function api_access($db, $user, $device, $permission = 'view') {
     if (!(int)$row['is_active'] || !$grants || !(int)$grants[0]['can_' . $permission]) api_fail(403, 'Không có quyền với thiết bị');
     return $row;
 }
-function api_esp($db, $device) {
-    // X-Pool-Device-Key is deliberately independent of user Bearer sessions.
+function api_esp($db, $device, $data) {
+    // Shared ESP key is independent of user Bearer sessions. MAC is an identifier, not proof of hardware.
     $key = $_SERVER['HTTP_X_POOL_DEVICE_KEY'] ?? '';
-    if (!preg_match('/^[a-f0-9]{64}$/D', $key)) api_fail(401, 'Credential ESP không hợp lệ');
+    api_require_shared_key($db,$key);
+    $mac=api_factory_mac($data);
     $row = api_device($db, $device);
-    $rows = api_query($db, 'SELECT id FROM device_credentials WHERE device_id=? AND key_hash=? AND revoked_at IS NULL FOR UPDATE', 'ss', array($device,hash('sha256',$key)));
-    if (!$rows) api_fail(401, 'Credential ESP không hợp lệ');
-    if (!(int)$row['is_active']) api_fail(403, 'Thiết bị đã vô hiệu hóa');
+    if (!(int)$row['is_active'] && !(($data['action']??null)==='get_device_config'&&api_delete_job($db,$device)!==null)) api_fail(403, 'Thiết bị đã vô hiệu hóa');
+    $hardware=api_query($db,'SELECT factory_mac FROM hardware_inventory WHERE device_id=?','s',array($device));
+    if(!$hardware)api_fail(403,'Thiết bị chưa được admin liên kết MAC gốc');
+    if($hardware[0]['factory_mac']!==$mac)api_fail(409,'Device ID không khớp MAC gốc đã đăng ký');
+    api_query($db,'UPDATE hardware_inventory SET last_verified_at=UTC_TIMESTAMP(3) WHERE device_id=?','s',array($device));
     return $row;
 }
 function api_active_user($db, $id) {

@@ -1,6 +1,8 @@
 #include "pool_network.h"
 #include "pool_mqtt_protocol.h"
 #include "pool_server_config.h"
+#include "pool_identity.h"
+#include "pool_reset.h"
 #include "cJSON.h"
 #include <stdlib.h>
 
@@ -28,17 +30,7 @@
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
 #include "mqtt_client.h"
-#if __has_include("device_credentials.h")
-#include "device_credentials.h"
-#else
-#define SMARTPOOL_DEVICE_KEY ""
-#endif
 #include "pool_features.h"
-#if POOL_MQTT_ENABLED
-#include "mqtt_credentials.h"
-#else
-#define SMARTPOOL_MQTT_PASSWORD ""
-#endif
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_timer.h"
@@ -47,6 +39,15 @@
 #ifndef CONFIG_POOL_DEVICE_ID
 #define CONFIG_POOL_DEVICE_ID "SmartPool"
 #endif
+// Only for attributing pre-provisioning legacy data, never a runtime identity.
+static char s_legacy_device_id[65] = CONFIG_POOL_DEVICE_ID;
+static _Atomic bool s_provisioning_pending;
+static _Atomic bool s_resetting;
+static pool_reset_job_t s_reset_job;
+static bool s_reset_storage_cleared;
+static bool post_reset_receipt(const char *result, const char *error_code);
+static void handle_remote_reset(const cJSON *command, const char *api_url);
+static void finish_remote_reset(void);
 #include "telemetry_queue.h"
 #include "wifi_setup.h"
 
@@ -54,10 +55,12 @@
 #define TOPIC_CMD_OUT  "smartpool/cmd/bom_ra"
 #define TOPIC_CMD_TEMPERATURE "smartpool/cmd/temperature_enabled"
 #define TOPIC_CMD_WATER "smartpool/cmd/water_level_enabled"
-#define TOPIC_STATUS   "smartpool/devices/" CONFIG_POOL_DEVICE_ID "/status"
-#define TOPIC_TELEMETRY "smartpool/devices/" CONFIG_POOL_DEVICE_ID "/telemetry"
-#define TOPIC_CMD_PUMP "smartpool/devices/" CONFIG_POOL_DEVICE_ID "/cmd/pump"
-#define TOPIC_ACK_COMMAND "smartpool/devices/" CONFIG_POOL_DEVICE_ID "/ack/command"
+static struct { char status[112], telemetry[112], command[112], ack[112]; } s_topics;
+static char s_mqtt_will[192], s_mqtt_client_id[48];
+#define TOPIC_STATUS s_topics.status
+#define TOPIC_TELEMETRY s_topics.telemetry
+#define TOPIC_CMD_PUMP s_topics.command
+#define TOPIC_ACK_COMMAND s_topics.ack
 
 static const char *TAG = "pool_network";
 // WSS upgrades use HTTP/1.1; do not advertise HTTP ALPN to raw MQTTS brokers.
@@ -122,7 +125,7 @@ static QueueHandle_t s_mqtt_commands, s_mqtt_published;
 static pool_mqtt_rx_t s_mqtt_rx;
 static pool_mqtt_settings_t s_mqtt_settings = {
     .temp_min = 20, .temp_max = 35, .water_min = CONFIG_WATER_LOW_THRESHOLD, .water_max = 4095,
-    .id = CONFIG_POOL_DEVICE_ID, .name = "SmartPool", .api_url = CONFIG_POOL_API_URL,
+    .id = "", .name = "SmartPool", .api_url = CONFIG_POOL_API_URL,
 };
 typedef struct {
     uint32_t version;
@@ -189,7 +192,7 @@ static SemaphoreHandle_t s_relay_lock;
 
 static void publish_status_frame(bool retained)
 {
-    if (!s_mqtt_connected) {
+    if (!pool_identity_ready() || s_provisioning_pending || !s_mqtt_connected) {
         return;
     }
     pool_device_state_t device_state;
@@ -206,7 +209,8 @@ static void publish_status_frame(bool retained)
     }
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
     cJSON_AddBoolToObject(status, "online", true);
-    cJSON_AddStringToObject(status, "device_id", CONFIG_POOL_DEVICE_ID);
+    cJSON_AddStringToObject(status, "device_id", pool_identity_id());
+    cJSON_AddStringToObject(status, "factory_mac", pool_identity_mac());
     cJSON_AddStringToObject(status, "boot_id", s_boot_id);
     cJSON_AddNumberToObject(status, "presence_sequence", ++s_presence_sequence);
     if (s_server_config_valid) cJSON_AddNumberToObject(status, "reported_config_revision", s_server_config.revision);
@@ -289,12 +293,13 @@ static void publish_status(void)
 // Only MQTT-originated commands require this gate; AP/local control remains independent.
 static bool mqtt_control_ready(void)
 {
-    return s_mqtt_connected && s_wifi_connected && s_station_enabled;
+    return pool_identity_ready() && !s_provisioning_pending && s_mqtt_connected && s_wifi_connected && s_station_enabled;
 }
 
 static esp_err_t set_pumps(bool pump_in, bool pump_out, bool local, bool remote_stop_only, int channel)
 {
     if (xSemaphoreTake(s_relay_lock, portMAX_DELAY) != pdTRUE) return ESP_FAIL;
+    if(s_resetting&&(pump_in||pump_out)) { xSemaphoreGive(s_relay_lock);return ESP_ERR_INVALID_STATE; }
     if (remote_stop_only) {
         pump_in = s_local_pump_in && s_pump_in;
         pump_out = s_local_pump_out && s_pump_out;
@@ -406,6 +411,11 @@ static esp_err_t credentials_saved(void)
 esp_err_t pool_network_set_station_enabled(bool enabled)
 {
     if (enabled && !POOL_WIFI_STA_ENABLED) return ESP_ERR_NOT_SUPPORTED;
+    if(s_resetting) {
+        s_station_enabled=enabled;s_connect_requested=enabled&&s_has_wifi_credentials;
+        if(!enabled)esp_wifi_disconnect();
+        return ESP_OK;
+    }
     esp_err_t err = wifi_setup_enable_ap();
     if (err != ESP_OK) return err;
     err = nvs_set_u8(s_network_nvs, "sta_enabled", enabled);
@@ -448,6 +458,7 @@ static void wifi_retry_task(void *arg)
     unsigned int seconds = 0;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
+        if(s_resetting)continue;
         seconds = (seconds + 1) % 30;
         if (atomic_exchange(&s_sntp_start_requested, false) && s_sntp_ready &&
             s_station_enabled && s_wifi_connected) {
@@ -547,7 +558,7 @@ static esp_err_t load_auto_rules(void)
         pump_auto_reset(&s_auto_runtime[i]);
         if (managed) s_auto_config[i].enabled = false;
         if (!automation_available(i, &s_auto_config[i])) s_auto_config[i].enabled = false;
-        bool initial_on = !managed && !s_auto_config[i].enabled &&
+        bool initial_on = !s_resetting && !managed && !s_auto_config[i].enabled &&
             (i == 0 ? POOL_RELAY_INITIAL_1_ON : POOL_RELAY_INITIAL_2_ON);
         // A saved interlock takes precedence over the BOTH_ON boot setting.
         if (s_mqtt_settings.interlock && POOL_RELAY_INITIAL_1_ON && POOL_RELAY_INITIAL_2_ON) initial_on = false;
@@ -580,8 +591,7 @@ static void load_connection_config(void)
     memset(&s_connection, 0, sizeof(s_connection));
     s_connection.version = 2;
     snprintf(s_connection.broker, sizeof(s_connection.broker), "%s", CONFIG_POOL_MQTT_URI);
-    snprintf(s_connection.username, sizeof(s_connection.username), "%s", CONFIG_POOL_DEVICE_ID);
-    snprintf(s_connection.password, sizeof(s_connection.password), "%s", SMARTPOOL_MQTT_PASSWORD);
+    snprintf(s_connection.username, sizeof(s_connection.username), "%s", pool_identity_id());
     stored_connection_t saved;
     size_t size = sizeof(saved);
     if (nvs_get_blob(s_network_nvs, "mqtt_conn", &saved, &size) == ESP_OK &&
@@ -589,9 +599,10 @@ static void load_connection_config(void)
         memchr(saved.broker, 0, sizeof(saved.broker)) &&
         memchr(saved.username, 0, sizeof(saved.username)) &&
         memchr(saved.password, 0, sizeof(saved.password)) &&
-        connection_url_valid(saved.broker, true) &&
-        strcmp(saved.username, CONFIG_POOL_DEVICE_ID) == 0) {
-        s_connection = saved;
+        connection_url_valid(saved.broker, true)) {
+        if (pool_identity_id_valid(saved.username))
+            snprintf(s_legacy_device_id, sizeof(s_legacy_device_id), "%s", saved.username);
+        if (pool_identity_ready() && strcmp(saved.username, pool_identity_id()) == 0) s_connection = saved;
     }
 }
 
@@ -603,13 +614,48 @@ void pool_network_get_connection_config(pool_connection_config_t *config)
     snprintf(config->username, sizeof(config->username), "%s", s_connection.username);
     config->password_set = s_connection.password[0] != '\0';
     snprintf(config->api_url, sizeof(config->api_url), "%s", s_mqtt_settings.api_url);
+    snprintf(config->device_id, sizeof(config->device_id), "%s", pool_identity_id());
+    snprintf(config->factory_serial, sizeof(config->factory_serial), "%s", pool_identity_serial());
+    config->provisioned = pool_identity_ready();
+    config->device_key_set = pool_identity_key()[0] != 0;
+    config->provisioning_pending = s_provisioning_pending;
     xSemaphoreGive(s_relay_lock);
+}
+
+esp_err_t pool_network_provision_device(const char *device_id, const char *device_key)
+{
+    if (!pool_identity_id_valid(device_id) || !device_key) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_relay_lock, portMAX_DELAY);
+    esp_err_t error = s_provisioning_pending ? ESP_ERR_INVALID_STATE : ESP_OK;
+    if (error == ESP_OK) error = telemetry_queue_check_device(device_id, s_legacy_device_id);
+    if (error == ESP_OK && !pool_identity_ready() && strcmp(device_id, s_legacy_device_id)) {
+        const char *keys[] = {"server_cfg", "cmd_log"};
+        for (int i = 0; i < 2; i++) {
+            size_t size = 0;
+            esp_err_t found = nvs_get_blob(s_network_nvs, keys[i], NULL, &size);
+            if (found != ESP_ERR_NVS_NOT_FOUND) {
+                error = found == ESP_OK ? ESP_ERR_INVALID_STATE : found;
+                break;
+            }
+        }
+    }
+    if (error == ESP_OK) error = pool_identity_save(device_id, device_key);
+    if (error == ESP_OK) s_provisioning_pending = true;
+    xSemaphoreGive(s_relay_lock);
+    if (error == ESP_OK) set_pumps(false, false, false, true, 0);
+    return error;
 }
 
 esp_err_t pool_network_save_http_url(const char *url)
 {
     if (!POOL_HTTP_ENABLED) return ESP_ERR_NOT_SUPPORTED;
     if (!connection_url_valid(url, false)) return ESP_ERR_INVALID_ARG;
+    if(s_resetting) {
+        xSemaphoreTake(s_relay_lock,portMAX_DELAY);
+        snprintf(s_reset_job.api_url,sizeof(s_reset_job.api_url),"%s",url);
+        esp_err_t saved=pool_reset_save(&s_reset_job);
+        xSemaphoreGive(s_relay_lock);return saved;
+    }
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
     pool_mqtt_settings_t next = s_mqtt_settings;
     snprintf(next.api_url, sizeof(next.api_url), "%s", url);
@@ -627,8 +673,9 @@ esp_err_t pool_network_save_mqtt_connection(const char *broker, const char *user
                                              const char *password)
 {
     if (!POOL_MQTT_ENABLED) return ESP_ERR_NOT_SUPPORTED;
+    if (!pool_identity_ready() || s_provisioning_pending) return ESP_ERR_INVALID_STATE;
     if (!connection_url_valid(broker, true) || !username ||
-        strcmp(username, CONFIG_POOL_DEVICE_ID) != 0 ||
+        strcmp(username, pool_identity_id()) != 0 ||
         strlen(username) >= sizeof(s_connection.username) || !password ||
         strlen(password) >= sizeof(s_connection.password)) return ESP_ERR_INVALID_ARG;
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
@@ -652,13 +699,30 @@ esp_err_t pool_network_init(void)
     if (!s_pending_samples) return ESP_ERR_NO_MEM;
     esp_err_t err = nvs_flash_init();
     if (err != ESP_OK) return err;
+    err=pool_reset_load(&s_reset_job);
+    if(err==ESP_OK) {
+        s_resetting=true;s_provisioning_pending=true;
+        err=pool_reset_clear_app();if(err!=ESP_OK)return err;
+    } else if(err!=ESP_ERR_NVS_NOT_FOUND)return err;
     err = nvs_open("poolnet", NVS_READWRITE, &s_network_nvs);
     if (err != ESP_OK) return err;
+    err = pool_identity_init();
+    if (err != ESP_OK) return err;
+    ESP_LOGI(TAG, "Hardware serial=%s, factory MAC=%s", pool_identity_serial(), pool_identity_mac());
+    if (pool_identity_ready()) {
+        snprintf(s_topics.status, sizeof(s_topics.status), "smartpool/devices/%s/status", pool_identity_id());
+        snprintf(s_topics.telemetry, sizeof(s_topics.telemetry), "smartpool/devices/%s/telemetry", pool_identity_id());
+        snprintf(s_topics.command, sizeof(s_topics.command), "smartpool/devices/%s/cmd/pump", pool_identity_id());
+        snprintf(s_topics.ack, sizeof(s_topics.ack), "smartpool/devices/%s/ack/command", pool_identity_id());
+        snprintf(s_mqtt_will, sizeof(s_mqtt_will), "{\"device_id\":\"%s\",\"factory_mac\":\"%s\",\"online\":false}", pool_identity_id(), pool_identity_mac());
+        snprintf(s_mqtt_client_id, sizeof(s_mqtt_client_id), "smartpool-%s", pool_identity_serial());
+    }
     load_connection_config();
     uint8_t station_enabled = 1;
     err = nvs_get_u8(s_network_nvs, "sta_enabled", &station_enabled);
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) return err;
     s_station_enabled = POOL_WIFI_STA_ENABLED && station_enabled;
+    if(s_resetting)s_station_enabled=false;
     stored_mqtt_settings_t saved_mqtt;
     size_t mqtt_size = sizeof(saved_mqtt);
     if (nvs_get_blob(s_network_nvs, "mqtt_settings", &saved_mqtt, &mqtt_size) == ESP_OK &&
@@ -671,27 +735,31 @@ esp_err_t pool_network_init(void)
             saved_mqtt.settings.timestamps[0] = 0;
         }
         s_mqtt_settings = saved_mqtt.settings;
+        if (memchr(saved_mqtt.settings.id, 0, sizeof(saved_mqtt.settings.id)) &&
+            pool_identity_id_valid(saved_mqtt.settings.id))
+            snprintf(s_legacy_device_id, sizeof(s_legacy_device_id), "%s", saved_mqtt.settings.id);
         // Older NVS settings belong to the pre-v2 API and global MQTT topics.
-        snprintf(s_mqtt_settings.id, sizeof(s_mqtt_settings.id), "%s", CONFIG_POOL_DEVICE_ID);
         if (saved_mqtt.version < 3)
             snprintf(s_mqtt_settings.api_url, sizeof(s_mqtt_settings.api_url), "%s", CONFIG_POOL_API_URL);
         s_mqtt_wifi_pending = saved_mqtt.wifi_pending;
     }
+    if (pool_identity_ready())
+        snprintf(s_mqtt_settings.id, sizeof(s_mqtt_settings.id), "%s", pool_identity_id());
     err = load_auto_rules();
     if (err != ESP_OK) return err;
     pool_server_config_t stored_server;
     err = pool_server_config_load(s_network_nvs, &stored_server);
-    if (err == ESP_OK) {
+    if (err == ESP_OK && pool_identity_ready()) {
         s_config_error = apply_server_config(&stored_server, false);
         s_attempt_revision = stored_server.revision;
         s_config_attempt = 1;
         s_config_report_pending = true;
-    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+    } else if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
         // Do not claim a revision when its complete snapshot cannot be restored.
         ESP_LOGW(TAG, "Server config snapshot unavailable: %s", esp_err_to_name(err));
     }
-    if (POOL_HTTP_ENABLED) {
-        err = telemetry_queue_init();
+    if (POOL_HTTP_ENABLED && pool_identity_ready()) {
+        err = telemetry_queue_init(pool_identity_id(), s_legacy_device_id);
         if (err != ESP_OK) ESP_LOGE(TAG, "Persistent telemetry queue unavailable: %s", esp_err_to_name(err));
         s_http_queued_count = telemetry_queue_count();
     }
@@ -722,12 +790,16 @@ esp_err_t pool_network_init(void)
     wifi_init_config_t wifi_init = WIFI_INIT_CONFIG_DEFAULT();
     err = esp_wifi_init(&wifi_init);
     if (err != ESP_OK) return err;
+    if(s_resetting) {
+        err=esp_wifi_restore();if(err!=ESP_OK)return err;
+        s_reset_storage_cleared=true;
+    }
     s_boot_nonce = esp_random();
     for (int i = 0; i < 4; i++) {
         uint32_t part = esp_random();
         snprintf(s_boot_id + i * 8, sizeof(s_boot_id) - i * 8, "%08" PRIx32, part);
     }
-    err = esp_wifi_set_storage(WIFI_STORAGE_FLASH);
+    err = esp_wifi_set_storage(s_resetting?WIFI_STORAGE_RAM:WIFI_STORAGE_FLASH);
     if (err != ESP_OK) return err;
     err = esp_wifi_set_mode(WIFI_MODE_STA);
     if (err != ESP_OK) return err;
@@ -770,11 +842,12 @@ esp_err_t pool_network_init(void)
             .credentials.username = s_connection.username,
             .credentials.authentication.password = s_connection.password,
             .session.last_will.topic = TOPIC_STATUS,
-            .session.last_will.msg = "{\"device_id\":\"" CONFIG_POOL_DEVICE_ID "\",\"online\":false}",
+            .session.last_will.msg = s_mqtt_will,
+            .credentials.client_id = s_mqtt_client_id,
             .session.last_will.qos = 1,
             .session.last_will.retain = 1,
         };
-        if (s_connection.username[0] == '\0' || s_connection.password[0] == '\0') {
+        if (!pool_identity_ready() || s_connection.password[0] == '\0') {
             ESP_LOGW(TAG, "MQTT credentials missing; configure them on the local dashboard");
         } else {
             s_mqtt = esp_mqtt_client_init(&mqtt_config);
@@ -827,9 +900,9 @@ static void sample_to_json(const telemetry_sample_t *sample, char *json, size_t 
         snprintf(water_field, sizeof(water_field), ",\"water_adc\":null");
     }
     snprintf(json, capacity,
-             "{\"action\":\"upload_sample\",\"device_id\":\"%s\",\"sample_id\":\"%016" PRIX64
+             "{\"action\":\"upload_sample\",\"device_id\":\"%s\",\"factory_mac\":\"%s\",\"sample_id\":\"%016" PRIX64
              "\",\"measured_at_ms\":%s,\"time_quality\":\"%s\",\"is_backfill\":%s%s%s}",
-             CONFIG_POOL_DEVICE_ID, sample->id, measured, sample->measured_at_ms ? "synced" : "unknown",
+             pool_identity_id(), pool_identity_mac(), sample->id, measured, sample->measured_at_ms ? "synced" : "unknown",
              backfill ? "true" : "false", temperature_field, water_field);
 }
 
@@ -850,8 +923,8 @@ static void record_http_result(esp_err_t error, int status_code)
 static bool post_sample(const telemetry_sample_t *sample, bool backfill)
 {
     char json[320];
-    if (!SMARTPOOL_DEVICE_KEY[0]) {
-        ESP_LOGW(TAG, "HTTP device key missing; create main/device_credentials.h");
+    if (!pool_identity_ready() || s_provisioning_pending) {
+        ESP_LOGW(TAG, "Device not provisioned; configure ID/key on the local AP page");
         return false;
     }
     sample_to_json(sample, json, sizeof(json), false, backfill);
@@ -880,7 +953,7 @@ static bool post_sample(const telemetry_sample_t *sample, bool backfill)
     }
     esp_http_client_set_method(http, HTTP_METHOD_POST);
     esp_http_client_set_header(http, "Content-Type", "application/json");
-    esp_http_client_set_header(http, "X-Pool-Device-Key", SMARTPOOL_DEVICE_KEY);
+    esp_http_client_set_header(http, "X-Pool-Device-Key", pool_identity_key());
     esp_http_client_set_post_field(http, json, strlen(json));
     esp_err_t err = esp_http_client_perform(http);
     int status = esp_http_client_get_status_code(http);
@@ -891,7 +964,7 @@ static bool post_sample(const telemetry_sample_t *sample, bool backfill)
     char sample_id[17];
     snprintf(sample_id, sizeof(sample_id), "%016" PRIX64, sample->id);
     bool success = cJSON_IsString(received_id) && strcmp(received_id->valuestring, sample_id) == 0 &&
-        cJSON_IsString(received_device) && strcmp(received_device->valuestring, CONFIG_POOL_DEVICE_ID) == 0;
+        cJSON_IsString(received_device) && strcmp(received_device->valuestring, pool_identity_id()) == 0;
     cJSON_Delete(reply);
     free(response.data);
     if (!success && err == ESP_OK) err = ESP_ERR_INVALID_RESPONSE;
@@ -911,11 +984,14 @@ static bool post_sample(const telemetry_sample_t *sample, bool backfill)
 
 static void queue_sample(const telemetry_sample_t *sample)
 {
+    xSemaphoreTake(s_relay_lock,portMAX_DELAY);
+    if(s_resetting){xSemaphoreGive(s_relay_lock);return;}
     bool dropped_oldest = false;
     esp_err_t err = telemetry_queue_push(sample, &dropped_oldest);
     s_http_queued_count = telemetry_queue_count();
     if (err != ESP_OK) ESP_LOGE(TAG, "Cannot persist telemetry: %s", esp_err_to_name(err));
     if (dropped_oldest) ESP_LOGW(TAG, "Telemetry queue full; oldest sample removed");
+    xSemaphoreGive(s_relay_lock);
 }
 
 static void flush_queued_samples(void)
@@ -928,11 +1004,14 @@ static void flush_queued_samples(void)
         if (!post_sample(&queued, true)) break;
     }
     if (delivered > 0) {
+        xSemaphoreTake(s_relay_lock,portMAX_DELAY);
+        if(s_resetting){xSemaphoreGive(s_relay_lock);return;}
         esp_err_t err = telemetry_queue_pop_many(delivered);
         s_http_queued_count = telemetry_queue_count();
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Cannot update telemetry queue: %s", esp_err_to_name(err));
         }
+        xSemaphoreGive(s_relay_lock);
     }
 }
 
@@ -985,6 +1064,8 @@ void pool_network_get_state(pool_device_state_t *state)
     state->mqtt_connected = s_mqtt_connected;
     state->clock_ready = clock_ready();
     if (!POOL_MQTT_ENABLED) state->mqtt_state = "disabled";
+    else if (!pool_identity_ready()) state->mqtt_state = "unprovisioned";
+    else if (s_provisioning_pending) state->mqtt_state = "restarting";
     else if (!s_mqtt) state->mqtt_state = "missing_credentials";
     else if (!state->station_enabled || !state->wifi_connected) state->mqtt_state = "waiting_wifi";
     else if (state->mqtt_connected) state->mqtt_state = "connected";
@@ -994,6 +1075,8 @@ void pool_network_get_state(pool_device_state_t *state)
     else state->mqtt_state = "connecting";
 
     if (!POOL_HTTP_ENABLED) state->http_state = "disabled";
+    else if (!pool_identity_ready()) state->http_state = "unprovisioned";
+    else if (s_provisioning_pending) state->http_state = "restarting";
     else if (!state->station_enabled || !state->wifi_connected) state->http_state = "waiting_wifi";
     else if (s_http_status.sending) state->http_state = "sending";
     else if (!s_http_status.attempted) state->http_state = "pending";
@@ -1094,7 +1177,7 @@ static void send_sample(bool has_temperature, float temperature, bool has_water,
         sample.measured_at_ms = (int64_t)now.tv_sec * 1000 + now.tv_usec / 1000;
     }
     xSemaphoreGive(s_relay_lock);
-    if (!POOL_HTTP_ENABLED && !POOL_MQTT_ENABLED) return;
+    if ((!POOL_HTTP_ENABLED && !POOL_MQTT_ENABLED) || !pool_identity_ready() || s_provisioning_pending) return;
     network_sample_t work = {.sample = sample, .measurement = measurement};
     if (xQueueSend(s_pending_samples, &work, 0) != pdTRUE) {
         ESP_LOGW(TAG, "HTTP worker busy; sample dropped before persistence");
@@ -1153,6 +1236,7 @@ static void automation_task(void *arg)
     TickType_t wake = xTaskGetTickCount();
     while (1) {
         xTaskDelayUntil(&wake, pdMS_TO_TICKS(250));
+        if(s_resetting)continue;
         bool changed = false;
         xSemaphoreTake(s_relay_lock, portMAX_DELAY);
         int64_t now_us = esp_timer_get_time();
@@ -1205,7 +1289,8 @@ static void mqtt_v2_pump_ack(const char *command_id, const char *result)
 {
     cJSON *ack = cJSON_CreateObject();
     if (!ack) return;
-    cJSON_AddStringToObject(ack, "device_id", CONFIG_POOL_DEVICE_ID);
+    cJSON_AddStringToObject(ack, "device_id", pool_identity_id());
+    cJSON_AddStringToObject(ack, "factory_mac", pool_identity_mac());
     cJSON_AddStringToObject(ack, "command_id", command_id);
     cJSON_AddStringToObject(ack, "result", result);
     char *payload = cJSON_PrintUnformatted(ack);
@@ -1230,11 +1315,13 @@ static void mqtt_v2_pump_command(const pool_mqtt_rx_t *rx)
     cJSON *root = cJSON_ParseWithLength(rx->payload, rx->received);
     if (!cJSON_IsObject(root)) { cJSON_Delete(root); return; }
     const cJSON *device = cJSON_GetObjectItemCaseSensitive(root, "device_id");
+    const cJSON *mac = cJSON_GetObjectItemCaseSensitive(root, "factory_mac");
     const cJSON *id = cJSON_GetObjectItemCaseSensitive(root, "command_id");
     const cJSON *target = cJSON_GetObjectItemCaseSensitive(root, "target");
     const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(root, "enabled");
     const cJSON *expiry = cJSON_GetObjectItemCaseSensitive(root, "expires_at_ms");
-    if (!cJSON_IsString(device) || strcmp(device->valuestring, CONFIG_POOL_DEVICE_ID) != 0 ||
+    if (!cJSON_IsString(device) || strcmp(device->valuestring, pool_identity_id()) != 0 ||
+        !cJSON_IsString(mac) || strcmp(mac->valuestring, pool_identity_mac()) != 0 ||
         !cJSON_IsString(id) || strlen(id->valuestring) != 36 ||
         !cJSON_IsString(target) ||
         (strcmp(target->valuestring, "pump_in") != 0 && strcmp(target->valuestring, "pump_out") != 0) ||
@@ -1525,7 +1612,7 @@ static void mqtt_command_task(void *arg)
 
 static bool post_live_status(void)
 {
-    if (!POOL_HTTP_ENABLED || !SMARTPOOL_DEVICE_KEY[0]) return false;
+    if (!POOL_HTTP_ENABLED || !pool_identity_ready() || s_provisioning_pending) return false;
     char api_url[257], ssid[33] = "", ip_text[16] = "";
     bool pump_in, pump_out, temperature_enabled, water_enabled;
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
@@ -1547,7 +1634,8 @@ static bool post_live_status(void)
     cJSON *body = cJSON_CreateObject();
     if (!body) return false;
     cJSON_AddStringToObject(body, "action", "report_status");
-    cJSON_AddStringToObject(body, "device_id", CONFIG_POOL_DEVICE_ID);
+    cJSON_AddStringToObject(body, "device_id", pool_identity_id());
+    cJSON_AddStringToObject(body, "factory_mac", pool_identity_mac());
     cJSON_AddStringToObject(body, "boot_id", s_boot_id);
     cJSON_AddNumberToObject(body, "state_sequence", ++s_state_sequence);
     cJSON_AddBoolToObject(body, "pump_in", pump_in);
@@ -1588,7 +1676,7 @@ static bool post_live_status(void)
     if (!http) { free(json); free(response.data); return false; }
     esp_http_client_set_method(http, HTTP_METHOD_POST);
     esp_http_client_set_header(http, "Content-Type", "application/json");
-    esp_http_client_set_header(http, "X-Pool-Device-Key", SMARTPOOL_DEVICE_KEY);
+    esp_http_client_set_header(http, "X-Pool-Device-Key", pool_identity_key());
     esp_http_client_set_post_field(http, json, strlen(json));
     esp_err_t err = esp_http_client_perform(http);
     int status = esp_http_client_get_status_code(http);
@@ -1599,7 +1687,7 @@ static bool post_live_status(void)
     const cJSON *device = cJSON_GetObjectItemCaseSensitive(state, "device_id");
     const cJSON *boot = cJSON_GetObjectItemCaseSensitive(state, "boot_id");
     const cJSON *sequence = cJSON_GetObjectItemCaseSensitive(state, "state_sequence");
-    bool accepted = cJSON_IsString(device) && !strcmp(device->valuestring, CONFIG_POOL_DEVICE_ID) &&
+    bool accepted = cJSON_IsString(device) && !strcmp(device->valuestring, pool_identity_id()) &&
         cJSON_IsString(boot) && !strcmp(boot->valuestring, s_boot_id) &&
         cJSON_IsNumber(sequence) && sequence->valuedouble == s_state_sequence;
     cJSON_Delete(reply);
@@ -1620,7 +1708,7 @@ static void telemetry_task(void *arg)
             sample.id = ((uint64_t)s_boot_nonce << 32) | ++s_sample_counter;
             char json[320];
             sample_to_json(&sample, json, sizeof(json), true, false);
-            if (s_mqtt_connected && work.measurement) {
+            if (!s_provisioning_pending && s_mqtt_connected && work.measurement) {
                 // MQTT telemetry is device scoped; state-only events use status.
                 cJSON *telemetry = cJSON_Parse(json);
                 if (telemetry) {
@@ -1650,7 +1738,7 @@ static void telemetry_task(void *arg)
                 if (!sent) queue_sample(&sample);
             }
         }
-        if (POOL_HTTP_ENABLED && s_wifi_connected) flush_queued_samples();
+        if (POOL_HTTP_ENABLED && pool_identity_ready() && !s_provisioning_pending && s_wifi_connected) flush_queued_samples();
     }
 }
 
@@ -1725,15 +1813,15 @@ static cJSON *api_response_success(const config_response_t *response)
 
 static void poll_server_config(void)
 {
-    if (!SMARTPOOL_DEVICE_KEY[0]) return;
+    if (!pool_identity_ready() || s_provisioning_pending) return;
     char api_url[257];
     xSemaphoreTake(s_relay_lock, portMAX_DELAY);
     snprintf(api_url, sizeof(api_url), "%s", s_mqtt_settings.api_url);
     xSemaphoreGive(s_relay_lock);
     config_response_t response = {.data = calloc(1, CONFIG_RESPONSE_LIMIT + 1)};
     if (!response.data) return;
-    char request[160];
-    snprintf(request, sizeof(request), "{\"action\":\"get_device_config\",\"device_id\":\"%s\"}", CONFIG_POOL_DEVICE_ID);
+    char request[224];
+    snprintf(request, sizeof(request), "{\"action\":\"get_device_config\",\"device_id\":\"%s\",\"factory_mac\":\"%s\"}", pool_identity_id(), pool_identity_mac());
     esp_http_client_config_t config = {
         .url = api_url, .timeout_ms = 10000, .crt_bundle_attach = esp_crt_bundle_attach,
         .alpn_protos = s_http_alpn, .disable_auto_redirect = true,
@@ -1743,7 +1831,7 @@ static void poll_server_config(void)
     if (!http) { free(response.data); return; }
     esp_http_client_set_method(http, HTTP_METHOD_POST);
     esp_http_client_set_header(http, "Content-Type", "application/json");
-    esp_http_client_set_header(http, "X-Pool-Device-Key", SMARTPOOL_DEVICE_KEY);
+    esp_http_client_set_header(http, "X-Pool-Device-Key", pool_identity_key());
     esp_http_client_set_post_field(http, request, strlen(request));
     esp_err_t result = esp_http_client_perform(http);
     int status = esp_http_client_get_status_code(http);
@@ -1751,12 +1839,18 @@ static void poll_server_config(void)
     cJSON *root = result == ESP_OK && status == 200 ? api_response_success(&response) : NULL;
     const cJSON *success = cJSON_GetObjectItemCaseSensitive(root, "status");
     const cJSON *object = cJSON_GetObjectItemCaseSensitive(root, "config");
+    const cJSON *reset=cJSON_GetObjectItemCaseSensitive(root,"reset_command");
+    if(cJSON_IsObject(reset)) {
+        handle_remote_reset(reset,api_url);
+        cJSON_Delete(root);free(response.data);return;
+    }
+    if(s_config_report_pending){cJSON_Delete(root);free(response.data);return;}
     pool_server_config_t next;
     if (cJSON_IsString(success) && strcmp(success->valuestring, "success") == 0 && cJSON_IsObject(object)) {
-        bool valid = pool_server_config_parse(object, CONFIG_POOL_DEVICE_ID, &next);
+        bool valid = pool_server_config_parse(object, pool_identity_id(), &next);
         const cJSON *revision = cJSON_GetObjectItemCaseSensitive(object, "revision");
         const cJSON *id = cJSON_GetObjectItemCaseSensitive(object, "device_id");
-        if (cJSON_IsString(id) && strcmp(id->valuestring, CONFIG_POOL_DEVICE_ID) == 0 &&
+        if (cJSON_IsString(id) && strcmp(id->valuestring, pool_identity_id()) == 0 &&
             cJSON_IsNumber(revision) && isfinite(revision->valuedouble) &&
             revision->valuedouble >= 1 && revision->valuedouble <= 9007199254740991.0 &&
             floor(revision->valuedouble) == revision->valuedouble) {
@@ -1786,16 +1880,25 @@ static void control_http_task(void *arg)
     bool had_wifi = false;
     while (1) {
         int64_t now = esp_timer_get_time();
-        if (s_mqtt_connected && (!last_presence || now - last_presence >= 30000000)) {
+        if(s_resetting) {
+            if(s_wifi_connected&&s_sntp_ready&&atomic_exchange(&s_sntp_start_requested,false))esp_netif_sntp_start();
+            if(s_reset_storage_cleared&&s_wifi_connected) {
+                if(post_reset_receipt("cleared",NULL))finish_remote_reset();
+            } else if(s_has_wifi_credentials&&(atomic_exchange(&s_connect_requested,false)||now-last_config>=5000000)) {
+                last_config=now;esp_wifi_connect();
+            }
+            vTaskDelay(pdMS_TO_TICKS(2000));continue;
+        }
+        if (pool_identity_ready() && !s_provisioning_pending && s_mqtt_connected && (!last_presence || now - last_presence >= 30000000)) {
             publish_status_frame(false);
             last_presence = now;
         }
         if (!s_mqtt_connected) last_presence = 0;
-        if (POOL_HTTP_ENABLED && s_wifi_connected) {
+        if (POOL_HTTP_ENABLED && pool_identity_ready() && !s_provisioning_pending && s_wifi_connected) {
             if (!had_wifi) { s_config_poll_requested = true; s_status_pending = true; }
             // Keep retrying the same apply attempt until the API commits its report.
-            if (!s_config_report_pending && (atomic_exchange(&s_config_poll_requested, false) ||
-                !last_config || now - last_config >= 30000000)) {
+            if (atomic_exchange(&s_config_poll_requested, false) ||
+                !last_config || now - last_config >= 30000000) {
                 last_config = now;
                 poll_server_config();
             }
@@ -1811,4 +1914,97 @@ static void control_http_task(void *arg)
         had_wifi = s_wifi_connected;
         vTaskDelay(pdMS_TO_TICKS(500));
     }
+}
+
+bool pool_network_reset_pending(void){return s_resetting;}
+
+static bool post_reset_receipt(const char *result,const char *error_code)
+{
+    cJSON *body=cJSON_CreateObject();
+    if(!body)return false;
+    cJSON_AddStringToObject(body,"action","acknowledge_device_reset");
+    cJSON_AddStringToObject(body,"job_id",s_reset_job.job_id);
+    cJSON_AddStringToObject(body,"factory_mac",s_reset_job.factory_mac);
+    cJSON_AddStringToObject(body,"reset_token",s_reset_job.token);
+    cJSON_AddStringToObject(body,"result",result);
+    if(error_code)cJSON_AddStringToObject(body,"error_code",error_code);
+    char *json=cJSON_PrintUnformatted(body);cJSON_Delete(body);if(!json)return false;
+    config_response_t response={.data=calloc(1,CONFIG_RESPONSE_LIMIT+1)};
+    if(!response.data){free(json);return false;}
+    char url[257];
+    xSemaphoreTake(s_relay_lock,portMAX_DELAY);
+    snprintf(url,sizeof(url),"%s",s_reset_job.api_url);
+    xSemaphoreGive(s_relay_lock);
+    esp_http_client_config_t cfg={.url=url,.timeout_ms=10000,.crt_bundle_attach=esp_crt_bundle_attach,
+        .alpn_protos=s_http_alpn,.disable_auto_redirect=true,.event_handler=config_http_event,.user_data=&response};
+    esp_http_client_handle_t http=esp_http_client_init(&cfg);
+    if(!http){free(json);free(response.data);return false;}
+    esp_http_client_set_method(http,HTTP_METHOD_POST);
+    esp_http_client_set_header(http,"Content-Type","application/json");
+    esp_http_client_set_post_field(http,json,strlen(json));
+    esp_err_t error=esp_http_client_perform(http);
+    int status=esp_http_client_get_status_code(http);
+    esp_http_client_cleanup(http);free(json);
+    cJSON *reply=error==ESP_OK&&status==200?api_response_success(&response):NULL;
+    const cJSON *job=cJSON_GetObjectItemCaseSensitive(reply,"job_id");
+    bool accepted=cJSON_IsString(job)&&!strcmp(job->valuestring,s_reset_job.job_id)&&
+        (strcmp(result,"cleared")||cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply,"reset_recorded")));
+    cJSON_Delete(reply);free(response.data);return accepted;
+}
+
+static void finish_remote_reset(void)
+{
+    if(pool_reset_forget()!=ESP_OK)return; // Keep recovery marker until receipt AND durable cleanup.
+    esp_wifi_disconnect();
+    esp_wifi_stop();
+    esp_restart();
+}
+
+static void handle_remote_reset(const cJSON *command,const char *api_url)
+{
+    const cJSON *id=cJSON_GetObjectItemCaseSensitive(command,"device_id");
+    const cJSON *mac=cJSON_GetObjectItemCaseSensitive(command,"factory_mac");
+    const cJSON *job=cJSON_GetObjectItemCaseSensitive(command,"job_id");
+    const cJSON *token=cJSON_GetObjectItemCaseSensitive(command,"reset_token");
+    const cJSON *expiry=cJSON_GetObjectItemCaseSensitive(command,"expires_at_ms");
+    struct timeval tv;gettimeofday(&tv,NULL);
+    double now=(double)tv.tv_sec*1000+tv.tv_usec/1000;
+    if(!cJSON_IsString(id)||strcmp(id->valuestring,pool_identity_id())||
+       !cJSON_IsString(mac)||strcmp(mac->valuestring,pool_identity_mac())||
+       !cJSON_IsString(job)||strlen(job->valuestring)!=36||
+       !cJSON_IsString(token)||strlen(token->valuestring)!=64||
+       !cJSON_IsNumber(expiry)||!isfinite(expiry->valuedouble)||!clock_ready()||
+       expiry->valuedouble<=now||expiry->valuedouble>now+65000)return;
+    memset(&s_reset_job,0,sizeof(s_reset_job));s_reset_job.version=1;
+    snprintf(s_reset_job.job_id,sizeof(s_reset_job.job_id),"%s",job->valuestring);
+    snprintf(s_reset_job.token,sizeof(s_reset_job.token),"%s",token->valuestring);
+    snprintf(s_reset_job.api_url,sizeof(s_reset_job.api_url),"%s",api_url);
+    snprintf(s_reset_job.device_id,sizeof(s_reset_job.device_id),"%s",id->valuestring);
+    snprintf(s_reset_job.factory_mac,sizeof(s_reset_job.factory_mac),"%s",mac->valuestring);
+    if(pool_reset_save(&s_reset_job)!=ESP_OK){post_reset_receipt("error","NVS_CLEAR_FAILED");return;}
+    s_resetting=true;s_provisioning_pending=true;
+    if(set_pumps(false,false,true,false,0)!=ESP_OK){post_reset_receipt("error","RELAY_STOP_FAILED");esp_restart();return;}
+    wifi_config_t old_station={0};
+    esp_wifi_get_config(WIFI_IF_STA,&old_station);
+    if(s_mqtt&&s_mqtt_started)esp_mqtt_client_stop(s_mqtt);
+    s_mqtt_started=false;s_mqtt_connected=false;
+    if(wifi_setup_suspend_http()!=ESP_OK){post_reset_receipt("error","NVS_CLEAR_FAILED");esp_restart();return;}
+    xSemaphoreTake(s_relay_lock,portMAX_DELAY);
+    esp_err_t error=pool_reset_clear_app();
+    xSemaphoreGive(s_relay_lock);
+    if(error!=ESP_OK){post_reset_receipt("error","NVS_CLEAR_FAILED");esp_restart();return;}
+    s_station_enabled=false;
+    esp_wifi_disconnect();
+    error=esp_wifi_restore(); // Erase Wi-Fi driver configuration stored on flash.
+    if(error!=ESP_OK){post_reset_receipt("error","WIFI_RESET_FAILED");esp_restart();return;}
+    error=esp_wifi_set_storage(WIFI_STORAGE_RAM);
+    if(error==ESP_OK)error=wifi_setup_reconfigure_ap();
+    if(error==ESP_OK)error=wifi_setup_init(credentials_saved);
+    if(error!=ESP_OK){esp_restart();return;}
+    s_reset_storage_cleared=true;
+    // Temporary RAM-only association delivers the post-erase receipt. No old SSID/PSK returns to NVS.
+    if(old_station.sta.ssid[0]&&esp_wifi_set_config(WIFI_IF_STA,&old_station)==ESP_OK){
+        s_has_wifi_credentials=true;s_station_enabled=true;s_connect_requested=true;
+    }else{s_has_wifi_credentials=false;}
+    memset(&old_station,0,sizeof(old_station));
 }

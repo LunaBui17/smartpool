@@ -8,6 +8,14 @@ Hệ thống ESP32-S3, Raspberry Pi 4 B và Android cho giám sát/điều khi�
 
 ## Tài liệu chính
 
+- [Runtime 009 đã deploy: xóa server → reset ESP → thu hồi MQTT](docs/device-deprovision-009.md). Firmware mới còn cần build/nạp; chưa thử reset trên bo thật.
+
+- [Source 007/008: danh mục MAC, admin thêm ID/MAC duy nhất, xóa device giữ MAC](docs/hardware-inventory-delete.md) — chưa chạy migration/deploy Pi.
+
+- [Source runtime 006: khóa HTTP chung, ID–MAC gốc và migration database](docs/shared-key-hardware.md) — chưa áp dụng Pi.
+
+- [Cấp ID/khóa ESP qua local, firmware dùng chung và kế hoạch Scan new device/BLE cho admin](docs/device-provisioning-local-and-ble.md).
+
 - [Mô hình database, API, reset, Postman và MQTT Web](docs/database-v2.md).
 - [Luồng xử lý và phần tích hợp còn lại](docs/system-flow.md).
 - [Triển khai Pi và quản lý Docker](deploy/raspberry-pi-v2/README.md).

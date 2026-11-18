@@ -1,8 +1,8 @@
 {
   "info": {
-    "name": "Smart Pool runtime 005 - manual isolated fixture",
+    "name": "Smart Pool runtime 006 - shared HTTP key and MAC - manual fixtures",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Chạy từng request thủ công trên device fixture riêng đã đăng ký/active, không dùng ID ESP thật. Không chạy collection này trên thiết bị đang vận hành. Điền user_token/device_key bằng local variables, không export secret. Request report_status mô phỏng OFF và config applied; không chứng minh ESP đã áp dụng. OFF request_control có thể được worker gửi MQTT nếu fixture có presence, không publish MQTT trực tiếp từ Postman. Không tự tạo user/device/key. Xem docs/esp-api-mqtt-runtime.md. Chưa chạy kiểm thử."
+    "description": "Chạy thủ công trên fixture riêng. Runtime 006 yêu cầu shared_device_key dùng chung và factory_mac của fixture; create_device_credential cũ không còn dùng. Không xuất response chứa khóa. Chưa chạy collection. Xem docs/shared-key-hardware.md."
   },
   "variable": [
     {
@@ -32,6 +32,10 @@
     {
       "key": "boot_id",
       "value": "0123456789abcdef0123456789abcdef"
+    },
+    {
+      "key": "factory_mac",
+      "value": ""
     }
   ],
   "item": [
@@ -156,12 +160,12 @@
           },
           {
             "key": "X-Pool-Device-Key",
-            "value": "{{device_key}}"
+            "value": "{{shared_device_key}}"
           }
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\"action\":\"get_device_config\",\"device_id\":\"{{device_id}}\"}",
+          "raw": "{\"action\":\"get_device_config\",\"device_id\":\"{{device_id}}\",\"factory_mac\":\"{{factory_mac}}\"}",
           "options": {
             "raw": {
               "language": "json"
@@ -175,7 +179,7 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "for (const key of [\"api_url\",\"device_id\",\"device_key\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+              "for (const key of [\"api_url\",\"device_id\",\"shared_device_key\",\"factory_mac\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
             ]
           }
         },
@@ -311,12 +315,12 @@
           },
           {
             "key": "X-Pool-Device-Key",
-            "value": "{{device_key}}"
+            "value": "{{shared_device_key}}"
           }
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\"action\":\"report_status\",\"device_id\":\"{{device_id}}\",\"boot_id\":\"{{boot_id}}\",\"state_sequence\":1,\"pump_in\":false,\"pump_out\":false,\"temperature_enabled\":true,\"water_enabled\":true,\"reported_config_revision\":{{desired_revision}},\"config_apply\":{\"attempt_sequence\":1,\"revision\":{{desired_revision}},\"result\":\"applied\"}}",
+          "raw": "{\"action\":\"report_status\",\"device_id\":\"{{device_id}}\",\"factory_mac\":\"{{factory_mac}}\",\"boot_id\":\"{{boot_id}}\",\"state_sequence\":1,\"pump_in\":false,\"pump_out\":false,\"temperature_enabled\":true,\"water_enabled\":true,\"reported_config_revision\":{{desired_revision}},\"config_apply\":{\"attempt_sequence\":1,\"revision\":{{desired_revision}},\"result\":\"applied\"}}",
           "options": {
             "raw": {
               "language": "json"
@@ -330,7 +334,7 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "for (const key of [\"api_url\",\"device_id\",\"device_key\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+              "for (const key of [\"api_url\",\"device_id\",\"shared_device_key\",\"factory_mac\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
             ]
           }
         },
@@ -360,12 +364,12 @@
           },
           {
             "key": "X-Pool-Device-Key",
-            "value": "{{device_key}}"
+            "value": "{{shared_device_key}}"
           }
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\"action\":\"report_status\",\"device_id\":\"{{device_id}}\",\"boot_id\":\"{{boot_id}}\",\"state_sequence\":2,\"pump_in\":false,\"pump_out\":false,\"temperature_enabled\":true,\"water_enabled\":true,\"reported_config_revision\":{{desired_revision}},\"config_apply\":{\"attempt_sequence\":1,\"revision\":{{desired_revision}},\"result\":\"error\",\"error_code\":\"INVALID_CONFIG\"}}",
+          "raw": "{\"action\":\"report_status\",\"device_id\":\"{{device_id}}\",\"factory_mac\":\"{{factory_mac}}\",\"boot_id\":\"{{boot_id}}\",\"state_sequence\":2,\"pump_in\":false,\"pump_out\":false,\"temperature_enabled\":true,\"water_enabled\":true,\"reported_config_revision\":{{desired_revision}},\"config_apply\":{\"attempt_sequence\":1,\"revision\":{{desired_revision}},\"result\":\"error\",\"error_code\":\"INVALID_CONFIG\"}}",
           "options": {
             "raw": {
               "language": "json"
@@ -379,7 +383,7 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "for (const key of [\"api_url\",\"device_id\",\"device_key\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+              "for (const key of [\"api_url\",\"device_id\",\"shared_device_key\",\"factory_mac\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
             ]
           }
         },
@@ -409,12 +413,12 @@
           },
           {
             "key": "X-Pool-Device-Key",
-            "value": "{{device_key}}"
+            "value": "{{shared_device_key}}"
           }
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\"action\":\"upload_sample\",\"device_id\":\"{{device_id}}\",\"sample_id\":\"0000000000000001\",\"measured_at_ms\":1735689600000,\"time_quality\":\"synced\",\"temperature\":25,\"water_adc\":2200,\"is_backfill\":true}",
+          "raw": "{\"action\":\"upload_sample\",\"device_id\":\"{{device_id}}\",\"factory_mac\":\"{{factory_mac}}\",\"sample_id\":\"0000000000000001\",\"measured_at_ms\":1735689600000,\"time_quality\":\"synced\",\"temperature\":25,\"water_adc\":2200,\"is_backfill\":true}",
           "options": {
             "raw": {
               "language": "json"
@@ -428,7 +432,7 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "for (const key of [\"api_url\",\"device_id\",\"device_key\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+              "for (const key of [\"api_url\",\"device_id\",\"shared_device_key\",\"factory_mac\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
             ]
           }
         },
@@ -458,12 +462,12 @@
           },
           {
             "key": "X-Pool-Device-Key",
-            "value": "{{device_key}}"
+            "value": "{{shared_device_key}}"
           }
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\"action\":\"upload_sample\",\"device_id\":\"{{device_id}}\",\"sample_id\":\"0000000000000002\",\"measured_at_ms\":null,\"time_quality\":\"unknown\",\"temperature\":24,\"water_adc\":2100,\"is_backfill\":true}",
+          "raw": "{\"action\":\"upload_sample\",\"device_id\":\"{{device_id}}\",\"factory_mac\":\"{{factory_mac}}\",\"sample_id\":\"0000000000000002\",\"measured_at_ms\":null,\"time_quality\":\"unknown\",\"temperature\":24,\"water_adc\":2100,\"is_backfill\":true}",
           "options": {
             "raw": {
               "language": "json"
@@ -477,7 +481,7 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "for (const key of [\"api_url\",\"device_id\",\"device_key\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
+              "for (const key of [\"api_url\",\"device_id\",\"shared_device_key\",\"factory_mac\"]) if (!pm.variables.get(key)) throw new Error(\"Set local variable: \"+key);"
             ]
           }
         },

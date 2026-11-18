@@ -1,5 +1,11 @@
 # Smart Pool – bộ triển khai v2 tách biệt
 
+**Đã triển khai backend/worker và migrations 006–009 ngày 18/11/2026:** [ghi nhận và vận hành lifecycle](../../docs/device-deprovision-009.md). API/Cloudflare healthy schema_runtime=9, service tự khởi động. Firmware reset mới chưa nạp nên không coi chức năng reset bo đã được xác nhận.
+
+**Source mới nhất 007/008, chưa deploy:** [inventory MAC và archive khi xóa device](../../docs/hardware-inventory-delete.md). Sao lưu và dừng cả API/worker trước migrate để chuyển mapping nhất quán; health mới schema_runtime=8. Không reset/down -v.
+
+**Chờ triển khai 006:** source mới yêu cầu [migration khóa HTTP chung và ID–MAC](../../docs/shared-key-hardware.md). Không reset DB. Cần nâng firmware gửi MAC và cấp khóa chung sau migration; source 006 chưa chạy trên Pi trong đợt này.
+
 **Source runtime 005, chưa triển khai:** nâng cấp giữ dữ liệu bằng migrate.php trước khi mở API/worker mới; không reset hoặc down -v. Xem [thứ tự nâng cấp, quay lui, giới hạn MQTT và checklist Android](../../docs/esp-api-mqtt-runtime.md). Source mới chưa build/test trong đợt này.
 
 Bộ đang hoạt động: `deploy/raspberry-pi-v2` trong repository; trên Pi là `/home/qnm/smartpool-v2/deploy/raspberry-pi-v2`. Project Docker `smartpool-v2`, network/container và volume riêng. Stack Docker cũ đã được xóa khi cài mới ngày 18/11/2026; không chạy đồng thời hai stack vì dùng chung cổng LAN 80/1883/8080.

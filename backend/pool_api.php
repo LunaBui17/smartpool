@@ -6,6 +6,9 @@ require_once __DIR__ . '/api_core.php';
 require_once __DIR__ . '/api_actions.php';
 require_once __DIR__ . '/api_data.php';
 require_once __DIR__ . '/api_runtime.php';
+require_once __DIR__ . '/api_hardware.php';
+require_once __DIR__ . '/api_device_delete.php';
+require_once __DIR__ . '/api_deprovision.php';
 $db = null;
 try {
     $db = pool_database_connect();
@@ -22,7 +25,13 @@ try {
         $db->query('SELECT device_id FROM device_mqtt_presence LIMIT 1');
         $db->query('SELECT command_id FROM command_dispatch LIMIT 1');
         $db->query('SELECT id FROM config_apply_reports LIMIT 1');
-        echo api_json(array('status'=>'success','api_version'=>2,'schema_baseline'=>4,'schema_runtime'=>5));
+        $db->query('SELECT device_id FROM device_hardware LIMIT 1');
+        $db->query('SELECT id FROM esp_shared_credentials LIMIT 1');
+        $db->query('SELECT factory_mac FROM hardware_inventory LIMIT 1');
+        $db->query('SELECT id FROM device_archives LIMIT 1');
+        $db->query('SELECT id FROM device_archive_records LIMIT 1');
+        $db->query('SELECT job_id FROM device_delete_jobs LIMIT 1');
+        echo api_json(array('status'=>'success','api_version'=>2,'schema_baseline'=>4,'schema_runtime'=>9,'device_auth'=>'shared_key_mac'));
         exit;
     }
     if ($method !== 'POST') { header('Allow: POST, GET'); api_fail(405,'API v2 dùng POST JSON; GET chỉ hỗ trợ action=health'); }
@@ -34,7 +43,7 @@ try {
     $db->begin_transaction();
     $response=api_dispatch_action($db,$data);
     $db->commit();
-    $created=in_array($data['action'],array('register_device','create_user','create_device_credential'),true)
+    $created=in_array($data['action'],array('register_device','create_user','create_shared_device_credential'),true)
         ||($data['action']==='upload_sample'&&!$response['duplicate']);
     http_response_code($created?201:200);
     echo api_json(array_merge(array('status'=>'success','api_version'=>2),$response));

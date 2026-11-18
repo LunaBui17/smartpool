@@ -1,5 +1,9 @@
 # Kiểm tra Smart Pool API v2 bằng Postman
 
+**007/008:** [collection khóa/MAC](SmartPool.shared-key-hardware.postman_collection.json) hiện có inventory, admin register bắt buộc ID+MAC+khóa và thư mục **DELETE FIXTURE A**. A/B/C là ID thử nghiệm khác nhau, ban đầu chưa có registry. Xem [hướng dẫn mới nhất](../../docs/hardware-inventory-delete.md); chỉ chạy phần xóa trên fixture. Chưa chạy collection.
+
+**Runtime 006:** dùng [collection khóa chung và MAC](SmartPool.shared-key-hardware.postman_collection.json) theo [hướng dẫn mới](../../docs/shared-key-hardware.md). Collection runtime cũng đã thêm factory_mac và shared_device_key cho ESP. Collection v2 cũ dùng khóa riêng chỉ còn tham khảo lịch sử, không phải acceptance cho 006. Chưa chạy collection mới.
+
 Runtime 005 có [collection thủ công riêng](SmartPool.runtime.postman_collection.json) và [checklist ESP/API/MQTT Web + Android](../../docs/esp-api-mqtt-runtime.md). Chỉ dùng fixture riêng. Chưa chạy collection runtime. Lần chạy collection v2 ngày 17/11/2026 có lỗi auth và lỗi dây chuyền; cần xác nhận token local trước khi tiếp tục, không xem là đạt. Không xuất response chứa secret.
 
 Import [SmartPool.v2.postman_collection.json](SmartPool.v2.postman_collection.json). Các collection v1 đã bỏ vì schema và API không còn tương thích.

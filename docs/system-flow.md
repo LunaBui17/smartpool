@@ -1,5 +1,7 @@
 # Luồng xử lý Smart Pool v2
 
+**Source kế tiếp 006:** [khóa HTTP chung + liên kết ID–MAC](shared-key-hardware.md). Database đã có migration cộng thêm, API kiểm tra cặp ID/MAC; firmware gửi MAC gốc HTTP/MQTT. Bản 006 chưa áp dụng Pi hoặc kiểm thử, không thay ghi nhận deploy 005 trước đây.
+
 Cập nhật 18/11/2026 theo source hiện tại. Android đã cập nhật nền tảng phiên và UI quản trị
 của [kế hoạch](android-api-v2-plan.md); source mới **chưa build/kiểm thử**.
 Chi tiết chức năng còn chờ và checklist nằm trong
@@ -110,10 +112,7 @@ Mã user_code tùy chỉnh/duy nhất, sửa hồ sơ/metadata, lưu trữ và k
 hợp đồng API/database. Khóa không phải lưu trữ; vô hiệu hóa không phải xóa hoặc
 lệnh tắt relay. Không tự cấp membership khi tạo user/đăng ký thiết bị.
 
-Serial phần cứng dự kiến lấy MAC nhà máy eFuse, tách khỏi Device ID nghiệp vụ và
-device key xác thực. Chưa có cột/liên kết serial, API claim phần cứng hoặc firmware
-tự nhận Device ID. BLE chưa triển khai; không dùng MAC quét BLE thay cho đọc định danh
-nhà máy một cách tường minh.
+Firmware mới đọc serial MAC eFuse, tách khỏi Device ID và khóa HTTP. ID/key cấp qua AP local được lưu NVS; HTTP và MQTT lấy ID runtime, không cần header riêng cho mỗi bo. Chưa có liên kết serial trong database/API claim phần cứng hoặc BLE. Xem [hướng dẫn local và luồng Scan new device dành cho admin sau này](device-provisioning-local-and-ble.md). Không dùng địa chỉ MAC quét BLE thay serial được đọc tường minh.
 
 ## 4. Số đo, trạng thái và cấu hình
 

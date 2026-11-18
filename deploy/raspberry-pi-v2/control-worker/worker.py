@@ -135,6 +135,22 @@ def on_message(client, userdata, message):
         with database() as connection:
             with connection.cursor() as cursor:
                 if parts[3:] == ["status"]:
+                    # Serialize live presence with admin deletion/archiving.
+                    cursor.execute("SELECT is_active FROM devices WHERE device_id=%s FOR UPDATE", (parts[2],))
+                    device = cursor.fetchone()
+                    if not device or not device["is_active"]:
+                        return
+                # MQTT ACL authenticates the account. This only checks its reported MAC
+                # against registry; a shared password plus known MAC can still be spoofed.
+                factory_mac = payload.get("factory_mac")
+                if not isinstance(factory_mac, str):
+                    return
+                cursor.execute("""SELECT h.factory_mac FROM hardware_inventory h JOIN devices d
+                    ON d.device_id=h.device_id WHERE h.device_id=%s AND d.is_active=1""", (parts[2],))
+                hardware = cursor.fetchone()
+                if not hardware or hardware["factory_mac"] != factory_mac.upper():
+                    return
+                if parts[3:] == ["status"]:
                     record_presence(cursor, userdata["connection_id"], message, payload, parts[2])
                 elif parts[3:] == ["ack", "command"] and not message.retain:
                     command_id, result = payload.get("command_id"), payload.get("result")
@@ -183,18 +199,20 @@ def tick(client, connection_id):
             with connection.cursor() as cursor:
                 command = locked_command(cursor, command_id)
                 if command and client.is_connected() and time.monotonic() - sent_at.get(command_id, 0) >= 2:
-                    cursor.execute("""SELECT s.device_id FROM device_status s JOIN device_mqtt_presence p
+                    cursor.execute("""SELECT s.device_id,h.factory_mac FROM device_status s
+                        JOIN hardware_inventory h ON h.device_id=s.device_id JOIN device_mqtt_presence p
                         ON p.device_id=s.device_id AND p.boot_id=s.boot_id
                         WHERE s.device_id=%s AND s.last_seen_at>=UTC_TIMESTAMP(3)-INTERVAL %s SECOND
                         AND p.connection_id=%s AND p.online=1
                         AND p.live_received_at>=UTC_TIMESTAMP(3)-INTERVAL %s SECOND""",
                                    (command["device_id"], HTTP_FRESH, connection_id, PRESENCE_FRESH))
-                    if cursor.fetchone():
+                    presence = cursor.fetchone()
+                    if presence:
                         cursor.execute("""SELECT CAST(UNIX_TIMESTAMP(expires_at)*1000 AS UNSIGNED) AS expiry
                             FROM device_commands WHERE command_id=%s AND expires_at>UTC_TIMESTAMP(3)""", (command_id,))
                         expiry = cursor.fetchone()
                         if expiry:
-                            payload = json.dumps(dict(device_id=command["device_id"], command_id=command_id,
+                            payload = json.dumps(dict(device_id=command["device_id"], factory_mac=presence["factory_mac"], command_id=command_id,
                                                       target=command["target"], enabled=bool(command["enabled"]),
                                                       expires_at_ms=int(expiry["expiry"])), separators=(",", ":"))
                             info = client.publish(f"smartpool/devices/{command['device_id']}/cmd/pump", payload, qos=1, retain=False)
@@ -246,5 +264,26 @@ def main():
         time.sleep(2)
 
 
+def kick_reset_client(factory_mac):
+    if not re.fullmatch(r'[A-F0-9]{2}(?::[A-F0-9]{2}){5}',factory_mac):
+        raise ValueError('Invalid reset client')
+    credentials=Path('/auth/bridge.credentials').read_text().splitlines()
+    client=mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                       client_id='smartpool-SP-'+factory_mac.replace(':',''),clean_session=True)
+    client.username_pw_set(credentials[0],credentials[1])
+    client.connect('mqtt',1883,keepalive=15)
+    deadline=time.monotonic()+8
+    while not client.is_connected() and time.monotonic()<deadline:
+        if client.loop(timeout=0.2)!=mqtt.MQTT_ERR_SUCCESS:
+            break
+    if not client.is_connected():
+        raise RuntimeError('Unable to disconnect reset client')
+    client.disconnect();client.loop(timeout=0.2)
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+    if len(sys.argv)==3 and sys.argv[1]=='--kick-reset-client':
+        kick_reset_client(sys.argv[2])
+    else:
+        main()

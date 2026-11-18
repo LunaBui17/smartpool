@@ -46,10 +46,18 @@ typedef struct {
     char username[129];
     bool password_set;
     char api_url[257];
+    char device_id[65];
+    char factory_serial[24];
+    bool provisioned;
+    bool device_key_set;
+    bool provisioning_pending;
 } pool_connection_config_t;
 
 esp_err_t pool_network_init(void);
+bool pool_network_reset_pending(void);
 void pool_network_get_connection_config(pool_connection_config_t *config);
+// Persist ID/key, quiesce remote traffic; caller restarts after replying.
+esp_err_t pool_network_provision_device(const char *device_id, const char *device_key);
 esp_err_t pool_network_save_http_url(const char *url);
 esp_err_t pool_network_save_mqtt_connection(const char *broker, const char *username,
                                             const char *password);

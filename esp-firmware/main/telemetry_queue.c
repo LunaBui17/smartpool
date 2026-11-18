@@ -40,8 +40,44 @@ static esp_err_t save_queue(void)
     return err;
 }
 
-esp_err_t telemetry_queue_init(void)
+esp_err_t telemetry_queue_check_device(const char *device_id, const char *legacy_device_id)
 {
+    if (!device_id || !device_id[0] || !legacy_device_id) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t error = nvs_open("poolq", NVS_READONLY, &handle);
+    if (error == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if (error != ESP_OK) return error;
+    char owner[65];
+    size_t size = sizeof(owner);
+    error = nvs_get_str(handle, "device_id", owner, &size);
+    if (error == ESP_OK) {
+        error = strcmp(owner, device_id) ? ESP_ERR_INVALID_STATE : ESP_OK;
+    } else if (error == ESP_ERR_NVS_NOT_FOUND) {
+        size = 0;
+        error = nvs_get_blob(handle, "queue", NULL, &size);
+        if (error == ESP_ERR_NVS_NOT_FOUND) error = ESP_OK;
+        else if (error == ESP_OK && (size == sizeof(legacy_queue_t) || size == sizeof(queue_state_t))) {
+            void *blob = malloc(size);
+            if (!blob) error = ESP_ERR_NO_MEM;
+            else {
+                error = nvs_get_blob(handle, "queue", blob, &size);
+                if (error == ESP_OK) {
+                    uint16_t count;
+                    memcpy(&count, (const uint8_t *)blob + 6, sizeof(count));
+                    if (count && strcmp(device_id, legacy_device_id)) error = ESP_ERR_INVALID_STATE;
+                }
+                free(blob);
+            }
+        } else if (error == ESP_OK) error = ESP_ERR_INVALID_STATE;
+    }
+    nvs_close(handle);
+    return error;
+}
+
+esp_err_t telemetry_queue_init(const char *device_id, const char *legacy_device_id)
+{
+    esp_err_t binding = telemetry_queue_check_device(device_id, legacy_device_id);
+    if (binding != ESP_OK) return binding;
     esp_err_t err = nvs_open("poolq", NVS_READWRITE, &s_nvs);
     if (err != ESP_OK) return err;
 
@@ -87,6 +123,9 @@ esp_err_t telemetry_queue_init(void)
         nvs_close(s_nvs);
         return ESP_ERR_INVALID_STATE;
     }
+    err = nvs_set_str(s_nvs, "device_id", device_id);
+    if (err == ESP_OK) err = nvs_commit(s_nvs);
+    if (err != ESP_OK) { nvs_close(s_nvs); return err; }
     s_ready = true;
     return ESP_OK;
 }

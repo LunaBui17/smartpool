@@ -13,15 +13,18 @@
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_system.h"
+#include "lwip/sockets.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "pool_features.h"
 #include "pool_network.h"
+#include "pool_identity.h"
 
 static const char *TAG = "wifi_setup";
 static httpd_handle_t s_server;
 static esp_err_t (*s_on_credentials_saved)(void);
 static _Atomic bool s_ap_enabled;
+static char s_ap_ssid[33];
 extern const char dashboard_start[] asm("_binary_index_html_start");
 
 static esp_err_t json_response(httpd_req_t *req, cJSON *root)
@@ -53,6 +56,11 @@ static esp_err_t action_response(httpd_req_t *req, esp_err_t err)
 
 static cJSON *read_json(httpd_req_t *req)
 {
+    if(pool_network_reset_pending() && strcmp(req->uri,"/wifi") && strcmp(req->uri,"/api/time") && strcmp(req->uri,"/api/config/http")) {
+        httpd_resp_set_status(req,"409 Conflict");httpd_resp_set_type(req,"application/json");
+        httpd_resp_sendstr(req,"{\"ok\":false,\"message\":\"Device reset pending; only recovery Wi-Fi/time/API URL may be configured.\"}");
+        return NULL;
+    }
     char content_type[48];
     if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) != ESP_OK ||
         (strcmp(content_type, "application/json") != 0 &&
@@ -92,6 +100,24 @@ static esp_err_t setup_get(httpd_req_t *req)
     return httpd_resp_sendstr(req, dashboard_start);
 }
 
+static void add_mac_addresses(cJSON *root)
+{
+    cJSON_AddStringToObject(root, "factory_mac", pool_identity_mac());
+    const wifi_interface_t interfaces[] = {WIFI_IF_STA, WIFI_IF_AP};
+    const char *names[] = {"wifi_sta_mac", "wifi_ap_mac"};
+    for (int i = 0; i < 2; i++) {
+        uint8_t mac[6];
+        if (esp_wifi_get_mac(interfaces[i], mac) != ESP_OK) {
+            cJSON_AddNullToObject(root, names[i]);
+            continue;
+        }
+        char text[18];
+        snprintf(text, sizeof(text), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        cJSON_AddStringToObject(root, names[i], text);
+    }
+}
+
 static esp_err_t status_get(httpd_req_t *req)
 {
     pool_device_state_t state;
@@ -102,7 +128,10 @@ static esp_err_t status_get(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "station_enabled", state.station_enabled);
     cJSON_AddBoolToObject(root, "station_supported", POOL_WIFI_STA_ENABLED);
     cJSON_AddBoolToObject(root, "ap_enabled", s_ap_enabled);
-    cJSON_AddStringToObject(root, "ap_ssid", CONFIG_POOL_SETUP_AP_SSID);
+    cJSON_AddBoolToObject(root, "reset_pending", pool_network_reset_pending());
+    cJSON_AddStringToObject(root, "ap_ssid", s_ap_ssid);
+    cJSON_AddStringToObject(root, "factory_serial", pool_identity_serial());
+    add_mac_addresses(root);
     cJSON_AddBoolToObject(root, "mqtt_supported", POOL_MQTT_ENABLED);
     cJSON_AddBoolToObject(root, "mqtt_connected", state.mqtt_connected);
     cJSON_AddBoolToObject(root, "clock_ready", state.clock_ready);
@@ -179,6 +208,35 @@ static esp_err_t status_get(httpd_req_t *req)
     return json_response(req, root);
 }
 
+static bool request_on_setup_ap(httpd_req_t *req)
+{
+    struct sockaddr_in local = {0};
+    socklen_t length = sizeof(local);
+    esp_netif_ip_info_t ip;
+    esp_netif_t *ap = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    return ap && esp_netif_get_ip_info(ap, &ip) == ESP_OK &&
+        getsockname(httpd_req_to_sockfd(req), (struct sockaddr *)&local, &length) == 0 &&
+        local.sin_family == AF_INET && local.sin_addr.s_addr == ip.ip.addr;
+}
+
+static bool provisioning_origin_valid(httpd_req_t *req)
+{
+    if (!request_on_setup_ap(req)) return false;
+    esp_netif_ip_info_t ip;
+    esp_netif_t *ap = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    if (!ap || esp_netif_get_ip_info(ap, &ip) != ESP_OK) return false;
+    char address[24], address_port[32], host[64], origin[64], expected[48], expected_port[48];
+    snprintf(address, sizeof(address), IPSTR, IP2STR(&ip.ip));
+    snprintf(address_port, sizeof(address_port), "%s:80", address);
+    if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK ||
+        (strcmp(host, address) && strcmp(host, address_port))) return false;
+    if (!httpd_req_get_hdr_value_len(req, "Origin")) return true;
+    snprintf(expected, sizeof(expected), "http://%s", address);
+    snprintf(expected_port, sizeof(expected_port), "http://%s", address_port);
+    return httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof(origin)) == ESP_OK &&
+        (!strcmp(origin, expected) || !strcmp(origin, expected_port));
+}
+
 static esp_err_t connection_get(httpd_req_t *req)
 {
     pool_connection_config_t config;
@@ -191,6 +249,15 @@ static esp_err_t connection_get(httpd_req_t *req)
     cJSON_AddStringToObject(root, "http_api_url", config.api_url);
     cJSON_AddBoolToObject(root, "mqtt_supported", POOL_MQTT_ENABLED);
     cJSON_AddBoolToObject(root, "http_supported", POOL_HTTP_ENABLED);
+    cJSON_AddNumberToObject(root, "provisioning_version", 1);
+    cJSON_AddStringToObject(root, "device_id", config.device_id);
+    cJSON_AddStringToObject(root, "factory_serial", config.factory_serial);
+    add_mac_addresses(root);
+    cJSON_AddStringToObject(root, "ap_ssid", s_ap_ssid);
+    cJSON_AddBoolToObject(root, "provisioned", config.provisioned);
+    cJSON_AddBoolToObject(root, "device_key_set", config.device_key_set);
+    cJSON_AddBoolToObject(root, "provisioning_pending", config.provisioning_pending);
+    cJSON_AddBoolToObject(root, "local_provisioning_available", request_on_setup_ap(req));
     return json_response(req, root);
 }
 
@@ -198,6 +265,41 @@ static void restart_after_save(void *arg)
 {
     vTaskDelay(pdMS_TO_TICKS(1500));
     esp_restart();
+}
+
+static esp_err_t identity_post(httpd_req_t *req)
+{
+    if (!provisioning_origin_valid(req)) {
+        httpd_resp_set_status(req, "403 Forbidden");
+        cJSON *reply = cJSON_CreateObject();
+        if (reply) {
+            cJSON_AddBoolToObject(reply, "ok", false);
+            cJSON_AddStringToObject(reply, "message", "Kết nối Wi-Fi riêng của ESP và mở http://192.168.4.1 để cấp ID/khóa.");
+        }
+        return json_response(req, reply);
+    }
+    cJSON *body = read_json(req);
+    if (!body) return ESP_OK;
+    const cJSON *id = cJSON_GetObjectItemCaseSensitive(body, "device_id");
+    const cJSON *key = cJSON_GetObjectItemCaseSensitive(body, "device_key");
+    esp_err_t error = cJSON_IsString(id) && cJSON_IsString(key)
+        ? pool_network_provision_device(id->valuestring, key->valuestring) : ESP_ERR_INVALID_ARG;
+    // The response never includes the supplied key or body.
+    cJSON_Delete(body);
+    bool restarting = error == ESP_OK &&
+        xTaskCreate(restart_after_save, "identity_restart", 2048, NULL, 4, NULL) == pdPASS;
+    cJSON *reply = cJSON_CreateObject();
+    if (error != ESP_OK) httpd_resp_set_status(req, error == ESP_ERR_INVALID_ARG ? "400 Bad Request" : "409 Conflict");
+    if (reply) {
+        cJSON_AddBoolToObject(reply, "ok", error == ESP_OK);
+        cJSON_AddBoolToObject(reply, "restarting", restarting);
+        cJSON_AddBoolToObject(reply, "restart_required", error == ESP_OK);
+        cJSON_AddStringToObject(reply, "message", error == ESP_OK
+            ? "Đã lưu trên ESP; khởi động lại để áp dụng. Chưa xác nhận đăng ký trên server."
+            : error == ESP_ERR_INVALID_ARG ? "ID cần 1–64 ký tự ASCII hợp lệ; khóa cần 64 ký tự hex thường."
+            : "Không thể lưu: ID đã gắn với thiết bị/dữ liệu cũ, đang chờ khởi động lại hoặc NVS có lỗi. Giữ ID hiện tại khi đổi khóa.");
+    }
+    return json_response(req, reply);
 }
 
 static esp_err_t connection_post(httpd_req_t *req)
@@ -450,6 +552,7 @@ esp_err_t wifi_setup_init(esp_err_t (*on_credentials_saved)(void))
         {.uri = "/api/config", .method = HTTP_GET, .handler = connection_get},
         {.uri = "/api/config/mqtt", .method = HTTP_POST, .handler = connection_post},
         {.uri = "/api/config/http", .method = HTTP_POST, .handler = connection_post},
+        {.uri = "/api/config/identity", .method = HTTP_POST, .handler = identity_post},
         {.uri = "/api/control", .method = HTTP_POST, .handler = control_post},
         {.uri = "/api/automation", .method = HTTP_POST, .handler = automation_post},
         {.uri = "/api/time", .method = HTTP_POST, .handler = time_post},
@@ -481,8 +584,19 @@ esp_err_t wifi_setup_enable_ap(void)
         return ESP_ERR_INVALID_ARG;
     }
 
+    const char *serial = pool_identity_serial();
+    size_t serial_len = strlen(serial);
+    if (serial_len < 6) return ESP_ERR_INVALID_STATE;
+    // Keep the suffix and stay within the 32-byte SSID limit, including UTF-8 prefixes.
+    size_t prefix_len = ssid_len > 25 ? 25 : ssid_len;
+    while (prefix_len < ssid_len && prefix_len &&
+           ((unsigned char)CONFIG_POOL_SETUP_AP_SSID[prefix_len] & 0xc0) == 0x80) prefix_len--;
+    snprintf(s_ap_ssid, sizeof(s_ap_ssid), "%.*s-%s", (int)prefix_len,
+             CONFIG_POOL_SETUP_AP_SSID, serial + serial_len - 6);
+    ssid_len = strlen(s_ap_ssid);
+
     wifi_config_t access_point = {0};
-    memcpy(access_point.ap.ssid, CONFIG_POOL_SETUP_AP_SSID, ssid_len);
+    memcpy(access_point.ap.ssid, s_ap_ssid, ssid_len);
     memcpy(access_point.ap.password, CONFIG_POOL_SETUP_AP_PASSWORD, password_len);
     access_point.ap.ssid_len = ssid_len;
     access_point.ap.max_connection = 4;
@@ -494,7 +608,21 @@ esp_err_t wifi_setup_enable_ap(void)
     if (err != ESP_OK) return err;
 
     s_ap_enabled = true;
-    ESP_LOGI(TAG, "Setup AP '%s' ready at http://192.168.4.1", CONFIG_POOL_SETUP_AP_SSID);
+    ESP_LOGI(TAG, "Setup AP '%s' ready at http://192.168.4.1", s_ap_ssid);
     return ESP_OK;
+}
+
+esp_err_t wifi_setup_reconfigure_ap(void)
+{
+    s_ap_enabled=false;
+    return wifi_setup_enable_ap();
+}
+
+esp_err_t wifi_setup_suspend_http(void)
+{
+    if(!s_server)return ESP_OK;
+    esp_err_t error=httpd_stop(s_server);
+    if(error==ESP_OK)s_server=NULL;
+    return error;
 }
 

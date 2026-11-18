@@ -1,5 +1,9 @@
 # ESP ↔ API/MQTT: hợp đồng runtime 005
 
+**Source kế tiếp 006:** [khóa HTTP chung + liên kết ID–MAC](shared-key-hardware.md) thay phần xác thực ESP bằng khóa riêng; mọi HTTP/MQTT ESP phải có MAC gốc. Bản 006 chưa deploy, các ghi nhận Pi 005 dưới đây là lịch sử.
+
+**Cập nhật provisioning firmware:** [ID/khóa trong NVS qua web/AP local](device-provisioning-local-and-ble.md) thay header riêng lúc build; topic MQTT và payload dùng ID runtime. Tài liệu liên kết cũng ghi công việc Android Scan new device/BLE, chưa triển khai BLE. Phần source provisioning mới chưa build/test/flash, không thay backend đã deploy.
+
 Cập nhật ngày 18/11/2026. PHP API/worker và migration 005 đã triển khai Pi theo yêu cầu tiếp theo; health LAN/Cloudflare và heartbeat worker đã xác nhận, xem [ghi nhận triển khai](deployment-runtime-005.md). Firmware mới chưa build/flash, Android chưa sửa, chưa chạy collection Postman hoặc kiểm thử relay đầu cuối. Các hành vi ESP dưới đây mô tả source, chưa phải kết quả xác nhận trên phần cứng.
 
 ## Phạm vi và luồng thực tế

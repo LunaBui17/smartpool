@@ -99,8 +99,11 @@ menu "Smart Pool Network"
         default "time.cloudflare.com"
 
     config POOL_SETUP_AP_SSID
-        string "Setup access point SSID"
+        string "Setup access point SSID prefix (MAC suffix is automatic)"
         default "SmartPool-Setup"
+        help
+            The runtime AP name appends a hyphen and the last six hex digits of
+            the factory eFuse MAC. Long prefixes are trimmed to keep 32 bytes.
 
     config POOL_SETUP_AP_PASSWORD
         string "Setup access point password"
@@ -118,10 +121,12 @@ menu "Smart Pool Network"
         default "https://mysterious-witness-crown-glasgow.trycloudflare.com/pool_api/pool_api.php"
 
     config POOL_DEVICE_ID
-        string "Registered backend v2 device ID"
+        string "Legacy device ID (only for migrating existing NVS data)"
         default "SmartPool"
         help
-            Register this exact ID in the v2 API and use it as the MQTT username.
+            New boards receive their ID and HTTP key through the local AP page.
+            This value is not the runtime identity and contains no credential.
+            Keep the previous ID when upgrading firmware with unowned legacy NVS samples.
 
     config POOL_MQTT_URI
         string "MQTT broker URI"

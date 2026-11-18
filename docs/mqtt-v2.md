@@ -1,5 +1,7 @@
 # Broker MQTT v2 theo từng thiết bị
 
+**Source 006, chưa deploy:** [khóa HTTP chung và ID–MAC](shared-key-hardware.md) yêu cầu factory_mac trong status/ACK/LWT, worker kiểm tra liên kết DB, cmd/pump có MAC đích để ESP đối chiếu. Broker/ACL/password không tự thay đổi và không tự xác thực MAC.
+
 **Source runtime 005, chưa build/test/triển khai:** worker có giao dịch ACK + audit, quét TTL/quyền và presence theo phiên kết nối; ESP poll config qua HTTP, heartbeat live 30 giây, sổ lệnh NVS 32 entry. Chi tiết tại [hợp đồng runtime và MQTT Web](esp-api-mqtt-runtime.md). ACL hiện có giữ nguyên; phần ghi nhận triển khai broker bên dưới là lịch sử.
 
 Broker trên Pi `192.168.60.87` đã cập nhật ngày 17/11/2026. Không thay database, API, firmware hoặc Android trong đợt này. Hai tài khoản chung `esp32`/`android` không được giữ trong file xác thực mới. ESP/app cũ sẽ không kết nối được bằng credential cũ.

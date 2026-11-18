@@ -66,6 +66,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['init', 'policy-refresh', 'status', 'add-device', 'rotate-device', 'revoke-device'])
     parser.add_argument('device_id', nargs='?')
+    parser.add_argument('--reload-only', action='store_true', help='Revoke after confirmed reset; reload without restarting other devices')
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error('Run with sudo; this manages credentials and broker sessions')
@@ -112,7 +113,10 @@ def main():
             print('Device credentials saved:', pending.with_name(device + '.txt'))
         else:
             account('revoke', device)
-            restart()
+            if args.reload_only:
+                invoke(COMPOSE + ['kill', '-s', 'SIGHUP', 'mqtt'])
+            else:
+                restart()
             path = home / 'smartpool-v2-mqtt' / (device + '.txt')
             if path.exists() and not path.is_symlink():
                 private_file(path, 'MQTT_USERNAME=' + device + '\nSTATUS=revoked\n', owner)

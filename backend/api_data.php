@@ -26,8 +26,13 @@ function api_update_config($db,$user,$device,$data) {
 }
 
 function api_esp_action($db,$device,$action,$data) {
-    if($action==='device_identity')return array('device_id'=>$device);
-    if($action==='get_device_config')return array('config'=>api_config(api_query($db,'SELECT * FROM device_configs WHERE device_id=?','s',array($device))[0]));
+    if($action==='device_identity')return array('device_id'=>$device,'hardware'=>api_hardware($db,$device));
+    if($action==='get_device_config') {
+        $reset=api_issue_reset_command($db,$device);
+        if($reset!==null)return array('reset_command'=>$reset);
+        if(api_delete_job($db,$device)!==null)return array('deletion_pending'=>true);
+        return array('config'=>api_config(api_query($db,'SELECT * FROM device_configs WHERE device_id=?','s',array($device))[0]));
+    }
     if($action==='acknowledge_command')return api_command_ack($db,$device,$data);
     if($action==='upload_sample') {
         $sampleId=strtoupper(api_text($data,'sample_id',16,'/^[a-fA-F0-9]{16}$/D'));

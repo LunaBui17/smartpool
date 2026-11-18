@@ -5,10 +5,11 @@ function api_devices($db,$user,$data) {
     $limit=api_int($data,'limit',50,1,100);
     $after=isset($data['after_device_id']) ? api_text($data,'after_device_id',64,'/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/D') : '';
     if ($user['role']==='admin') {
-        $rows=api_query($db,'SELECT d.*,1 AS can_view,d.is_active AS can_control,d.is_active AS can_configure FROM devices d '
-            . 'WHERE device_id>? ORDER BY device_id LIMIT ?','si',array($after,$limit+1));
+        $rows=api_query($db,"SELECT d.*,h.factory_mac,CONCAT('SP-',REPLACE(h.factory_mac,':','')) AS factory_serial,1 AS can_view,d.is_active AS can_control,d.is_active AS can_configure FROM devices d "
+            . 'LEFT JOIN hardware_inventory h ON h.device_id=d.device_id WHERE d.device_id>? ORDER BY d.device_id LIMIT ?','si',array($after,$limit+1));
     } else {
-        $rows=api_query($db,'SELECT d.device_id,d.name,d.is_active,d.registered_at,m.can_view,m.can_control,m.can_configure FROM devices d '
+        $rows=api_query($db,"SELECT d.device_id,d.name,d.is_active,d.registered_at,h.factory_mac,CONCAT('SP-',REPLACE(h.factory_mac,':','')) AS factory_serial,m.can_view,m.can_control,m.can_configure FROM devices d "
+            . 'LEFT JOIN hardware_inventory h ON h.device_id=d.device_id '
             . 'JOIN device_users m ON m.device_id=d.device_id WHERE m.user_id=? AND m.can_view=1 AND d.is_active=1 '
             . 'AND d.device_id>? ORDER BY d.device_id LIMIT ?','isi',array($user['id'],$after,$limit+1));
     }
@@ -102,6 +103,7 @@ function api_history($db,$device,$data) {
 
 function api_dispatch_action($db,$data) {
     $action=api_text($data,'action',64,'/^[a-z_]+$/D');
+    if($action==='acknowledge_device_reset')return api_device_reset_receipt($db,$data);
     if($action==='login') {
         $username=api_text($data,'username',64,'/^[A-Za-z0-9._-]{3,64}$/D');
         $password=$data['password']??null;
@@ -116,10 +118,19 @@ function api_dispatch_action($db,$data) {
     }
     $espActions=array('device_identity','upload_sample','report_status','get_device_config','acknowledge_command');
     if(in_array($action,$espActions,true)) {
-        $device=api_id($data);api_esp($db,$device);
+        $device=api_id($data);api_esp($db,$device,$data);
         return api_esp_action($db,$device,$action,$data);
     }
     $user=api_user($db);
+    if($action==='get_device_delete_job') {
+        api_admin($user);$id=api_text($data,'job_id',36,'/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/D');
+        $rows=api_query($db,'SELECT * FROM device_delete_jobs WHERE job_id=?','s',array($id));
+        if(!$rows)api_fail(404,'Không tìm thấy tác vụ xóa');return array('deletion'=>api_delete_job_public($rows[0]));
+    }
+    if(in_array($action,array('declare_hardware','list_hardware'),true))return api_inventory($db,$user,$action,$data);
+    if($action==='list_device_archives')return api_list_device_archives($db,$user,$data);
+    if(in_array($action,array('create_shared_device_credential','list_shared_device_credentials','revoke_shared_device_credential'),true))
+        return api_shared_credentials($db,$user,$action,$data);
     if($action==='logout') {
         $auth=$_SERVER['HTTP_AUTHORIZATION'];$token=substr($auth,7);
         api_query($db,'DELETE FROM user_sessions WHERE token_hash=?','s',array(hash('sha256',$token)));
@@ -130,6 +141,12 @@ function api_dispatch_action($db,$data) {
         api_admin($user);return api_admin_action($db,$user,$action,$data);
     }
     $device=api_id($data);
+    if($action==='delete_device')return api_request_device_delete($db,$user,$device,$data);
+    if($action==='bind_device_hardware') {
+        api_admin_shared_key($db,$user,$data);api_device($db,$device);
+        $created=api_bind_hardware($db,$device,api_factory_mac($data),$user);
+        return array('device_id'=>$device,'duplicate'=>!$created,'hardware'=>api_hardware($db,$device));
+    }
     if(in_array($action,array('set_device_active','set_device_owner','set_device_member','remove_device_member','list_device_members',
         'create_device_credential','revoke_device_credential','list_device_credentials'),true)) {
         api_admin($user);api_device($db,$device);return api_registry_action($db,$user,$device,$action,$data);
@@ -141,7 +158,7 @@ function api_dispatch_action($db,$data) {
         $grant=$user['role']==='admin'?array('can_view'=>1,'can_control'=>$row['is_active'],'can_configure'=>$row['is_active'])
             :api_query($db,'SELECT can_view,can_control,can_configure FROM device_users WHERE device_id=? AND user_id=?','si',array($device,$user['id']))[0];
         if($user['role']!=='admin')$row=array_intersect_key($row,array_flip(array('device_id','name','is_active','registered_at')));
-        return array('device'=>api_public(array_merge($row,$grant)));
+        return array('device'=>api_public(array_merge($row,$grant)),'hardware'=>api_hardware($db,$device));
     }
     if($action==='get_history')return api_history($db,$device,$data);
     if($action==='get_status') {
@@ -153,7 +170,7 @@ function api_dispatch_action($db,$data) {
         $revision=(int)api_query($db,'SELECT revision FROM device_configs WHERE device_id=?','s',array($device))[0]['revision'];
         $readiness=api_readiness($db,$user,api_device($db,$device),$status);
         $apply=api_query($db,'SELECT boot_id,attempt_sequence,revision,result,error_code,received_at FROM config_apply_reports WHERE device_id=? ORDER BY id DESC LIMIT 1','s',array($device));
-        return array('device_id'=>$device,'state'=>$status,'remote_control_ready'=>$readiness['ready'],'readiness'=>$readiness,
+        return array('device_id'=>$device,'hardware'=>api_hardware($db,$device),'state'=>$status,'remote_control_ready'=>$readiness['ready'],'readiness'=>$readiness,
             'config_apply'=>$apply?api_public($apply[0]):null,
             'latest_measured_sample'=>$measured?api_public($measured[0]):null,
             'last_received_sample'=>$received?api_public($received[0]):null,'desired_config_revision'=>$revision,
@@ -168,6 +185,8 @@ function api_dispatch_action($db,$data) {
 
 function api_admin_action($db,$user,$action,$data) {
     if($action==='register_device') {
+        api_admin_shared_key($db,$user,$data);
+        $mac=api_factory_mac($data);
         $device=api_id($data);$name=api_text($data,'name',128);$fullName=api_text($data,'student_full_name',128);
         $student=api_text($data,'student_code',32,'/^[A-Za-z0-9._-]+$/D');
         $owner=api_int($data,'owner_user_id',(int)$user['id']);api_active_user($db,$owner);
@@ -176,8 +195,9 @@ function api_admin_action($db,$user,$action,$data) {
         api_query($db,'INSERT INTO devices(device_id,name,student_full_name,student_code,owner_user_id,registered_by,registration_source) '
             . 'VALUES (?,?,?,?,?,?,?)','ssssiis',array($device,$name,$fullName,$student,$owner,$user['id'],$source));
         api_query($db,'INSERT INTO device_configs(device_id,updated_by) VALUES (?,?)','si',array($device,$user['id']));
+        api_bind_hardware($db,$device,$mac,$user);
         api_log($db,$user,$device,'device_registered',array('name'=>$name,'owner_user_id'=>$owner,'registration_source'=>$source));
-        return array('device'=>api_public(api_device($db,$device)));
+        return array('device'=>api_public(api_device($db,$device)),'hardware'=>api_hardware($db,$device));
     }
     if($action==='list_users') {
         $limit=api_int($data,'limit',50,1,100);$after=api_int($data,'after_id',0,0);
@@ -238,6 +258,7 @@ function api_registry_action($db,$user,$device,$action,$data) {
         'SELECT id,label,created_at,created_by,revoked_at FROM device_credentials WHERE device_id=? ORDER BY id DESC','s',array($device))));
     $changes=array();$extra=array();
     if($action==='set_device_active') {
+        if(($data['is_active']??false)===true&&api_delete_job($db,$device)!==null)api_fail(409,'Thiết bị đang chờ reset/xóa');
         $active=api_bool($data,'is_active');api_query($db,'UPDATE devices SET is_active=? WHERE device_id=?','is',array($active,$device));
         if(!$active)api_cancel_pending($db,$device,null,'device_inactive');
         $changes=array('before'=>(bool)$row['is_active'],'is_active'=>(bool)$active);
@@ -262,10 +283,7 @@ function api_registry_action($db,$user,$device,$action,$data) {
         api_cancel_pending($db,$device,$target,'membership_removed');
         $changes=array('user_id'=>$target,'removed'=>true);
     } elseif($action==='create_device_credential') {
-        if(!(int)$row['is_active'])api_fail(409,'Kích hoạt thiết bị trước');
-        $label=api_text($data,'label',64);$key=bin2hex(random_bytes(32));
-        api_query($db,'INSERT INTO device_credentials(device_id,key_hash,label,created_by) VALUES (?,?,?,?)','sssi',array($device,hash('sha256',$key),$label,$user['id']));
-        $id=(int)$db->insert_id;$changes=array('credential_id'=>$id,'label'=>$label);$extra=array('credential_id'=>$id,'device_key'=>$key);
+        api_fail(410,'Dùng create_shared_device_credential để cấp khóa HTTP dùng chung');
     } elseif($action==='revoke_device_credential') {
         $id=api_int($data,'credential_id');
         $keys=api_query($db,'SELECT id FROM device_credentials WHERE id=? AND device_id=? FOR UPDATE','is',array($id,$device));

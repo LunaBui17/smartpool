@@ -23,7 +23,7 @@ dependencies:
   idf:
     source:
       type: idf
-    version: 5.3.1
+    version: 5.5.6
 direct_dependencies:
 - espressif/ds18b20
 manifest_hash: b0e3a24aa02430d66e7f7d75f32d103d9f94b1626bd99553f36b385f4e090436

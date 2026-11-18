@@ -1,5 +1,13 @@
 # Kế hoạch tích hợp Android Smart Pool với API v2
 
+**Xóa bất đồng bộ 009:** delete_device trả deleted=false + job_id; app phải poll get_device_delete_job và chờ deleted trước khi bỏ registry/đánh dấu MAC available. Firmware mới sẽ reset NVS/Wi-Fi/MQTT, Pi revoke account sau receipt. Không coi HTTP 200 đầu tiên là hoàn tất; [hợp đồng lifecycle](device-deprovision-009.md). Android chưa sửa phần này.
+
+**Inventory/xóa 007/008:** [hợp đồng mới nhất](hardware-inventory-delete.md): admin có thể khai báo MAC trước; register bắt buộc ID/MAC/khóa chung; chỉ available=true mới gán được; xóa device giữ MAC và gỡ ID/liên kết, dữ liệu cũ lưu archive. App/BLE chưa sửa, cần theo hợp đồng này khi phát triển nút thêm/xóa.
+
+**Điều chỉnh onboarding 006:** các ESP dùng cùng khóa HTTP, ID–MAC riêng; admin dùng register_device có factory_mac hoặc bind_device_hardware. Không tạo credential riêng mỗi lần scan. Xem [API khóa chung/MAC và các việc app cần đổi](shared-key-hardware.md). BLE/app chưa triển khai phần mới này.
+
+**Ghi chú cho giai đoạn BLE sau này:** firmware đã có cấp ID/khóa qua AP local và identity NVS. Luồng admin **Scan new device**, các bước API/cấp MQTT còn thiếu và yêu cầu bảo vệ phiên BLE được ghi tại [kế hoạch provisioning](device-provisioning-local-and-ble.md#ghi-chú-dev-android-scan-new-device-cho-admin). Chưa sửa app hoặc triển khai BLE; các mục dưới đây về không dùng key ESP trong app vẫn áp dụng cho luồng vận hành hiện tại. Onboarding admin tương lai chỉ giữ key tạm thời để truyền cho bo, không biến key thành credential điều khiển app.
+
 Ngày lập: 17/11/2026. Cập nhật tiến độ: 18/11/2026.
 
 ## Tiến độ thực hiện

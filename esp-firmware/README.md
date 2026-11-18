@@ -1,5 +1,11 @@
 # Firmware ESP32-S3 Smart Pool
 
+**Reset từ server, source mới:** khi admin yêu cầu xóa, ESP mới nhận lệnh qua HTTP, dừng relay/MQTT, xóa NVS ứng dụng/Wi-Fi flash, gửi receipt bằng Wi-Fi RAM tạm rồi ngắt mạng/reboot về AP chưa cấp ID. Backend 009 đã deploy; phần firmware này chưa build/flash/test. Xem [luồng reset, phục hồi mất điện và yêu cầu nạp firmware](../docs/device-deprovision-009.md).
+
+**Khóa chung + MAC, source 006:** mọi bo nhập cùng khóa HTTP; ESP tự gửi MAC eFuse gốc cùng ID để server gắn/kiểm tra cặp duy nhất. Status/ACK/LWT MQTT có MAC; lệnh pump chỉ thực thi khi ID và MAC đích đều khớp bo. Xem [API khóa chung, migration và cách ghi MAC lên database](../docs/shared-key-hardware.md). Bản 006 chưa build/test/flash hoặc deploy Pi; các hướng dẫn cấp khóa riêng trước đây được thay bằng hợp đồng 006.
+
+**Cấp thiết bị qua local:** ID/khóa HTTP và mật khẩu MQTT đã chuyển sang NVS, không còn lấy từ `device_credentials.h`/`mqtt_credentials.h`. Cùng một binary có thể dùng cho nhiều bo cùng cấu hình phần cứng: nhập ID/khóa do admin cấp tại **http://192.168.4.1 → Thiết bị, MQTT & HTTP → Đăng ký thiết bị**, rồi cấu hình MQTT/Wi-Fi. ID cố định sau lần cấp đầu, khóa cùng ID thay được không cần build lại. Source này chưa build/test/flash. Xem [hướng dẫn local, chuyển đổi bo cũ và ghi chú Android Scan new device/BLE](../docs/device-provisioning-local-and-ble.md).
+
 **Backend v2, runtime 005:** firmware gửi mẫu/status bằng HTTP device key, nhận `cmd/pump` theo device_id, kiểm tra TTL và chống lặp bằng sổ NVS. Task riêng poll `get_device_config`, lưu snapshot rồi báo revision/kết quả áp dụng; MQTT có heartbeat live 30 giây. Queue v3 giữ giờ đo khi đồng hồ hợp lệ; mẫu v1/v2 chuyển đổi vẫn unknown. Source mới chưa build/test/flash trong đợt này; BLE chưa triển khai. Xem [hợp đồng runtime, nâng cấp và quay lui NVS](../docs/esp-api-mqtt-runtime.md).
 
 [Hướng dẫn tổng thể](../README.md) · [Luồng toàn hệ thống](../docs/system-flow.md) · [Giao thức MQTT v2](../docs/mqtt-v2.md) · [Triển khai Raspberry Pi v2](../deploy/raspberry-pi-v2/README.md)
@@ -66,7 +72,7 @@ Thay đổi giả lập này chưa được build, chạy kiểm thử hoặc n�
 
 1. Cài đặt môi trường ESP-IDF và mở terminal đã nạp môi trường đó.
 2. Tại thư mục `esp-firmware`, chạy `idf.py menuconfig` để kiểm tra cấu hình phần cứng, điểm truy cập, API và broker MQTT.
-3. Đăng ký `SmartPool` (hoặc ID đã chọn trong `CONFIG_POOL_DEVICE_ID`) trong API v2, kích hoạt thiết bị, cấp `device_key` HTTP và tạo MQTT account bằng `sudo python3 mqtt-admin.py add-device SmartPool` trên Pi. Lưu key một lần vào `main/device_credentials.h` theo file `.example` (file này được Git bỏ qua). MQTT username tự bằng ID; password lấy từ file private `~/smartpool-v2-mqtt/SmartPool.txt` trên Pi và cấu hình trong `main/mqtt_credentials.h` hoặc trang local.
+3. Không nhập ID/khóa/mật khẩu riêng vào header khi build. ID runtime lấy từ NVS; `CONFIG_POOL_DEVICE_ID` chỉ dành cho nhận diện dữ liệu legacy khi nâng cấp bo cũ. Giữ đúng ID cũ nếu còn queue/config chưa chuyển đổi.
 4. Build và nạp firmware:
 
 ```bash
@@ -75,6 +81,8 @@ idf.py build
 idf.py -p COMx flash monitor
 ```
 
+5. Sau khi nạp, cấp ID/khóa qua AP theo [hướng dẫn provisioning](../docs/device-provisioning-local-and-ble.md). Admin đăng ký/kích hoạt/cấp key HTTP trên server trước, nhập vào ESP rồi reboot. Tạo account MQTT theo ID bằng công cụ vận hành trên Pi, nhập mật khẩu ở trang local; username tự theo ID. Bo cũ cần cấp lại đúng ID/key; cấu hình MQTT NVS cũ được giữ nếu username khớp. Bo chưa có identity chỉ hoạt động local, chưa gửi dữ liệu lên server.
+
 Thay `COMx` bằng cổng nối với bo mạch. Nếu tạo cấu hình mới mà chưa có `sdkconfig`, chọn target bằng `idf.py set-target esp32s3` trước khi build.
 File `.bin` sau khi build chứa key HTTP của thiết bị; không chia sẻ artifact hoặc đưa vào Git. Trên máy này bản build đã kiểm tra nằm tại `build-v53/ds18b20.bin`, được Git bỏ qua. Flash cần cổng USB của ESP; `COM1` hệ thống không chứng minh bo ESP đã kết nối.
 
@@ -82,7 +90,7 @@ Mặc định firmware dùng API `https://mysterious-witness-crown-glasgow.trycl
 
 ## Trang cấu hình cục bộ
 
-ESP32 phát điểm truy cập `SmartPool-Setup` (mặc định) để cấu hình kể cả khi chưa có Wi-Fi router. Kết nối điện thoại hoặc máy tính vào điểm truy cập, sau đó mở:
+ESP32 phát AP dạng `SmartPool-Setup-XXXXXX` (tiền tố theo menuconfig, hậu tố là 6 hex cuối MAC eFuse gốc) để cấu hình kể cả khi chưa có Wi-Fi router. Sau khi nạp bản mới cần chọn lại tên AP có hậu tố. Trang local hiển thị serial, MAC gốc và MAC Wi-Fi STA/AP để đối chiếu bo. Kết nối vào AP đó rồi mở:
 
 ```text
 http://192.168.4.1

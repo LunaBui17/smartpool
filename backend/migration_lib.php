@@ -13,7 +13,7 @@ function pool_v2_lock($db) {
 function pool_v2_tables($baseline=false) {
     $tables=array('users','user_sessions','devices','device_users','device_credentials','device_configs',
         'device_boots','device_status','sensor_samples','device_commands','activity_logs','schema_migrations');
-    return $baseline?$tables:array_merge($tables,array('control_worker_state','device_mqtt_presence','command_dispatch','command_results','config_apply_reports'));
+    return $baseline?$tables:array_merge($tables,array('control_worker_state','device_mqtt_presence','command_dispatch','command_results','config_apply_reports','device_hardware','esp_shared_credentials','hardware_inventory','device_archives','device_archive_records','device_delete_jobs'));
 }
 function pool_legacy_tables() {
     return array('pool_status','pool_history','pool_commands','pool_users','pool_user_sessions','pool_activity_log',
